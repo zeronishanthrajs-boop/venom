@@ -662,3 +662,26 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
   - `POST /api/engagements` => `201`
   - `GET /api/engagements` => `200`
 - Confirms DB write/read path is healthy once backend endpoint is reachable.
+
+## [2026-05-03 21:45:00 +05:30] - Deployment Handshake Fix (Final Resolution)
+
+**Status:** Resolved Connectivity Issue
+
+**Changes:**
+- Activated Render backend service: `https://venom-backend-x2pj.onrender.com`.
+- Aligned `CORS_ORIGINS` on Render to authorize Vercel frontend.
+- Synchronized `VENOM_API_KEY`/`VENOM_BACKEND_API_KEY` across platforms.
+- Updated Vercel backend target envs to active Render URL.
+- Verified Next.js bridge route forwarding with upstream diagnostics.
+
+**Verification:**
+- `GET https://venom-backend-x2pj.onrender.com/health` => `200`
+- `GET https://venom-backend-x2pj.onrender.com/ready` => `200`
+- `GET https://dashboard-sigma-puce-87.vercel.app/api/system/ready` => `200` (`ready:true`)
+- `POST /api/engagements` via Vercel bridge => `201`
+- `GET /api/engagements` via Vercel bridge => `200` and includes `https://www.zeroops.in/`
+
+**Result:**
+- Live deployment handshake between Vercel and Render is restored.
+- Engagement persistence to MongoDB Atlas is confirmed from cloud path.
+- Telemetry polling path is active with backend readiness heartbeat green.
