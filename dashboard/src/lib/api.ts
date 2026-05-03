@@ -55,6 +55,7 @@ export type ExecutionJob = {
     title: string;
     description: string;
     recommendation: string;
+    exploitationPotential?: string;
     cve?: string | null;
     source: string;
     metadata?: Record<string, unknown>;

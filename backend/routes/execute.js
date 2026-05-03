@@ -4,6 +4,7 @@ const ExecutionJob = require("../models/ExecutionJob");
 const requireDb = require("../middleware/requireDb");
 const { runTool } = require("../services/executor");
 const { getTool, listTools } = require("../tooling/toolRegistry");
+const { toCamelCaseDeep } = require("../utils/prettyPrint");
 
 const router = express.Router();
 
@@ -115,7 +116,7 @@ router.post("/", requireDb, async (req, res, next) => {
     });
 
     try {
-      const output = await runTool(toolId, targetUrl);
+      const output = toCamelCaseDeep(await runTool(toolId, targetUrl));
       job.status = "success";
       job.output = output;
       job.findings = Array.isArray(output?.findings) ? output.findings : [];

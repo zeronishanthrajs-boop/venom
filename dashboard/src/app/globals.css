@@ -149,3 +149,12 @@ body {
   }
 }
 
+pre,
+code {
+  white-space: pre-wrap !important;
+  word-wrap: break-word !important;
+  overflow-wrap: anywhere !important;
+  overflow-x: hidden !important;
+  max-width: 100%;
+}
+

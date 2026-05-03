@@ -808,3 +808,27 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
   - `latestExecutionJob.output.technologyFingerprint` present
   - `latestExecutionJob.findings[]` present
   - `latestPlan.promptVersion = planning_v2_2026_05_03`
+
+## [2026-05-04 00:15:00 +05:30] - UI Precision & Logic Patch
+
+**Status:** Horizontal Scroll Resolved
+
+**Changes:**
+- Enforced forensic code-block wrapping to prevent horizontal layout overflow from raw JSON payloads:
+  - Added global `pre/code` wrapping rules in `dashboard/src/app/globals.css`
+  - Updated forensic containers in `dashboard/src/app/dashboard/page.tsx` with `max-w-full`, `overflow-hidden`, and wrapped `pre` blocks
+- Updated planning flow to auto-heal empty-plan state:
+  - When switching to Technical view, dashboard now checks for existing plans
+  - If no plans exist, it auto-generates a passive reconnaissance fallback plan before loading the forensic report
+- Truncated `responseBodyPreview` to 1000 characters in `backend/services/executor.js` to reduce UI lag risk
+- Added backend formatting consistency utilities:
+  - `backend/utils/prettyPrint.js` (camelCase deep transform + pretty JSON + syntax highlighting helper)
+  - Integrated pretty-printed JSON in engagement markdown report generation
+- Enriched findings detail:
+  - Added `exploitationPotential` support for medium/high/critical findings in `backend/tooling/vulnerabilityFeed.js`
+  - Added `exploitationPotential` field to `ExecutionJob` findings schema
+
+**Verification:**
+- Dashboard forensic cards no longer stretch sideways on long JSON payloads (desktop/mobile class-level fix applied).
+- Technical view now auto-generates plan data when none exists, replacing empty-plan dead-end behavior.
+- Preview payload size from header probe is capped at 1KB for frontend performance stability.

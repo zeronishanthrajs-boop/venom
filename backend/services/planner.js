@@ -1,7 +1,7 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
-const PROMPT_VERSION = "planning_v2_2026_05_03";
+const PROMPT_VERSION = "planning_v2_1_2026_05_04";
 const UNSAFE_TERMS =
   /exploit|payload|reverse shell|rce|privilege escalation|lateral movement|drop table|sqlmap/i;
 

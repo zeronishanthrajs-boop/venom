@@ -6,6 +6,8 @@ const Pattern = require("../models/Pattern");
 const engagementConstraints = require("../middleware/engagementConstraints");
 const requireDb = require("../middleware/requireDb");
 const { scorePatternForEngagement } = require("../services/patternEngine");
+const { PROMPT_VERSION } = require("../services/planner");
+const { toCamelCaseDeep, toPrettyPrintedJson } = require("../utils/prettyPrint");
 
 const router = express.Router();
 
@@ -55,6 +57,68 @@ function toSafeReportFileName(value) {
     .replace(/^-+|-+$/g, "");
 
   return normalized || "venom-engagement-report";
+}
+
+function buildPassiveReconFallbackPlan(engagement, createdBy) {
+  return {
+    engagementId: engagement._id,
+    promptVersion: PROMPT_VERSION,
+    plannerSource: "template",
+    model: "passive-recon-fallback-v1",
+    summary:
+      "Passive reconnaissance fallback generated automatically to seed forensic metadata when no plan existed.",
+    phases: [
+      {
+        name: "Passive reconnaissance bootstrap",
+        goal: "Collect non-invasive baseline metadata for planning and scoring.",
+        priorityScore: 10,
+        riskLevel: "low",
+        checks: [
+          "Capture HTTP headers and response metadata within authorized scope.",
+          "Collect DNS resolution and record consistency for the target hostname.",
+          "Collect TLS certificate chain and protocol metadata without active exploitation."
+        ],
+        evidence: [
+          "HTTP response/header fingerprint",
+          "DNS lookup and resolver outputs",
+          "TLS certificate subject/issuer/protocol details"
+        ],
+        stopConditions: [
+          "Target scope mismatch is detected.",
+          "Authorization window is expired or invalid.",
+          "Any step requires non-read-only behavior."
+        ]
+      }
+    ],
+    riskNotes: [
+      "Auto-fallback is read-only and non-destructive by design.",
+      "Any escalation beyond passive reconnaissance requires operator approval."
+    ],
+    disclaimers: [
+      "Generated due to missing prior plans to avoid empty forensic view.",
+      "Plan remains constrained to defined engagement scope and authorization."
+    ],
+    inputSnapshot: {
+      targetUrl: engagement.targetUrl,
+      targetType: engagement.targetType,
+      scope: engagement.scope,
+      constraints: engagement.constraints,
+      authorization: engagement.authorization
+    },
+    rawModelOutput: "",
+    createdBy
+  };
+}
+
+async function ensurePlansWithFallback(engagement, plans, userId) {
+  if (Array.isArray(plans) && plans.length > 0) {
+    return plans;
+  }
+
+  const fallbackPlan = await Plan.create(
+    buildPassiveReconFallbackPlan(engagement, userId)
+  );
+  return [fallbackPlan.toObject()];
 }
 
 function summarizeExecutionJobs(executionJobs) {
@@ -111,6 +175,16 @@ function buildEngagementReport({
     },
     latestPlan: plans[0] || null,
     latestExecutionJob: executionJobs[0] || null,
+    formatted: {
+      latestPlanPretty: plans[0] ? toPrettyPrintedJson(plans[0]) : null,
+      latestExecutionJobPretty: executionJobs[0]
+        ? toPrettyPrintedJson(executionJobs[0])
+        : null,
+      latestPlanCamelCase: plans[0] ? toCamelCaseDeep(plans[0]) : null,
+      latestExecutionJobCamelCase: executionJobs[0]
+        ? toCamelCaseDeep(executionJobs[0])
+        : null
+    },
     patternMatches,
     plans,
     executionJobs
@@ -180,7 +254,7 @@ function toMarkdownReport(report) {
       lines.push(`- Summary: ${plan.summary || "N/A"}`);
       lines.push("");
       lines.push("```json");
-      lines.push(JSON.stringify(plan, null, 2));
+      lines.push(toPrettyPrintedJson(plan));
       lines.push("```");
       lines.push("");
     });
@@ -207,7 +281,7 @@ function toMarkdownReport(report) {
       }
       lines.push("");
       lines.push("```json");
-      lines.push(JSON.stringify(job, null, 2));
+      lines.push(toPrettyPrintedJson(job));
       lines.push("```");
       lines.push("");
     });
@@ -283,7 +357,7 @@ router.get("/:id/report", requireDb, async (req, res, next) => {
       });
     }
 
-    const [plans, executionJobs, patterns] = await Promise.all([
+    const [rawPlans, executionJobs, patterns] = await Promise.all([
       Plan.find({ engagementId: engagement._id })
         .sort({ createdAt: -1 })
         .lean(),
@@ -292,6 +366,11 @@ router.get("/:id/report", requireDb, async (req, res, next) => {
         .lean(),
       Pattern.find().sort({ successRate: -1, recentSuccessRate: -1 }).limit(200).lean()
     ]);
+    const plans = await ensurePlansWithFallback(
+      engagement,
+      rawPlans,
+      req.user?.id || "system-auto-fallback"
+    );
 
     const patternMatches = patterns
       .map((pattern) => scorePatternForEngagement(pattern, engagement))

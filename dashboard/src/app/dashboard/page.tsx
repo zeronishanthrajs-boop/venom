@@ -344,6 +344,30 @@ export default function DashboardPage() {
     }
   }
 
+  async function ensurePassiveReconPlan(engagementId: string) {
+    if (!session) {
+      return;
+    }
+
+    const plans = await fetchPlansForEngagement(session, engagementId);
+    if (plans.length > 0) {
+      setLatestPlanByEngagement((prev) => ({
+        ...prev,
+        [engagementId]: plans[0] || null
+      }));
+      return;
+    }
+
+    const generated = await generatePlan(session, engagementId);
+    setLatestPlanByEngagement((prev) => ({
+      ...prev,
+      [engagementId]: generated
+    }));
+    setMessage(
+      "No plans existed for this engagement. Passive reconnaissance fallback plan generated automatically."
+    );
+  }
+
   async function handleRunHeadersProbe(engagementId: string) {
     if (!session) {
       return;
@@ -487,7 +511,8 @@ export default function DashboardPage() {
 
     if (checked) {
       try {
-        await loadReportForEngagement(engagementId);
+        await ensurePassiveReconPlan(engagementId);
+        await loadReportForEngagement(engagementId, true);
       } catch (requestError) {
         setError(
           requestError instanceof Error
@@ -913,7 +938,7 @@ export default function DashboardPage() {
                     </div>
 
                     {technicalViewEnabled ? (
-                      <div className="mt-3 space-y-2 rounded-lg border border-slate-200 bg-slate-950/95 p-3 text-xs text-slate-100">
+                      <div className="mt-3 w-full max-w-full space-y-2 overflow-hidden rounded-lg border border-slate-200 bg-slate-950/95 p-3 text-xs text-slate-100">
                         <p className="font-semibold uppercase tracking-wide text-slate-300">
                           Forensic View
                         </p>
@@ -945,7 +970,7 @@ export default function DashboardPage() {
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
                               Latest Execution Metadata
                             </p>
-                            <pre className="mt-1 max-h-56 overflow-auto rounded border border-slate-800 bg-slate-900 p-2">
+                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
                               {JSON.stringify(latestExecution, null, 2)}
                             </pre>
                           </div>
@@ -960,7 +985,7 @@ export default function DashboardPage() {
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
                               HTTP Response Body + Header Forensics
                             </p>
-                            <pre className="mt-1 max-h-56 overflow-auto rounded border border-slate-800 bg-slate-900 p-2">
+                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
                               {JSON.stringify(headersProbeJob.output, null, 2)}
                             </pre>
                           </div>
@@ -971,7 +996,7 @@ export default function DashboardPage() {
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
                               DNS Record Forensics
                             </p>
-                            <pre className="mt-1 max-h-56 overflow-auto rounded border border-slate-800 bg-slate-900 p-2">
+                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
                               {JSON.stringify(dnsProbeJob.output, null, 2)}
                             </pre>
                           </div>
@@ -982,7 +1007,7 @@ export default function DashboardPage() {
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
                               SSL/TLS Certificate Chain Forensics
                             </p>
-                            <pre className="mt-1 max-h-56 overflow-auto rounded border border-slate-800 bg-slate-900 p-2">
+                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
                               {JSON.stringify(tlsProbeJob.output, null, 2)}
                             </pre>
                           </div>
@@ -993,7 +1018,7 @@ export default function DashboardPage() {
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
                               Latest Plan Metadata
                             </p>
-                            <pre className="mt-1 max-h-56 overflow-auto rounded border border-slate-800 bg-slate-900 p-2">
+                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
                               {JSON.stringify(latestPlan, null, 2)}
                             </pre>
                           </div>

@@ -50,7 +50,7 @@ async function runHttpHeadersProbe(targetUrl, timeoutMs) {
     targetUrl,
     httpStatus: response.status,
     headers,
-    responseBodyPreview: responseBody.slice(0, 8000),
+    responseBodyPreview: responseBody.slice(0, 1000),
     responseBodyLength: responseBody.length,
     missingRecommendedHeaders,
     technologyFingerprint,
@@ -115,8 +115,8 @@ function runTlsMetadataProbe(targetUrl, timeoutMs) {
           certificate: {
             subject: cert.subject || null,
             issuer: cert.issuer || null,
-            valid_from: cert.valid_from || null,
-            valid_to: cert.valid_to || null,
+            validFrom: cert.valid_from || null,
+            validTo: cert.valid_to || null,
             subjectaltname: cert.subjectaltname || null,
             serialNumber: cert.serialNumber || null
           },
