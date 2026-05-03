@@ -782,3 +782,29 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
   - report summary now includes successRate
   - findings are promoted to telemetry alerts
   - decommission cleanup path verified
+
+## [2026-05-03 23:54:06 +05:30] - v0.8 Cloud Deployment + Smoke Verification
+
+**Status:** Live and verified on GitHub/Render/Vercel
+
+**Release:**
+- Git commit pushed: `ac0e25e`
+- Render deploy: `dep-d7rp3amrmc0c73dsuou0` (`live`)
+- Vercel deploy: `dpl_Go8U1R1hxDPnBdBbLaQhZv6VSfxu` (aliased to production)
+
+**Cloud checks:**
+- `GET https://venom-backend-x2pj.onrender.com/health` => `200`
+- `GET https://venom-backend-x2pj.onrender.com/ready` => `200`
+- `GET https://dashboard-sigma-puce-87.vercel.app/api/system/ready` => `200`
+
+**End-to-end v0.8 smoke (via Vercel bridge):**
+- Create engagement => `201`
+- Generate plan => `201`
+- Run header probe => `201`
+- Fetch report => `200`
+- Decommission => `200`
+- Report confirms:
+  - `summary.successRate` present
+  - `latestExecutionJob.output.technologyFingerprint` present
+  - `latestExecutionJob.findings[]` present
+  - `latestPlan.promptVersion = planning_v2_2026_05_03`
