@@ -4,6 +4,7 @@ import { verifyAuthToken } from "@/lib/auth";
 import { AUTH_COOKIE_NAME } from "@/lib/authConstants";
 
 export const runtime = "nodejs";
+const UPSTREAM_TIMEOUT_MS = 15000;
 
 type RouteContext = {
   params: Promise<{ path: string[] }>;
@@ -63,12 +64,43 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
   const bodyAllowed = !["GET", "HEAD"].includes(method);
   const rawBody = bodyAllowed ? await request.text() : "";
 
-  const upstreamResponse = await fetch(upstreamUrl, {
-    method,
-    headers: outboundHeaders,
-    body: bodyAllowed && rawBody ? rawBody : undefined,
-    cache: "no-store"
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  let upstreamResponse: Response;
+
+  try {
+    upstreamResponse = await fetch(upstreamUrl, {
+      method,
+      headers: outboundHeaders,
+      body: bodyAllowed && rawBody ? rawBody : undefined,
+      cache: "no-store",
+      signal: controller.signal
+    });
+  } catch (error) {
+    clearTimeout(timeout);
+
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return NextResponse.json(
+        {
+          error: `Upstream timeout after ${UPSTREAM_TIMEOUT_MS}ms`,
+          upstreamUrl
+        },
+        { status: 504 }
+      );
+    }
+
+    const message =
+      error instanceof Error ? error.message : "Unknown upstream fetch error";
+    return NextResponse.json(
+      {
+        error: `Upstream fetch failed: ${message}`,
+        upstreamUrl
+      },
+      { status: 502 }
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const payload = await upstreamResponse.arrayBuffer();
   const responseHeaders = new Headers();
@@ -76,6 +108,8 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
   if (contentType) {
     responseHeaders.set("content-type", contentType);
   }
+  responseHeaders.set("x-venom-upstream-url", upstreamUrl);
+  responseHeaders.set("x-venom-upstream-status", String(upstreamResponse.status));
 
   return new NextResponse(payload, {
     status: upstreamResponse.status,

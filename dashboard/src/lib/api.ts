@@ -156,17 +156,32 @@ function buildHeaders(session: VenomSession) {
   };
 }
 
+const API_TIMEOUT_MS = 15000;
+
 async function apiFetch(path: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
   try {
-    return await fetch(`/api/backend${path}`, {
+    const response = await fetch(`/api/backend${path}`, {
       ...init,
-      cache: "no-store"
+      cache: "no-store",
+      signal: controller.signal
     });
+    return response;
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(
+        `Bridge timeout after ${API_TIMEOUT_MS}ms. Backend may be offline or unreachable.`
+      );
+    }
+
     if (error instanceof TypeError) {
       throw new Error("Failed to reach dashboard bridge. Check network connectivity.");
     }
     throw error;
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
@@ -174,9 +189,36 @@ async function parseResponse<T>(response: Response): Promise<T> {
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    if (response.status === 503 && typeof payload?.error === "string") {
+    console.error("VENOM bridge request failed", {
+      status: response.status,
+      payload
+    });
+
+    if (response.status === 401) {
       throw new Error(
-        `${payload.error} Verify VENOM_BACKEND_BASE_URL, VENOM_BACKEND_API_KEY, and backend health.`
+        "Unauthorized request. Re-login and verify VENOM_BACKEND_API_KEY matches backend VENOM_API_KEY."
+      );
+    }
+
+    if (response.status === 404) {
+      throw new Error(
+        "Backend route/service not found (404). Verify VENOM_BACKEND_BASE_URL points to the active Render backend."
+      );
+    }
+
+    if (response.status === 503) {
+      const upstreamMessage =
+        typeof payload?.error === "string"
+          ? payload.error
+          : "Backend unavailable";
+      throw new Error(
+        `${upstreamMessage}. Check backend /ready, MongoDB health, and deployment status.`
+      );
+    }
+
+    if (response.status === 504) {
+      throw new Error(
+        "Backend timed out (504). Investigate Render service responsiveness and upstream network path."
       );
     }
 

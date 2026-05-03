@@ -604,3 +604,39 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 ### CHECK:6 final status
 - GitHub and Vercel are fully synchronized to latest code and notes.
 - Render endpoint configured in current env still reports no active server at the tested domain (`404`), so backend readiness from cloud remains blocked until the correct Render service URL/hook linkage is active.
+
+## [2026-05-03 21:45:00 +05:30] - Deployment Handshake Fix
+
+**Status:** Partial - Render backend endpoint unresolved (upstream 404)
+**Root Cause Analysis:**
+- Vercel login succeeds (`/api/auth/login` => 200).
+- Authenticated bridge call fails (`/api/backend/api/engagements` => 404).
+- `/api/system/ready` reports `source: https://venom-backend.onrender.com` and `upstreamStatus: 404`.
+- This confirms handshake failure is upstream service availability/URL mapping, not browser preflight.
+
+**Changes Applied:**
+- Re-validated Vercel environment alignment:
+  - `VENOM_BACKEND_BASE_URL=https://venom-backend.onrender.com`
+  - `NEXT_PUBLIC_VENOM_API_BASE_URL=https://venom-backend.onrender.com`
+  - `VENOM_BACKEND_API_KEY` overwritten to match local backend key source.
+- Added reliability diagnostics in frontend bridge client:
+  - timeout-based fetch handling
+  - explicit status-class error messages for `401`, `404`, `503`, `504`
+  - bridge failure logging context
+- Hardened server-side proxy route diagnostics:
+  - upstream timeout handling (`504`)
+  - upstream fetch failure handling (`502`)
+  - response headers exposing upstream URL/status for fast triage
+
+**Verification:**
+- `backend npm test` => pass (`6/6`)
+- `dashboard npm run lint` => pass
+- `dashboard npm run build` => pass
+- Live checks:
+  - `POST /api/auth/login` => 200
+  - `GET /api/backend/api/engagements` => 404 (authenticated)
+  - `GET /api/system/ready` => 503 with upstreamStatus 404
+
+**Pending to fully resolve:**
+- Activate/correct the Render backend service URL (current domain responds with `x-render-routing: no-server`).
+- After Render is active, run end-to-end create engagement verification for `https://www.zeroops.in/` and confirm Atlas persistence.
