@@ -1,4 +1,4 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 
 :root {
   --background: #e9f1f4;
@@ -37,3 +37,115 @@ body {
     radial-gradient(circle at 88% 4%, rgba(15, 79, 98, 0.16) 0%, transparent 30%),
     linear-gradient(180deg, #f7fbff 0%, #eaf2f7 100%);
 }
+
+.venom-noise {
+  opacity: 0.02;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.7) 0.45px, transparent 0.45px);
+  background-size: 3px 3px;
+}
+
+.venom-input {
+  border-bottom: 1px solid rgba(203, 213, 225, 0.25);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.venom-input:focus {
+  border-bottom-color: #d1ff00;
+  box-shadow: 0 8px 18px -12px rgba(209, 255, 0, 0.9);
+}
+
+.venom-glitch-btn::before,
+.venom-glitch-btn::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.venom-glitch-btn::before {
+  top: 0;
+  background: rgba(255, 62, 62, 0.9);
+}
+
+.venom-glitch-btn::after {
+  bottom: 0;
+  background: rgba(10, 10, 11, 0.65);
+}
+
+.venom-glitch-btn:hover::before,
+.venom-glitch-btn:hover::after {
+  opacity: 1;
+}
+
+.venom-glitch-btn:hover {
+  transform: translateY(-1px);
+  filter: saturate(1.08);
+}
+
+.venom-toast {
+  overflow: hidden;
+}
+
+.venom-toast::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(255, 62, 62, 0.16) 48%,
+    transparent 100%
+  );
+  animation: venom-scanline 1.9s linear infinite;
+}
+
+.venom-bootline {
+  animation: venom-fade-in 260ms ease-out both;
+}
+
+.venom-typewriter {
+  overflow: hidden;
+  white-space: nowrap;
+  border-right: 2px solid rgba(209, 255, 0, 0.8);
+  width: 0;
+  animation: venom-type 1.8s steps(24, end) forwards, venom-caret 920ms step-end infinite;
+}
+
+@keyframes venom-type {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+@keyframes venom-caret {
+  50% {
+    border-right-color: transparent;
+  }
+}
+
+@keyframes venom-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes venom-scanline {
+  0% {
+    transform: translateY(-120%);
+  }
+  100% {
+    transform: translateY(120%);
+  }
+}
+
