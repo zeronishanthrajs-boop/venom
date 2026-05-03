@@ -536,3 +536,52 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - Private credential login is enforced at server level.
 - Dashboard UI/UX is upgraded and production presentation is improved.
 - System is ready for push/deploy of this new secure frontend flow.
+
+---
+
+## 21) 3/5/26 21:27 + CHECK:5 - UI Hardening Pass (Errors Sweep + Password Eye Toggle + Deploy)
+
+### Scope executed
+1. Full error sweep and regression checks.
+2. Add password hide/show eye option on login.
+3. Re-verify runtime and build stability.
+4. Push to GitHub + redeploy Vercel + attempt Render rollout path.
+
+### Changes implemented
+1. Login UX security control:
+   - Added password visibility eye toggle (show/hide) in:
+     - [dashboard/src/app/login/page.tsx](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/app/login/page.tsx)
+2. Live readiness indicator plumbing (from prior tactical UI pass) retained and validated:
+   - [dashboard/src/app/api/system/ready/route.ts](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/app/api/system/ready/route.ts)
+3. Styling/runtime refinements retained and verified:
+   - [dashboard/src/app/globals.css](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/app/globals.css)
+4. Dependency update:
+   - Added `framer-motion` in dashboard package manifests.
+
+### Validation results (double-check)
+- `backend npm test` => pass (`6/6`)
+- `dashboard npm run lint` => pass
+- `dashboard npm run build` => pass
+- Local runtime smoke checks:
+  - `GET http://localhost:5000/health` => `200`
+  - `GET http://localhost:5000/ready` => `200`
+  - `GET http://localhost:3000/login` => `200`
+  - `GET http://localhost:3000/api/system/ready` => `200`
+
+### Deployment actions
+1. GitHub push:
+   - Repo: `https://github.com/zeronishanthrajs-boop/venom`
+   - Commit: `e3c5f6a`
+   - Status: pushed to `main`
+2. Vercel production deploy:
+   - Alias: `https://dashboard-sigma-puce-87.vercel.app`
+   - Login page check: `200`
+3. Render deployment status:
+   - Checked `https://venom-backend.onrender.com/health` => `404` (`x-render-routing: no-server`)
+   - Interpretation: backend service endpoint is not currently active/linked at that URL, so dashboard `/api/system/ready` on Vercel returns `503`.
+
+### CHECK:5 final status
+- Password eye toggle is implemented and working in code.
+- All local quality checks pass after changes.
+- Git + Vercel deploy completed successfully.
+- Render path still requires active backend service URL/hook linkage to clear readiness (`503` on Vercel heartbeat while Render endpoint remains `404`).
