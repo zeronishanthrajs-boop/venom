@@ -22,7 +22,11 @@ import {
   type MetricsOverview,
   type Plan
 } from "@/lib/api";
-import { clearSession, loadSession, type VenomSession } from "@/lib/session";
+import {
+  fetchSession,
+  logoutSession,
+  type VenomSession
+} from "@/lib/session";
 
 const emptyForm: CreateEngagementInput = {
   name: "",
@@ -41,7 +45,8 @@ function formatDate(value: string) {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [session] = useState<VenomSession | null>(() => loadSession());
+  const [session, setSession] = useState<VenomSession | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
   const [engagements, setEngagements] = useState<Engagement[]>([]);
   const [form, setForm] = useState<CreateEngagementInput>(emptyForm);
   const [loading, setLoading] = useState(true);
@@ -73,10 +78,28 @@ export default function DashboardPage() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    if (!session) {
-      router.replace("/login");
-    }
-  }, [router, session]);
+    let mounted = true;
+
+    (async () => {
+      const currentSession = await fetchSession();
+
+      if (!mounted) {
+        return;
+      }
+
+      if (!currentSession) {
+        router.replace("/login");
+        return;
+      }
+
+      setSession(currentSession);
+      setSessionReady(true);
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [router]);
 
   async function loadEngagementData(
     activeSession: VenomSession,
@@ -201,8 +224,8 @@ export default function DashboardPage() {
     }
   }
 
-  function handleLogout() {
-    clearSession();
+  async function handleLogout() {
+    await logoutSession();
     router.replace("/login");
   }
 
@@ -372,19 +395,32 @@ export default function DashboardPage() {
     }
   }
 
+  if (!sessionReady) {
+    return (
+      <main className="flex min-h-screen items-center justify-center px-6">
+        <div className="rounded-3xl border border-white/40 bg-white/80 px-6 py-4 shadow-lg backdrop-blur">
+          <p className="text-sm font-medium text-slate-700">
+            Verifying secure session...
+          </p>
+        </div>
+      </main>
+    );
+  }
+
   if (!session) {
     return null;
   }
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-8">
-      <header className="mb-8 rounded-2xl border border-black/10 bg-white/90 p-6 shadow-lg backdrop-blur-sm">
+    <main className="relative mx-auto w-full max-w-7xl px-4 py-8 lg:px-8">
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-64 rounded-b-[3rem] bg-gradient-to-r from-emerald-100/60 via-white/70 to-cyan-100/50 blur-2xl" />
+      <header className="mb-8 rounded-[28px] border border-white/70 bg-white/80 p-6 shadow-[0_24px_70px_rgba(15,23,42,0.14)] backdrop-blur-xl lg:p-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-accent">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-accent-strong">
               VENOM Security Dashboard
             </p>
-            <h1 className="mt-1 text-2xl font-bold text-foreground">
+            <h1 className="mt-2 text-3xl font-semibold text-foreground">
               Engagement Control Center
             </h1>
             <p className="mt-2 text-sm text-slate-600">
@@ -395,14 +431,14 @@ export default function DashboardPage() {
             <button
               type="button"
               onClick={() => void loadEngagementData(session, true)}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50"
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium shadow-sm transition hover:-translate-y-px hover:bg-slate-50"
             >
               Refresh
             </button>
             <button
               type="button"
-              onClick={handleLogout}
-              className="rounded-xl bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700"
+              onClick={() => void handleLogout()}
+              className="rounded-xl bg-gradient-to-r from-slate-800 to-slate-700 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-px"
             >
               Logout
             </button>
@@ -410,7 +446,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
-          <article className="rounded-xl border border-accent/20 bg-accent-soft px-4 py-3">
+          <article className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-slate-600">Total</p>
             <p className="text-2xl font-semibold">{summary.total}</p>
           </article>
@@ -426,7 +462,7 @@ export default function DashboardPage() {
       </header>
 
       <section className="mb-8 grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-        <article className="rounded-2xl border border-black/10 bg-white/90 p-5 shadow-lg backdrop-blur-sm">
+        <article className="rounded-3xl border border-white/70 bg-white/85 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.10)] backdrop-blur-sm">
           <h2 className="text-lg font-semibold">Week 7 Metrics</h2>
           <p className="mb-4 text-sm text-slate-600">
             Live performance and learning telemetry
@@ -479,7 +515,7 @@ export default function DashboardPage() {
           )}
         </article>
 
-        <article className="rounded-2xl border border-black/10 bg-white/90 p-5 shadow-lg backdrop-blur-sm">
+        <article className="rounded-3xl border border-white/70 bg-white/85 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.10)] backdrop-blur-sm">
           <h2 className="text-lg font-semibold">Alerts</h2>
           <p className="mb-4 text-sm text-slate-600">
             Automated health and budget warnings
@@ -506,7 +542,7 @@ export default function DashboardPage() {
       </section>
 
       <section className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-        <article className="rounded-2xl border border-black/10 bg-white/90 p-5 shadow-lg backdrop-blur-sm">
+        <article className="rounded-3xl border border-white/70 bg-white/85 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.10)] backdrop-blur-sm">
           <h2 className="text-lg font-semibold">Engagements</h2>
           <p className="mb-4 text-sm text-slate-600">
             Latest tests from the VENOM backend
@@ -660,7 +696,7 @@ export default function DashboardPage() {
           )}
         </article>
 
-        <article className="rounded-2xl border border-black/10 bg-white/90 p-5 shadow-lg backdrop-blur-sm">
+        <article className="rounded-3xl border border-white/70 bg-white/85 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.10)] backdrop-blur-sm">
           <h2 className="text-lg font-semibold">New Engagement</h2>
           <p className="mb-4 text-sm text-slate-600">
             Create and queue a new authorized target

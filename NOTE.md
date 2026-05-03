@@ -2,7 +2,7 @@
 
 **Project:** VENOM (Versatile Evolutionary Network Offensive Methodology)  
 **Version Snapshot:** `v0.7` (Weeks 1-7 implemented)  
-**Last Updated:** 2026-05-03 17:29:02 +05:30  
+**Last Updated:** 2026-05-03 18:04:25 +05:30  
 **Source Baseline:** Local code + runtime verification on this workspace
 
 ---
@@ -207,7 +207,7 @@
 ## 8) Runtime Verification (Latest)
 
 **Verification date:** 2026-05-02 (local)  
-**Run mode:** backend started with temporary `VENOM_API_KEY=week2-secret`, no MongoDB configured
+**Run mode:** backend started with temporary `VENOM_API_KEY=<redacted>`, no MongoDB configured
 
 | Check | HTTP Status | Result |
 |---|---:|---|
@@ -441,3 +441,98 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - Previously reported issues from recent chats are now addressed in code and docs.
 - Local stack is fully usable even without Atlas credentials due in-memory DB fallback.
 - Cloud deployment path is now explicit and documented; production still requires real `MONGODB_URI` and correct `NEXT_PUBLIC_VENOM_API_BASE_URL`.
+
+---
+
+## 19) 3/5/26 18:03 + CHECK:3 - MongoDB Atlas Integration (External URI)
+
+### Input received
+- Atlas user: `venom_user`
+- Cluster host: `cluster0.fzj0kz1.mongodb.net`
+- Password included `@`, so URI-safe encoding was required.
+
+### Implementation performed
+1. Updated `backend/.env` with real `MONGODB_URI` (external Atlas URI).
+2. Initial `mongodb+srv://...` startup failed in this environment with:
+   - `querySrv ECONNREFUSED _mongodb._tcp.cluster0.fzj0kz1.mongodb.net`
+3. Switched to equivalent non-SRV Atlas URI format (`mongodb://host1,host2,host3/...`) with:
+   - `ssl=true`
+   - `replicaSet=atlas-poloef-shard-0`
+   - `authSource=admin`
+   - `retryWrites=true`
+4. Restarted backend and validated connection source.
+
+### Validation results
+- Backend startup log:
+  - `MongoDB connected (external URI)`
+- `GET /health` => `200`
+  - `db.source: "external-uri"`
+  - `db.usingInMemory: false`
+- `GET /ready` => `200`
+- Smoke data test:
+  - Created engagement successfully via API
+  - Engagement list returned persisted record from Atlas
+
+### CHECK:3 final status
+- MongoDB side is now configured and active against real Atlas.
+- Local stack is operating on external persistent database (not in-memory fallback).
+
+---
+
+## 20) 3/5/26 18:59 + CHECK:4 - Render/Vercel Export + Private Login + UI/UX Upgrade
+
+### Request covered
+1. Export latest updates for Render and Vercel with related config files.
+2. Upgrade dashboard UI/UX quality.
+3. Restrict dashboard login to private credential access.
+
+### Implementation completed
+1. **Deployment/export files**
+   - Added [render.yaml](/mnt/data/c/Users/nisha/Music/VENOM/render.yaml)
+   - Added [dashboard/vercel.json](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/vercel.json)
+2. **Private login architecture (server-validated)**
+   - Added [dashboard/src/lib/auth.ts](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/lib/auth.ts)
+   - Added [dashboard/src/lib/authConstants.ts](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/lib/authConstants.ts)
+   - Added auth API routes:
+     - [dashboard/src/app/api/auth/login/route.ts](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/app/api/auth/login/route.ts)
+     - [dashboard/src/app/api/auth/session/route.ts](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/app/api/auth/session/route.ts)
+     - [dashboard/src/app/api/auth/logout/route.ts](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/app/api/auth/logout/route.ts)
+   - Added protected backend bridge route:
+     - [dashboard/src/app/api/backend/[...path]/route.ts](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/app/api/backend/[...path]/route.ts)
+   - Added route protection proxy:
+     - [dashboard/src/proxy.ts](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/proxy.ts)
+3. **Client auth/session flow update**
+   - Updated [dashboard/src/lib/session.ts](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/lib/session.ts) to cookie-backed session fetch/logout helpers.
+   - Updated [dashboard/src/lib/api.ts](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/lib/api.ts) to call `/api/backend/*` bridge (no client API-key field required).
+4. **UI/UX upgrade**
+   - Rebuilt login experience in [dashboard/src/app/login/page.tsx](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/app/login/page.tsx) with premium layout, strong visual hierarchy, and clearer operator messaging.
+   - Refined dashboard shell/cards in [dashboard/src/app/dashboard/page.tsx](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/app/dashboard/page.tsx).
+   - Updated typography/theme in:
+     - [dashboard/src/app/layout.tsx](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/app/layout.tsx)
+     - [dashboard/src/app/globals.css](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/src/app/globals.css)
+5. **Docs/env updates**
+   - Updated [docs/DEPLOYMENT.md](/mnt/data/c/Users/nisha/Music/VENOM/docs/DEPLOYMENT.md) with new Render + Vercel + private auth env flow.
+   - Updated [README.md](/mnt/data/c/Users/nisha/Music/VENOM/README.md) and [dashboard/README.md](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/README.md).
+   - Expanded [dashboard/.env.example](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/.env.example) with required private-auth + bridge variables.
+
+### Private credential configuration applied (local)
+- Created local-only [dashboard/.env.local](/mnt/data/c/Users/nisha/Music/VENOM/dashboard/.env.local) with:
+  - `VENOM_DASHBOARD_LOGIN_EMAIL=<private-email>`
+  - `VENOM_DASHBOARD_LOGIN_PASSWORD=<private-password>`
+  - bridge vars to backend (`VENOM_BACKEND_BASE_URL`, `VENOM_BACKEND_API_KEY`)
+- Note: `.env.local` is git-ignored by design.
+
+### Validation (CHECK:4)
+- `backend npm test` => pass (`6/6`)
+- `dashboard npm run build` => pass
+- Runtime smoke results:
+  - `GET http://localhost:3000/login` => `200`
+  - `POST /api/auth/login` with configured credential => `200`
+  - `GET /api/backend/api/engagements` with auth cookie => `200`
+  - `GET /api/backend/api/engagements` without auth cookie => `401`
+
+### CHECK:4 final status
+- Export/deploy artifacts for Render + Vercel are ready.
+- Private credential login is enforced at server level.
+- Dashboard UI/UX is upgraded and production presentation is improved.
+- System is ready for push/deploy of this new secure frontend flow.

@@ -1,29 +1,5 @@
 import type { VenomSession } from "./session";
 
-const STATIC_API_BASE_URL = process.env.NEXT_PUBLIC_VENOM_API_BASE_URL?.trim();
-
-function isLocalhost(hostname: string) {
-  return hostname === "localhost" || hostname === "127.0.0.1";
-}
-
-function resolveApiBaseUrl() {
-  if (STATIC_API_BASE_URL) {
-    return STATIC_API_BASE_URL;
-  }
-
-  if (typeof window === "undefined") {
-    return "http://localhost:5000";
-  }
-
-  if (isLocalhost(window.location.hostname)) {
-    return "http://localhost:5000";
-  }
-
-  throw new Error(
-    "API base URL is not configured for this deployment. Set NEXT_PUBLIC_VENOM_API_BASE_URL to your backend URL."
-  );
-}
-
 export type Engagement = {
   _id: string;
   name: string;
@@ -175,22 +151,20 @@ export type EngagementProgress = {
 function buildHeaders(session: VenomSession) {
   return {
     "Content-Type": "application/json",
-    "x-api-key": session.apiKey,
     "x-user-id": session.email,
     "x-user-role": session.role
   };
 }
 
-async function apiFetch(path: string, init: RequestInit) {
-  const apiBaseUrl = resolveApiBaseUrl();
-
+async function apiFetch(path: string, init: RequestInit): Promise<Response> {
   try {
-    return await fetch(`${apiBaseUrl}${path}`, init);
+    return await fetch(`/api/backend${path}`, {
+      ...init,
+      cache: "no-store"
+    });
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error(
-        `Failed to reach VENOM API at ${apiBaseUrl}. Verify backend URL, CORS_ORIGINS, and network connectivity.`
-      );
+      throw new Error("Failed to reach dashboard bridge. Check network connectivity.");
     }
     throw error;
   }
@@ -202,7 +176,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     if (response.status === 503 && typeof payload?.error === "string") {
       throw new Error(
-        `${payload.error} If running locally without Atlas, enable ENABLE_INMEMORY_DB=true in backend/.env.`
+        `${payload.error} Verify VENOM_BACKEND_BASE_URL, VENOM_BACKEND_API_KEY, and backend health.`
       );
     }
 

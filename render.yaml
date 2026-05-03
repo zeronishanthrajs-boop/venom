@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: venom-backend
+    env: node
+    plan: starter
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: ENABLE_INMEMORY_DB
+        value: "false"
+      - key: MONGODB_URI
+        sync: false
+      - key: VENOM_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-3-5-sonnet-latest
+      - key: VENOM_MONTHLY_BUDGET_USD
+        value: "400"

@@ -22,6 +22,7 @@ If `MONGODB_URI` is not set in development, backend automatically starts an in-m
 ## Dashboard Quick Start
 ```bash
 cd dashboard
+copy .env.example .env.local
 npm install
 npm run dev
 ```
@@ -49,16 +50,21 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
 - `GET /api/execute/:id`
 - `GET /api/execute/engagement/:engagementId`
 
-## Auth Headers
-- `x-api-key`: must match `VENOM_API_KEY` when configured
-- `x-user-id`: optional, defaults to `local-dev-user`
-- `x-user-role`: optional, defaults to `operator`
+## Dashboard Auth
+- Login is private and server-validated by:
+  - `VENOM_DASHBOARD_LOGIN_EMAIL`
+  - `VENOM_DASHBOARD_LOGIN_PASSWORD`
+- Dashboard sets an HTTP-only signed session cookie.
+- Browser requests call `/api/backend/*`, and dashboard server injects:
+  - `x-api-key` from `VENOM_BACKEND_API_KEY`
+  - `x-user-id` from session email
+  - `x-user-role` from session role
 
 ## Local Troubleshooting
-- If dashboard shows `Failed to fetch`, verify:
+- If dashboard shows backend bridge errors, verify:
   1. Backend is running on `http://localhost:5000`
-  2. `NEXT_PUBLIC_VENOM_API_BASE_URL` points to that backend
-  3. `CORS_ORIGINS` includes your dashboard origin (for example `http://localhost:3000`)
+  2. `VENOM_BACKEND_BASE_URL` points to backend
+  3. `VENOM_BACKEND_API_KEY` matches backend `VENOM_API_KEY`
 - If DB routes return `503`, either:
   1. Set a valid `MONGODB_URI`, or
   2. Set `ENABLE_INMEMORY_DB=true` for local development and restart backend
@@ -69,4 +75,8 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
   - `MONGODB_URI` (required for persistent data)
   - `CORS_ORIGINS` including dashboard URL
 - Dashboard (Vercel):
-  - `NEXT_PUBLIC_VENOM_API_BASE_URL=https://<your-backend-domain>`
+  - `VENOM_DASHBOARD_LOGIN_EMAIL`
+  - `VENOM_DASHBOARD_LOGIN_PASSWORD`
+  - `VENOM_DASHBOARD_SESSION_SECRET`
+  - `VENOM_BACKEND_BASE_URL=https://<your-backend-domain>`
+  - `VENOM_BACKEND_API_KEY=<same as backend VENOM_API_KEY>`

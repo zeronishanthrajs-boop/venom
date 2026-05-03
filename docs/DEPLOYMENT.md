@@ -1,52 +1,78 @@
 # VENOM Deployment Runbook
 
 ## Objective
-Deploy dashboard + backend with correct cross-origin configuration so API calls work in cloud.
+Deploy backend to Render and dashboard to Vercel using the newest secure flow:
+- Private dashboard login (email/password)
+- Signed session cookie
+- Server-side backend API bridge (dashboard never exposes API key field)
 
 ## 1) Backend Deployment (Render)
-1. Create a new Web Service from this GitHub repo.
+
+### Option A: Blueprint (recommended)
+1. In Render, choose **New +** -> **Blueprint**.
+2. Connect this repository.
+3. Render reads `render.yaml` from repo root and creates `venom-backend`.
+
+### Option B: Manual service
+1. Create **Web Service** from this repo.
 2. Root directory: `backend`
-3. Build command: `npm install`
+3. Build command: `npm ci`
 4. Start command: `npm start`
-5. Set environment variables:
-   - `PORT=5000`
-   - `VENOM_API_KEY=<strong-random-key>`
-   - `MONGODB_URI=<atlas-uri>`
-   - `CORS_ORIGINS=https://<dashboard-domain>`
-   - `ENABLE_INMEMORY_DB=false`
-6. Deploy and verify:
-   - `GET https://<backend-domain>/health` -> `200`
-   - `GET https://<backend-domain>/ready` -> `200`
+
+### Required backend environment variables
+- `NODE_ENV=production`
+- `PORT=5000`
+- `MONGODB_URI=<atlas-uri>`
+- `VENOM_API_KEY=<strong-random-key>`
+- `CORS_ORIGINS=https://<your-dashboard-domain>`
+- `ENABLE_INMEMORY_DB=false`
+- `CLAUDE_API_KEY=<optional>`
+- `CLAUDE_MODEL=claude-3-5-sonnet-latest`
+
+### Verify backend
+- `GET https://<backend-domain>/health` -> `200`
+- `GET https://<backend-domain>/ready` -> `200`
 
 ## 2) Dashboard Deployment (Vercel)
-1. Import the same repository and set root directory to `dashboard`.
-2. Set environment variable:
-   - `NEXT_PUBLIC_VENOM_API_BASE_URL=https://<backend-domain>`
-3. Deploy and verify:
-   - Open `https://<dashboard-domain>/login`
-   - Login with `VENOM_API_KEY` value from backend
-   - Open dashboard and click `Refresh`
 
-## 3) Cross-Origin Validation
-From a terminal:
+1. In Vercel, import this repository.
+2. **Root Directory**: `dashboard`
+3. Vercel uses `dashboard/vercel.json`.
 
-```bash
-curl -i -X OPTIONS "https://<backend-domain>/api/engagements" \
-  -H "Origin: https://<dashboard-domain>" \
-  -H "Access-Control-Request-Method: GET" \
-  -H "Access-Control-Request-Headers: x-api-key,x-user-id,x-user-role,content-type"
-```
+### Required dashboard environment variables
+- `VENOM_DASHBOARD_LOGIN_EMAIL=nishanthrajs01@gmail.com`
+- `VENOM_DASHBOARD_LOGIN_PASSWORD=<your-password>`
+- `VENOM_DASHBOARD_SESSION_SECRET=<long-random-secret>`
+- `VENOM_BACKEND_BASE_URL=https://<backend-domain>`
+- `VENOM_BACKEND_API_KEY=<same-value-as-backend-VENOM_API_KEY>`
+- `NEXT_PUBLIC_VENOM_API_BASE_URL=https://<backend-domain>`
 
-Expected:
-- `204 No Content`
-- `Access-Control-Allow-Origin: https://<dashboard-domain>`
+### Verify dashboard
+1. Open `https://<dashboard-domain>/login`.
+2. Login with configured private email/password.
+3. Open `/dashboard` and click `Refresh`.
+4. Create an engagement and confirm it appears in list.
+
+## 3) Data-Path Validation (important)
+The dashboard now calls `/api/backend/*` on Vercel, and that bridge forwards to Render using server-side API key.
+
+Quick checks:
+- Login works only with configured credentials.
+- Calling `https://<dashboard-domain>/api/backend/engagements` without session should return `401`.
+- After login, dashboard reads and writes engagements normally.
 
 ## 4) Common Failure Map
-- `Failed to fetch` in dashboard:
-  - Check `NEXT_PUBLIC_VENOM_API_BASE_URL`
-  - Check backend `CORS_ORIGINS`
-- `503 Database unavailable`:
-  - Check backend `MONGODB_URI`
-  - Check backend `/ready`
-- `401 Unauthorized`:
-  - API key mismatch between login form and backend `VENOM_API_KEY`
+- Login fails with valid credentials:
+  - Check `VENOM_DASHBOARD_LOGIN_EMAIL` and `VENOM_DASHBOARD_LOGIN_PASSWORD` in Vercel env.
+- Dashboard says backend bridge misconfigured:
+  - Set `VENOM_BACKEND_API_KEY` in Vercel env.
+- Dashboard loads but no data:
+  - Verify `VENOM_BACKEND_BASE_URL`.
+  - Verify backend `VENOM_API_KEY` matches dashboard `VENOM_BACKEND_API_KEY`.
+- `503` from backend endpoints:
+  - Check backend `MONGODB_URI` and `/ready`.
+
+## 5) Security Notes
+- Keep `VENOM_BACKEND_API_KEY`, dashboard login password, and session secret out of git.
+- Rotate credentials immediately if exposed.
+- Use separate credentials for production and local development.
