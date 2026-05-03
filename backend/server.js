@@ -1,0 +1,87 @@
+require("dotenv").config();
+const express = require("express");
+const cors = require("cors");
+const connectDB = require("./config/db");
+const authMiddleware = require("./middleware/auth");
+const activityLogger = require("./middleware/activityLogger");
+const engagementsRouter = require("./routes/engagements");
+const patternsRouter = require("./routes/patterns");
+const planRouter = require("./routes/plan");
+const executeRouter = require("./routes/execute");
+const learnRouter = require("./routes/learn");
+const metricsRouter = require("./routes/metrics");
+
+const app = express();
+const port = process.env.PORT || 5000;
+const allowedOrigins = (process.env.CORS_ORIGINS ||
+  "http://localhost:3000,http://127.0.0.1:3000").split(",");
+const normalizedAllowedOrigins = allowedOrigins
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin || normalizedAllowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error("Origin not allowed by CORS"));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "x-api-key", "x-user-id", "x-user-role"],
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+app.use(express.json());
+
+app.get("/", (_req, res) => {
+  res.status(200).send("OK");
+});
+
+app.get("/health", (_req, res) => {
+  res.status(200).json({
+    status: "up",
+    service: "venom-backend",
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.use("/api/engagements", authMiddleware, activityLogger, engagementsRouter);
+app.use("/api/patterns", authMiddleware, activityLogger, patternsRouter);
+app.use("/api/plan", authMiddleware, activityLogger, planRouter);
+app.use("/api/execute", authMiddleware, activityLogger, executeRouter);
+app.use("/api/learn", authMiddleware, activityLogger, learnRouter);
+app.use("/api/metrics", authMiddleware, activityLogger, metricsRouter);
+
+app.use((error, _req, res, _next) => {
+  const isJsonParseError =
+    error?.type === "entity.parse.failed" ||
+    (error?.name === "SyntaxError" && error?.status === 400) ||
+    (error?.statusCode === 400 &&
+      typeof error?.message === "string" &&
+      /json/i.test(error.message));
+
+  if (isJsonParseError) {
+    return res.status(400).json({
+      error: "Invalid JSON body"
+    });
+  }
+
+  console.error("Unhandled API error:", error);
+  res.status(500).json({
+    error: "Internal server error"
+  });
+});
+
+async function bootstrap() {
+  await connectDB();
+  app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
+  });
+}
+
+bootstrap().catch((error) => {
+  console.error("Failed to start backend:", error.message);
+  process.exit(1);
+});
