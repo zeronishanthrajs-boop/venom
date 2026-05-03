@@ -4,6 +4,10 @@ const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { URL } = require("node:url");
 const { getTool } = require("../tooling/toolRegistry");
+const {
+  analyzeHeaderFindings,
+  detectTechnologyFingerprint
+} = require("../tooling/vulnerabilityFeed");
 
 const execFileAsync = promisify(execFile);
 const SENSITIVE_HEADERS = [
@@ -29,6 +33,7 @@ async function runHttpHeadersProbe(targetUrl, timeoutMs) {
     signal: getTimeoutSignal(timeoutMs)
   });
 
+  const responseBody = await response.text().catch(() => "");
   const headers = {};
   response.headers.forEach((value, key) => {
     headers[key] = value;
@@ -37,13 +42,19 @@ async function runHttpHeadersProbe(targetUrl, timeoutMs) {
   const missingRecommendedHeaders = SENSITIVE_HEADERS.filter(
     (header) => !headers[header]
   );
+  const technologyFingerprint = detectTechnologyFingerprint(headers, responseBody);
+  const findings = analyzeHeaderFindings(headers);
 
   return {
     tool: "http_headers_probe",
     targetUrl,
     httpStatus: response.status,
     headers,
-    missingRecommendedHeaders
+    responseBodyPreview: responseBody.slice(0, 8000),
+    responseBodyLength: responseBody.length,
+    missingRecommendedHeaders,
+    technologyFingerprint,
+    findings
   };
 }
 
@@ -56,21 +67,26 @@ async function runDnsLookupProbe(targetUrl) {
     dns.resolve6(host)
   ]);
 
+  const lookupPayload =
+    lookupAll.status === "fulfilled"
+      ? lookupAll.value
+      : { error: lookupAll.reason?.message || "lookup failed" };
+  const resolve4Payload =
+    resolve4.status === "fulfilled"
+      ? resolve4.value
+      : { error: resolve4.reason?.message || "resolve4 failed" };
+  const resolve6Payload =
+    resolve6.status === "fulfilled"
+      ? resolve6.value
+      : { error: resolve6.reason?.message || "resolve6 failed" };
+
   return {
     tool: "dns_lookup_probe",
     targetHost: host,
-    lookup:
-      lookupAll.status === "fulfilled"
-        ? lookupAll.value
-        : { error: lookupAll.reason?.message || "lookup failed" },
-    resolve4:
-      resolve4.status === "fulfilled"
-        ? resolve4.value
-        : { error: resolve4.reason?.message || "resolve4 failed" },
-    resolve6:
-      resolve6.status === "fulfilled"
-        ? resolve6.value
-        : { error: resolve6.reason?.message || "resolve6 failed" }
+    lookup: lookupPayload,
+    resolve4: resolve4Payload,
+    resolve6: resolve6Payload,
+    findings: []
   };
 }
 
@@ -103,7 +119,8 @@ function runTlsMetadataProbe(targetUrl, timeoutMs) {
             valid_to: cert.valid_to || null,
             subjectaltname: cert.subjectaltname || null,
             serialNumber: cert.serialNumber || null
-          }
+          },
+          findings: []
         };
 
         socket.end();
@@ -155,7 +172,8 @@ async function runZapBaselinePassive(targetUrl, timeoutSeconds) {
     summary:
       "Passive baseline output captured. Review warning/fail sections before triage.",
     stdout,
-    stderr
+    stderr,
+    findings: []
   };
 }
 

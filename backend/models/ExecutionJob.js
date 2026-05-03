@@ -29,6 +29,29 @@ const executionJobSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {}
     },
+    findings: {
+      type: [
+        {
+          id: { type: String, default: "" },
+          severity: {
+            type: String,
+            enum: ["critical", "high", "medium", "low", "info"],
+            default: "low"
+          },
+          category: { type: String, default: "" },
+          title: { type: String, default: "" },
+          description: { type: String, default: "" },
+          recommendation: { type: String, default: "" },
+          cve: { type: String, default: null },
+          source: { type: String, default: "" },
+          metadata: {
+            type: mongoose.Schema.Types.Mixed,
+            default: {}
+          }
+        }
+      ],
+      default: []
+    },
     rawOutput: {
       type: String,
       default: ""

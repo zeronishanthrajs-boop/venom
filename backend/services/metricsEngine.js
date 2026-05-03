@@ -21,6 +21,10 @@ function extractFindingCount(job) {
   const output = job.output || {};
   let findings = 0;
 
+  if (Array.isArray(job.findings)) {
+    findings += job.findings.length;
+  }
+
   if (Array.isArray(output.missingRecommendedHeaders)) {
     findings += output.missingRecommendedHeaders.length;
   }
@@ -36,6 +40,22 @@ function extractFindingCount(job) {
   }
 
   return findings;
+}
+
+function severityRank(severity) {
+  if (severity === "critical") {
+    return 4;
+  }
+  if (severity === "high") {
+    return 3;
+  }
+  if (severity === "medium") {
+    return 2;
+  }
+  if (severity === "low") {
+    return 1;
+  }
+  return 0;
 }
 
 function computeJobSummary(jobs) {
@@ -222,6 +242,38 @@ function generateAlerts(jobs, patterns, budgetUsd = 400) {
         message: `${timeoutCount}/${lastDayTerminal.length} terminal jobs timed out in the last 24h.`
       });
     }
+  }
+
+  const recentJobs = jobs.filter((job) => {
+    const createdAt = job.createdAt ? new Date(job.createdAt) : null;
+    return createdAt && createdAt >= dayAgo;
+  });
+
+  const findingAlerts = [];
+  for (const job of recentJobs) {
+    if (!Array.isArray(job.findings)) {
+      continue;
+    }
+
+    for (const finding of job.findings) {
+      const sev = finding?.severity || "low";
+      if (severityRank(sev) < severityRank("medium")) {
+        continue;
+      }
+
+      findingAlerts.push({
+        id: `finding-${job._id}-${finding.id || finding.title || "unknown"}`,
+        severity: sev === "critical" ? "high" : sev,
+        title: finding.title || "Security finding detected",
+        message: `${finding.description || "Review finding details."} (tool=${job.toolId}${
+          finding.cve ? `, ${finding.cve}` : ""
+        })`
+      });
+    }
+  }
+
+  if (findingAlerts.length > 0) {
+    alerts.push(...findingAlerts.slice(0, 10));
   }
 
   return alerts;

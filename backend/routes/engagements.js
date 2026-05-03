@@ -91,13 +91,23 @@ function buildEngagementReport({
   patternMatches
 }) {
   const jobSummary = summarizeExecutionJobs(executionJobs);
+  const terminalCount =
+    jobSummary.successfulJobs +
+    jobSummary.failedJobs +
+    jobSummary.blockedJobs +
+    jobSummary.timeoutJobs;
+  const successRate =
+    terminalCount === 0
+      ? 0
+      : Number((jobSummary.successfulJobs / terminalCount).toFixed(4));
 
   return {
     generatedAt: new Date().toISOString(),
     engagement,
     summary: {
       totalPlans: plans.length,
-      ...jobSummary
+      ...jobSummary,
+      successRate
     },
     latestPlan: plans[0] || null,
     latestExecutionJob: executionJobs[0] || null,

@@ -745,3 +745,40 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
   - Report markdown endpoint => `200` with `Content-Type: text/markdown`
   - Decommission delete => `ok: true`
   - Post-delete checks => engagement `404`, remaining plans `0`, remaining jobs `0`
+
+## [2026-05-03 23:34:11 +05:30] - Advanced Recon & Detailed Scanning Prep
+
+**Status:** v0.8 Planning Phase Initialized
+
+**Changes:**
+- Engineered a new detailed-scanning planning prompt for Planning Agent v2.0:
+  - Added `backend/prompts/planning-agent-v2.txt`
+  - Updated planner runtime to use v2 prompt and `planning_v2_2026_05_03`
+  - Added phase-level `priorityScore` and `riskLevel` normalization + persistence
+- Expanded forensic execution telemetry:
+  - `ExecutionJob` now stores structured `findings[]`
+  - `http_headers_probe` now captures:
+    - response body preview
+    - technology fingerprint hints
+    - vulnerability/header-hardening findings
+  - Added vulnerability signal engine: `backend/tooling/vulnerabilityFeed.js`
+- Integrated findings into Week 7 alerts telemetry:
+  - Metrics pipeline now surfaces medium+ finding alerts from recent jobs
+- Hardened lifecycle management remains active:
+  - `DELETE /api/engagements/:id` cascades cleanup of associated plans/jobs
+  - Red Decommission action is available in Detailed/Forensic view
+
+**Next Steps:**
+- Expand Docker-gated passive scanners coverage (ZAP baseline tuning + optional Nikto passive profile).
+- Extend findings correlation into multi-tool forensic timeline and alert dedup logic.
+- Add cloud smoke verification for v0.8 after deployment to Render/Vercel.
+
+**Verification Snapshot (local v0.8):**
+- `backend npm test` => pass (`8/8`)
+- `dashboard npm run lint` => pass
+- `dashboard npm run build` => pass
+- Port-isolated API check (`PORT=5051`):
+  - header probe includes fingerprint + responseBodyPreview + findings
+  - report summary now includes successRate
+  - findings are promoted to telemetry alerts
+  - decommission cleanup path verified

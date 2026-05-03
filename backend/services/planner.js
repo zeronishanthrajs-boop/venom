@@ -1,7 +1,7 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
-const PROMPT_VERSION = "planning_v1_2026_05_02";
+const PROMPT_VERSION = "planning_v2_2026_05_03";
 const UNSAFE_TERMS =
   /exploit|payload|reverse shell|rce|privilege escalation|lateral movement|drop table|sqlmap/i;
 
@@ -25,6 +25,8 @@ function templatePlan(engagement) {
       {
         name: "API inventory",
         goal: "Map exposed endpoints and auth requirements.",
+        priorityScore: 9,
+        riskLevel: "low",
         checks: [
           "Enumerate documented endpoints and methods.",
           "Classify endpoints by authentication requirements.",
@@ -39,6 +41,8 @@ function templatePlan(engagement) {
       {
         name: "Control validation",
         goal: "Verify common API security controls.",
+        priorityScore: 8,
+        riskLevel: "medium",
         checks: [
           "Check token handling and expiration behavior.",
           "Validate input handling and schema enforcement.",
@@ -53,6 +57,8 @@ function templatePlan(engagement) {
       {
         name: "Surface discovery",
         goal: "Identify reachable assets and service inventory.",
+        priorityScore: 9,
+        riskLevel: "low",
         checks: [
           "List reachable hosts within approved ranges.",
           "Identify open ports and exposed service banners.",
@@ -64,6 +70,8 @@ function templatePlan(engagement) {
       {
         name: "Configuration review",
         goal: "Validate secure baseline on discovered services.",
+        priorityScore: 8,
+        riskLevel: "medium",
         checks: [
           "Review TLS and certificate posture.",
           "Check protocol and service configuration hygiene.",
@@ -78,6 +86,8 @@ function templatePlan(engagement) {
       {
         name: "Web surface mapping",
         goal: "Catalog pages, entry points, and auth boundaries.",
+        priorityScore: 9,
+        riskLevel: "low",
         checks: [
           "Enumerate reachable pages and forms in scope.",
           "Identify authentication and session boundaries.",
@@ -89,6 +99,8 @@ function templatePlan(engagement) {
       {
         name: "App control checks",
         goal: "Validate common web application security controls.",
+        priorityScore: 8,
+        riskLevel: "medium",
         checks: [
           "Review input validation and output encoding behavior.",
           "Assess session management and cookie attributes.",
@@ -136,6 +148,19 @@ function normalizePlan(rawPlan) {
       return {
         name: typeof phase.name === "string" ? phase.name : "Unnamed phase",
         goal: typeof phase.goal === "string" ? phase.goal : "No goal provided",
+        priorityScore:
+          Number.isFinite(Number(phase.priorityScore)) &&
+          Number(phase.priorityScore) >= 1 &&
+          Number(phase.priorityScore) <= 10
+            ? Number(phase.priorityScore)
+            : 5,
+        riskLevel:
+          typeof phase.riskLevel === "string" &&
+          ["low", "medium", "high", "critical"].includes(
+            phase.riskLevel.toLowerCase()
+          )
+            ? phase.riskLevel.toLowerCase()
+            : "medium",
         checks: filteredChecks,
         evidence: Array.isArray(phase.evidence)
           ? phase.evidence.filter((item) => typeof item === "string")
@@ -151,12 +176,7 @@ function normalizePlan(rawPlan) {
 }
 
 async function loadSystemPrompt() {
-  const promptPath = path.join(
-    __dirname,
-    "..",
-    "prompts",
-    "planning-agent-v1.txt"
-  );
+  const promptPath = path.join(__dirname, "..", "prompts", "planning-agent-v2.txt");
   return fs.readFile(promptPath, "utf8");
 }
 

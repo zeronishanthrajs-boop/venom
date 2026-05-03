@@ -118,6 +118,7 @@ router.post("/", requireDb, async (req, res, next) => {
       const output = await runTool(toolId, targetUrl);
       job.status = "success";
       job.output = output;
+      job.findings = Array.isArray(output?.findings) ? output.findings : [];
       if (typeof output?.stdout === "string") {
         job.rawOutput = output.stdout;
       }
@@ -130,6 +131,7 @@ router.post("/", requireDb, async (req, res, next) => {
         job.status = "failed";
       }
       job.errorMessage = error?.message || "Execution failed";
+      job.findings = [];
     }
 
     job.finishedAt = new Date();

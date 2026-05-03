@@ -27,6 +27,8 @@ export type Plan = {
   phases: Array<{
     name: string;
     goal: string;
+    priorityScore?: number;
+    riskLevel?: "low" | "medium" | "high" | "critical";
     checks: string[];
     evidence: string[];
     stopConditions: string[];
@@ -46,6 +48,17 @@ export type ExecutionJob = {
   durationMs?: number;
   output?: Record<string, unknown>;
   rawOutput?: string;
+  findings?: Array<{
+    id: string;
+    severity: "critical" | "high" | "medium" | "low" | "info";
+    category: string;
+    title: string;
+    description: string;
+    recommendation: string;
+    cve?: string | null;
+    source: string;
+    metadata?: Record<string, unknown>;
+  }>;
   errorMessage?: string;
   createdAt: string;
 };
@@ -68,6 +81,7 @@ export type EngagementReport = {
     blockedJobs: number;
     timeoutJobs: number;
     runningJobs: number;
+    successRate: number;
   };
   latestPlan: Plan | null;
   latestExecutionJob: ExecutionJob | null;
@@ -154,7 +168,7 @@ export type MetricsOverview = {
 
 export type AlertItem = {
   id: string;
-  severity: "high" | "medium" | "low";
+  severity: "critical" | "high" | "medium" | "low";
   title: string;
   message: string;
 };

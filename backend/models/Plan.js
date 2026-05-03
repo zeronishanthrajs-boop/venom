@@ -4,6 +4,17 @@ const planPhaseSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
     goal: { type: String, required: true },
+    priorityScore: {
+      type: Number,
+      min: 1,
+      max: 10,
+      default: 5
+    },
+    riskLevel: {
+      type: String,
+      enum: ["low", "medium", "high", "critical"],
+      default: "medium"
+    },
     checks: { type: [String], default: [] },
     evidence: { type: [String], default: [] },
     stopConditions: { type: [String], default: [] }

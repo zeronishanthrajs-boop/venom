@@ -717,18 +717,29 @@ export default function DashboardPage() {
             <p className="text-sm text-slate-500">No active alerts.</p>
           ) : (
             <div className="space-y-3">
-              {alerts.map((alert) => (
-                <article
-                  key={alert.id}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2"
-                >
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    {alert.severity}
-                  </p>
-                  <p className="font-medium">{alert.title}</p>
-                  <p className="text-sm text-slate-600">{alert.message}</p>
-                </article>
-              ))}
+              {alerts.map((alert) => {
+                const severityStyle =
+                  alert.severity === "critical"
+                    ? "border-rose-400 bg-rose-50"
+                    : alert.severity === "high"
+                    ? "border-rose-300 bg-rose-50/80"
+                    : alert.severity === "medium"
+                    ? "border-amber-300 bg-amber-50/80"
+                    : "border-slate-200 bg-white";
+
+                return (
+                  <article
+                    key={alert.id}
+                    className={`rounded-xl border px-3 py-2 ${severityStyle}`}
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      {alert.severity}
+                    </p>
+                    <p className="font-medium">{alert.title}</p>
+                    <p className="text-sm text-slate-600">{alert.message}</p>
+                  </article>
+                );
+              })}
             </div>
           )}
         </article>
@@ -758,6 +769,18 @@ export default function DashboardPage() {
                   latestExecutionByEngagement[engagement._id] ||
                   null;
                 const topPatterns = report?.patternMatches?.slice(0, 3) || [];
+                const headersProbeJob =
+                  report?.executionJobs?.find(
+                    (job) => job.toolId === "http_headers_probe"
+                  ) || null;
+                const dnsProbeJob =
+                  report?.executionJobs?.find(
+                    (job) => job.toolId === "dns_lookup_probe"
+                  ) || null;
+                const tlsProbeJob =
+                  report?.executionJobs?.find(
+                    (job) => job.toolId === "tls_metadata_probe"
+                  ) || null;
 
                 return (
                   <article
@@ -872,25 +895,27 @@ export default function DashboardPage() {
                           ? "Learning..."
                           : "Run Learning"}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteId(engagement._id)}
-                        disabled={Boolean(deletingById[engagement._id])}
-                        className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        <TrashIcon />
-                        <span>
-                          {deletingById[engagement._id]
-                            ? "Removing..."
-                            : "Decommission"}
-                        </span>
-                      </button>
+                      {technicalViewEnabled ? (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(engagement._id)}
+                          disabled={Boolean(deletingById[engagement._id])}
+                          className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          <TrashIcon />
+                          <span>
+                            {deletingById[engagement._id]
+                              ? "Removing..."
+                              : "Decommission"}
+                          </span>
+                        </button>
+                      ) : null}
                     </div>
 
                     {technicalViewEnabled ? (
                       <div className="mt-3 space-y-2 rounded-lg border border-slate-200 bg-slate-950/95 p-3 text-xs text-slate-100">
                         <p className="font-semibold uppercase tracking-wide text-slate-300">
-                          Technical Report
+                          Forensic View
                         </p>
                         {topPatterns.length > 0 ? (
                           <div>
@@ -930,6 +955,39 @@ export default function DashboardPage() {
                           </p>
                         )}
 
+                        {headersProbeJob?.output ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              HTTP Response Body + Header Forensics
+                            </p>
+                            <pre className="mt-1 max-h-56 overflow-auto rounded border border-slate-800 bg-slate-900 p-2">
+                              {JSON.stringify(headersProbeJob.output, null, 2)}
+                            </pre>
+                          </div>
+                        ) : null}
+
+                        {dnsProbeJob?.output ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              DNS Record Forensics
+                            </p>
+                            <pre className="mt-1 max-h-56 overflow-auto rounded border border-slate-800 bg-slate-900 p-2">
+                              {JSON.stringify(dnsProbeJob.output, null, 2)}
+                            </pre>
+                          </div>
+                        ) : null}
+
+                        {tlsProbeJob?.output ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              SSL/TLS Certificate Chain Forensics
+                            </p>
+                            <pre className="mt-1 max-h-56 overflow-auto rounded border border-slate-800 bg-slate-900 p-2">
+                              {JSON.stringify(tlsProbeJob.output, null, 2)}
+                            </pre>
+                          </div>
+                        ) : null}
+
                         {latestPlan ? (
                           <div>
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
@@ -945,6 +1003,16 @@ export default function DashboardPage() {
                       </div>
                     ) : (
                       <>
+                        {report?.summary ? (
+                          <p className="mt-2 text-xs text-slate-600">
+                            Executive metrics:{" "}
+                            <span className="font-medium">
+                              Success {(report.summary.successRate * 100).toFixed(1)}%,
+                              jobs {report.summary.totalExecutionJobs}, plans{" "}
+                              {report.summary.totalPlans}
+                            </span>
+                          </p>
+                        ) : null}
                         {latestPlan ? (
                           <p className="mt-2 text-xs text-slate-600">
                             Latest plan:{" "}
