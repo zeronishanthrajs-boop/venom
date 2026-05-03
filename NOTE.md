@@ -640,3 +640,25 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 **Pending to fully resolve:**
 - Activate/correct the Render backend service URL (current domain responds with `x-render-routing: no-server`).
 - After Render is active, run end-to-end create engagement verification for `https://www.zeroops.in/` and confirm Atlas persistence.
+
+## 23) 3/5/26 21:47 + CHECK:7 - Post-Patch Cloud/Local Verification
+
+### Live cloud handshake classification
+- `POST https://dashboard-sigma-puce-87.vercel.app/api/auth/login` => `200`
+- Authenticated bridge call:
+  - `GET /api/backend/api/engagements` => `404`
+  - Response headers now include:
+    - `x-venom-upstream-url: https://venom-backend.onrender.com/api/engagements`
+    - `x-venom-upstream-status: 404`
+- `GET /api/system/ready` => `503` with payload showing:
+  - `source: https://venom-backend.onrender.com`
+  - `upstreamStatus: 404`
+
+### Interpretation
+- Handshake failure is upstream Render service availability/URL mapping (`no-server`), not client auth and not browser preflight.
+
+### Local persistence sanity check (Atlas)
+- Local backend run against external Atlas URI:
+  - `POST /api/engagements` => `201`
+  - `GET /api/engagements` => `200`
+- Confirms DB write/read path is healthy once backend endpoint is reachable.
