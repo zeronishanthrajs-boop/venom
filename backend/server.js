@@ -1,7 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const connectDB = require("./config/db");
+const { connectDB, getDbStatus, stopInMemoryServer } = require("./config/db");
 const authMiddleware = require("./middleware/auth");
 const activityLogger = require("./middleware/activityLogger");
 const engagementsRouter = require("./routes/engagements");
@@ -40,9 +40,30 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/health", (_req, res) => {
+  const db = getDbStatus();
   res.status(200).json({
     status: "up",
     service: "venom-backend",
+    db,
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get("/ready", (_req, res) => {
+  const db = getDbStatus();
+  if (db.readyState === 1) {
+    return res.status(200).json({
+      status: "ready",
+      db,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  return res.status(503).json({
+    status: "not_ready",
+    db,
+    error:
+      "Database is not connected. Configure MONGODB_URI or enable ENABLE_INMEMORY_DB for local development.",
     timestamp: new Date().toISOString()
   });
 });
@@ -80,6 +101,19 @@ async function bootstrap() {
     console.log(`Server running on port ${port}`);
   });
 }
+
+async function shutdown() {
+  try {
+    await stopInMemoryServer();
+  } catch (error) {
+    console.error("Error during in-memory DB shutdown:", error.message);
+  } finally {
+    process.exit(0);
+  }
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 bootstrap().catch((error) => {
   console.error("Failed to start backend:", error.message);

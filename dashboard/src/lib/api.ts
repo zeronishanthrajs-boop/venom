@@ -1,7 +1,28 @@
 import type { VenomSession } from "./session";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_VENOM_API_BASE_URL || "http://localhost:5000";
+const STATIC_API_BASE_URL = process.env.NEXT_PUBLIC_VENOM_API_BASE_URL?.trim();
+
+function isLocalhost(hostname: string) {
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
+function resolveApiBaseUrl() {
+  if (STATIC_API_BASE_URL) {
+    return STATIC_API_BASE_URL;
+  }
+
+  if (typeof window === "undefined") {
+    return "http://localhost:5000";
+  }
+
+  if (isLocalhost(window.location.hostname)) {
+    return "http://localhost:5000";
+  }
+
+  throw new Error(
+    "API base URL is not configured for this deployment. Set NEXT_PUBLIC_VENOM_API_BASE_URL to your backend URL."
+  );
+}
 
 export type Engagement = {
   _id: string;
@@ -160,10 +181,31 @@ function buildHeaders(session: VenomSession) {
   };
 }
 
+async function apiFetch(path: string, init: RequestInit) {
+  const apiBaseUrl = resolveApiBaseUrl();
+
+  try {
+    return await fetch(`${apiBaseUrl}${path}`, init);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(
+        `Failed to reach VENOM API at ${apiBaseUrl}. Verify backend URL, CORS_ORIGINS, and network connectivity.`
+      );
+    }
+    throw error;
+  }
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    if (response.status === 503 && typeof payload?.error === "string") {
+      throw new Error(
+        `${payload.error} If running locally without Atlas, enable ENABLE_INMEMORY_DB=true in backend/.env.`
+      );
+    }
+
     const message =
       typeof payload?.error === "string"
         ? payload.error
@@ -177,7 +219,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
 export async function fetchEngagements(
   session: VenomSession
 ): Promise<Engagement[]> {
-  const response = await fetch(`${API_BASE_URL}/api/engagements`, {
+  const response = await apiFetch("/api/engagements", {
     method: "GET",
     headers: buildHeaders(session),
     cache: "no-store"
@@ -196,7 +238,7 @@ export async function createEngagement(
     now.getTime() + 1000 * 60 * 60 * 24 * 7
   ).toISOString();
 
-  const response = await fetch(`${API_BASE_URL}/api/engagements`, {
+  const response = await apiFetch("/api/engagements", {
     method: "POST",
     headers: buildHeaders(session),
     body: JSON.stringify({
@@ -232,7 +274,7 @@ export async function generatePlan(
   session: VenomSession,
   engagementId: string
 ): Promise<Plan> {
-  const response = await fetch(`${API_BASE_URL}/api/plan`, {
+  const response = await apiFetch("/api/plan", {
     method: "POST",
     headers: buildHeaders(session),
     body: JSON.stringify({ engagementId })
@@ -245,8 +287,8 @@ export async function fetchPlansForEngagement(
   session: VenomSession,
   engagementId: string
 ): Promise<Plan[]> {
-  const response = await fetch(
-    `${API_BASE_URL}/api/plan/engagement/${engagementId}`,
+  const response = await apiFetch(
+    `/api/plan/engagement/${engagementId}`,
     {
       method: "GET",
       headers: buildHeaders(session),
@@ -262,7 +304,7 @@ export async function runExecutionJob(
   engagementId: string,
   toolId: string
 ): Promise<ExecutionJob> {
-  const response = await fetch(`${API_BASE_URL}/api/execute`, {
+  const response = await apiFetch("/api/execute", {
     method: "POST",
     headers: buildHeaders(session),
     body: JSON.stringify({
@@ -278,8 +320,8 @@ export async function fetchExecutionJobs(
   session: VenomSession,
   engagementId: string
 ): Promise<ExecutionJob[]> {
-  const response = await fetch(
-    `${API_BASE_URL}/api/execute/engagement/${engagementId}`,
+  const response = await apiFetch(
+    `/api/execute/engagement/${engagementId}`,
     {
       method: "GET",
       headers: buildHeaders(session),
@@ -294,8 +336,8 @@ export async function fetchMatchedPatterns(
   session: VenomSession,
   engagementId: string
 ): Promise<MatchResponse> {
-  const response = await fetch(
-    `${API_BASE_URL}/api/patterns/match?engagementId=${encodeURIComponent(
+  const response = await apiFetch(
+    `/api/patterns/match?engagementId=${encodeURIComponent(
       engagementId
     )}`,
     {
@@ -312,7 +354,7 @@ export async function runLearning(
   session: VenomSession,
   engagementId: string
 ): Promise<LearnResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/learn`, {
+  const response = await apiFetch("/api/learn", {
     method: "POST",
     headers: buildHeaders(session),
     body: JSON.stringify({ engagementId })
@@ -324,7 +366,7 @@ export async function runLearning(
 export async function fetchMetricsOverview(
   session: VenomSession
 ): Promise<MetricsOverview> {
-  const response = await fetch(`${API_BASE_URL}/api/metrics/overview`, {
+  const response = await apiFetch("/api/metrics/overview", {
     method: "GET",
     headers: buildHeaders(session),
     cache: "no-store"
@@ -334,7 +376,7 @@ export async function fetchMetricsOverview(
 }
 
 export async function fetchAlerts(session: VenomSession): Promise<AlertsResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/metrics/alerts`, {
+  const response = await apiFetch("/api/metrics/alerts", {
     method: "GET",
     headers: buildHeaders(session),
     cache: "no-store"
@@ -346,7 +388,7 @@ export async function fetchAlerts(session: VenomSession): Promise<AlertsResponse
 export async function fetchAllProgress(
   session: VenomSession
 ): Promise<EngagementProgress[]> {
-  const response = await fetch(`${API_BASE_URL}/api/metrics/progress`, {
+  const response = await apiFetch("/api/metrics/progress", {
     method: "GET",
     headers: buildHeaders(session),
     cache: "no-store"

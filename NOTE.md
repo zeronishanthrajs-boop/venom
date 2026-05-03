@@ -2,7 +2,7 @@
 
 **Project:** VENOM (Versatile Evolutionary Network Offensive Methodology)  
 **Version Snapshot:** `v0.7` (Weeks 1-7 implemented)  
-**Last Updated:** 2026-05-03 15:50:34 +05:30  
+**Last Updated:** 2026-05-03 17:29:02 +05:30  
 **Source Baseline:** Local code + runtime verification on this workspace
 
 ---
@@ -357,3 +357,87 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - Local stack is stable for UI/API interaction.
 - Remaining known blocker is unchanged and expected:
   - `MONGODB_URI` is empty, so DB-backed endpoints return `503` by design.
+
+---
+
+## 17) 3/5/26 17:27 + CHECK:1 - Consolidated Issue List + Full Implementation Plan
+
+### Issues flagged across recent chats
+1. Dashboard showed `Failed to fetch` (cross-origin/API reachability ambiguity).
+2. Cloud deployment risk: dashboard default API target can be `localhost` when env is missing.
+3. Local productivity blocker: DB-backed routes were unusable when `MONGODB_URI` was empty.
+4. Backend had no real test suite (`npm test` placeholder only).
+5. Deployment guidance was fragmented (missing a single end-to-end cloud runbook).
+
+### Implementation plan to solve all issues
+1. **Backend resilience + observability**
+   - Add in-memory MongoDB fallback for local development when `MONGODB_URI` is absent.
+   - Expose DB status in health response and add readiness endpoint.
+   - Keep DB-gating middleware strict for non-connected states.
+2. **Dashboard API reliability**
+   - Improve API base URL resolution behavior:
+     - localhost dev fallback remains.
+     - non-localhost deployment requires explicit API base env.
+   - Improve network and `503` error messaging for actionable operator feedback.
+3. **Quality baseline**
+   - Replace placeholder backend test script with real test cases.
+4. **Deployment readiness**
+   - Expand env templates with required keys.
+   - Add explicit cloud deployment runbook.
+   - Update README files for local/cloud behavior parity.
+
+### Execution (implemented)
+1. Backend local DB fallback + status tracking:
+   - `backend/config/db.js`
+     - added `mongodb-memory-server` fallback
+     - added `getDbStatus()` and `stopInMemoryServer()`
+2. Backend runtime endpoints and shutdown:
+   - `backend/server.js`
+     - `/health` now includes DB status
+     - added `/ready` endpoint (`200` when DB connected, `503` otherwise)
+     - graceful shutdown stops in-memory DB
+3. DB gate error clarity:
+   - `backend/middleware/requireDb.js`
+4. Env templates expanded:
+   - `backend/.env.example`:
+     - `ENABLE_INMEMORY_DB`
+     - `INMEMORY_DB_NAME`
+     - `NEXT_PUBLIC_DASHBOARD_URL`
+5. Dashboard API reliability improvements:
+   - `dashboard/src/lib/api.ts`
+     - deployment-safe API base resolution
+     - actionable fetch failure messages
+     - enriched `503` guidance
+6. Backend test suite added:
+   - `backend/tests/patternEngine.test.js`
+   - `backend/package.json` test script changed to `node --test tests/**/*.test.js`
+7. Deployment docs added:
+   - `docs/DEPLOYMENT.md`
+8. Documentation updated:
+   - `README.md`
+   - `dashboard/README.md`
+
+---
+
+## 18) 3/5/26 17:27 + CHECK:2 - Revalidation After Full Implementation
+
+### Runtime/API checks
+- `GET http://localhost:5000/health` => `200`
+  - DB state now reports connected via in-memory fallback:
+    - `readyState: 1`
+    - `source: in-memory`
+- `GET http://localhost:5000/ready` => `200`
+- `GET http://localhost:5000/api/engagements` (auth) => `200`
+- `GET http://localhost:5000/api/patterns` (auth) => `200`
+- `OPTIONS http://localhost:5000/api/engagements` (browser preflight) => `204`
+- `GET http://localhost:3000/login` => `200`
+- `GET http://localhost:3000/dashboard` => `200`
+
+### Build/Test checks
+- `backend npm test` => pass (`6/6` tests)
+- `dashboard npm run build` => pass
+
+### Final status
+- Previously reported issues from recent chats are now addressed in code and docs.
+- Local stack is fully usable even without Atlas credentials due in-memory DB fallback.
+- Cloud deployment path is now explicit and documented; production still requires real `MONGODB_URI` and correct `NEXT_PUBLIC_VENOM_API_BASE_URL`.

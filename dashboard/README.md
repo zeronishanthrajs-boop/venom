@@ -28,7 +28,9 @@ Set backend URL before running in production-like setups:
 NEXT_PUBLIC_VENOM_API_BASE_URL=http://localhost:5000
 ```
 
-If omitted, the app defaults to `http://localhost:5000`.
+Behavior:
+- Localhost development (`localhost:3000`): defaults to `http://localhost:5000` when env is omitted.
+- Non-localhost deployment (for example Vercel): `NEXT_PUBLIC_VENOM_API_BASE_URL` must be set to a reachable backend URL.
 
 ## Backend Requirements
 - `VENOM_API_KEY` must be set in backend `.env`

@@ -17,6 +17,7 @@ npm run dev
 
 Server defaults to `http://localhost:5000`.
 Local browser CORS allowlist is controlled via `CORS_ORIGINS` in `backend/.env` (default allows `localhost:3000` and `127.0.0.1:3000`).
+If `MONGODB_URI` is not set in development, backend automatically starts an in-memory MongoDB instance when `ENABLE_INMEMORY_DB=true`.
 
 ## Dashboard Quick Start
 ```bash
@@ -28,6 +29,8 @@ npm run dev
 Dashboard defaults to `http://localhost:3000` and calls backend at `http://localhost:5000`.
 
 ## API Endpoints
+- `GET /health`
+- `GET /ready`
 - `POST /api/engagements`
 - `GET /api/engagements`
 - `GET /api/engagements/:id`
@@ -56,3 +59,14 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
   1. Backend is running on `http://localhost:5000`
   2. `NEXT_PUBLIC_VENOM_API_BASE_URL` points to that backend
   3. `CORS_ORIGINS` includes your dashboard origin (for example `http://localhost:3000`)
+- If DB routes return `503`, either:
+  1. Set a valid `MONGODB_URI`, or
+  2. Set `ENABLE_INMEMORY_DB=true` for local development and restart backend
+
+## Cloud Deploy Minimum Env
+- Backend (Render):
+  - `VENOM_API_KEY`
+  - `MONGODB_URI` (required for persistent data)
+  - `CORS_ORIGINS` including dashboard URL
+- Dashboard (Vercel):
+  - `NEXT_PUBLIC_VENOM_API_BASE_URL=https://<your-backend-domain>`
