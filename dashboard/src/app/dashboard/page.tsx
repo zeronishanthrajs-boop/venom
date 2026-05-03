@@ -4,9 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   createEngagement,
+  deleteEngagement,
   fetchAlerts,
   fetchAllProgress,
   fetchExecutionJobs,
+  fetchEngagementReport,
   fetchMetricsOverview,
   fetchMatchedPatterns,
   fetchPlansForEngagement,
@@ -17,11 +19,14 @@ import {
   type AlertItem,
   type CreateEngagementInput,
   type Engagement,
+  type EngagementReport,
   type EngagementProgress,
   type ExecutionJob,
   type MetricsOverview,
   type Plan
 } from "@/lib/api";
+import { downloadEngagementReport, type ReportViewMode } from "@/lib/reports";
+import { Switch } from "@/components/ui/switch";
 import {
   fetchSession,
   logoutSession,
@@ -35,12 +40,55 @@ const emptyForm: CreateEngagementInput = {
   targetType: "website"
 };
 
-function formatDate(value: string) {
+function formatDate(value?: string) {
+  if (!value) {
+    return "Unknown";
+  }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return "Unknown";
   }
   return date.toLocaleString();
+}
+
+function DownloadIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3.5 w-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M4 21h16" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3.5 w-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6v14H5V6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
+  );
 }
 
 export default function DashboardPage() {
@@ -67,6 +115,17 @@ export default function DashboardPage() {
   const [learningSummaryByEngagement, setLearningSummaryByEngagement] = useState<
     Record<string, string | null>
   >({});
+  const [reportByEngagement, setReportByEngagement] = useState<
+    Record<string, EngagementReport | null>
+  >({});
+  const [viewModeByEngagement, setViewModeByEngagement] = useState<
+    Record<string, ReportViewMode>
+  >({});
+  const [downloadingById, setDownloadingById] = useState<Record<string, boolean>>(
+    {}
+  );
+  const [deletingById, setDeletingById] = useState<Record<string, boolean>>({});
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [metricsOverview, setMetricsOverview] = useState<MetricsOverview | null>(
     null
   );
@@ -237,6 +296,9 @@ export default function DashboardPage() {
     }),
     [engagements]
   );
+  const engagementPendingDelete = engagements.find(
+    (item) => item._id === confirmDeleteId
+  );
 
   async function handleGeneratePlan(engagementId: string) {
     if (!session) {
@@ -392,6 +454,137 @@ export default function DashboardPage() {
       );
     } finally {
       setLearningById((prev) => ({ ...prev, [engagementId]: false }));
+    }
+  }
+
+  async function loadReportForEngagement(
+    engagementId: string,
+    forceRefresh = false
+  ) {
+    if (!session) {
+      return null;
+    }
+
+    const existing = reportByEngagement[engagementId];
+    if (existing && !forceRefresh) {
+      return existing;
+    }
+
+    const report = await fetchEngagementReport(session, engagementId);
+    setReportByEngagement((prev) => ({
+      ...prev,
+      [engagementId]: report
+    }));
+    return report;
+  }
+
+  async function handleViewModeToggle(engagementId: string, checked: boolean) {
+    const nextMode: ReportViewMode = checked ? "detailed" : "summary";
+    setViewModeByEngagement((prev) => ({
+      ...prev,
+      [engagementId]: nextMode
+    }));
+
+    if (checked) {
+      try {
+        await loadReportForEngagement(engagementId);
+      } catch (requestError) {
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Failed to load technical report."
+        );
+      }
+    }
+  }
+
+  async function handleDownloadReport(engagementId: string) {
+    if (!session) {
+      return;
+    }
+
+    setDownloadingById((prev) => ({ ...prev, [engagementId]: true }));
+    setError("");
+    setMessage("");
+
+    try {
+      const report = await loadReportForEngagement(engagementId, true);
+      if (!report) {
+        throw new Error("No report data available for this engagement.");
+      }
+
+      const viewMode = viewModeByEngagement[engagementId] || "summary";
+      await downloadEngagementReport(report, {
+        format: "markdown",
+        viewMode
+      });
+      setMessage("Report downloaded successfully.");
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to download report."
+      );
+    } finally {
+      setDownloadingById((prev) => ({ ...prev, [engagementId]: false }));
+    }
+  }
+
+  async function handleDecommissionEngagement(engagementId: string) {
+    if (!session) {
+      return;
+    }
+
+    setDeletingById((prev) => ({ ...prev, [engagementId]: true }));
+    setError("");
+    setMessage("");
+
+    try {
+      const result = await deleteEngagement(session, engagementId);
+      setConfirmDeleteId(null);
+      setLatestPlanByEngagement((prev) => {
+        const next = { ...prev };
+        delete next[engagementId];
+        return next;
+      });
+      setLatestExecutionByEngagement((prev) => {
+        const next = { ...prev };
+        delete next[engagementId];
+        return next;
+      });
+      setTopMatchByEngagement((prev) => {
+        const next = { ...prev };
+        delete next[engagementId];
+        return next;
+      });
+      setLearningSummaryByEngagement((prev) => {
+        const next = { ...prev };
+        delete next[engagementId];
+        return next;
+      });
+      setReportByEngagement((prev) => {
+        const next = { ...prev };
+        delete next[engagementId];
+        return next;
+      });
+      setViewModeByEngagement((prev) => {
+        const next = { ...prev };
+        delete next[engagementId];
+        return next;
+      });
+      setMessage(
+        `Engagement removed. Deleted ${result.plansDeleted} plan(s) and ${result.executionJobsDeleted} execution job(s).`
+      );
+      await loadEngagementData(session, false);
+      await loadWeek7Telemetry(session);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to remove engagement."
+      );
+    } finally {
+      setDeletingById((prev) => ({ ...prev, [engagementId]: false }));
     }
   }
 
@@ -554,144 +747,264 @@ export default function DashboardPage() {
             <p className="text-sm text-slate-500">No engagements yet.</p>
           ) : (
             <div className="space-y-3">
-              {engagements.map((engagement) => (
-                <article
-                  key={engagement._id}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-3"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="font-semibold text-foreground">
-                        {engagement.name}
-                      </p>
-                      <p className="text-sm text-slate-600">
-                        {engagement.targetUrl}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {formatDate(engagement.createdAt)}
-                      </p>
-                    </div>
-                    <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold uppercase">
-                      {engagement.status}
-                    </span>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void handleGeneratePlan(engagement._id)}
-                      disabled={Boolean(planningById[engagement._id])}
-                      className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {planningById[engagement._id]
-                        ? "Generating..."
-                        : "Generate Plan"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleLoadLatestPlan(engagement._id)}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                    >
-                      View Latest Plan
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleRunHeadersProbe(engagement._id)}
-                      disabled={Boolean(executingById[engagement._id])}
-                      className="rounded-lg border border-accent/40 bg-white px-3 py-1.5 text-xs font-semibold text-accent transition hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {executingById[engagement._id]
-                        ? "Running Probe..."
-                        : "Run Headers Probe"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleLoadLatestExecution(engagement._id)}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                    >
-                      View Latest Probe
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleMatchPatterns(engagement._id)}
-                      disabled={Boolean(matchingById[engagement._id])}
-                      className="rounded-lg border border-sky-300 bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {matchingById[engagement._id]
-                        ? "Matching..."
-                        : "Match Patterns"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleRunLearning(engagement._id)}
-                      disabled={Boolean(learningById[engagement._id])}
-                      className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {learningById[engagement._id]
-                        ? "Learning..."
-                        : "Run Learning"}
-                    </button>
-                  </div>
-                  {latestPlanByEngagement[engagement._id] ? (
-                    <p className="mt-2 text-xs text-slate-600">
-                      Latest plan:{" "}
-                      <span className="font-medium">
-                        {latestPlanByEngagement[engagement._id]?.summary}
-                      </span>
-                    </p>
-                  ) : null}
-                  {latestExecutionByEngagement[engagement._id] ? (
-                    <p className="mt-1 text-xs text-slate-600">
-                      Latest probe:{" "}
-                      <span className="font-medium">
-                        {latestExecutionByEngagement[engagement._id]?.toolId}
-                      </span>{" "}
-                      {"->"}{" "}
-                      <span className="font-medium uppercase">
-                        {latestExecutionByEngagement[engagement._id]?.status}
-                      </span>
-                    </p>
-                  ) : null}
-                  {topMatchByEngagement[engagement._id] ? (
-                    <p className="mt-1 text-xs text-slate-600">
-                      Top match:{" "}
-                      <span className="font-medium">
-                        {topMatchByEngagement[engagement._id]?.name}
-                      </span>{" "}
-                      (
-                      {topMatchByEngagement[engagement._id]?.score.toFixed(2)})
-                    </p>
-                  ) : null}
-                  {learningSummaryByEngagement[engagement._id] ? (
-                    <p className="mt-1 text-xs text-slate-600">
-                      Learning:{" "}
-                      <span className="font-medium">
-                        {learningSummaryByEngagement[engagement._id]}
-                      </span>
-                    </p>
-                  ) : null}
-                  {progressByEngagement[engagement._id] ? (
-                    <div className="mt-2">
-                      <div className="mb-1 flex items-center justify-between text-xs text-slate-600">
-                        <span>
-                          Progress:{" "}
-                          {progressByEngagement[engagement._id].currentPhase}
-                        </span>
-                        <span>
-                          {progressByEngagement[engagement._id].progressPercent}%
-                        </span>
+              {engagements.map((engagement) => {
+                const viewMode = viewModeByEngagement[engagement._id] || "summary";
+                const technicalViewEnabled = viewMode === "detailed";
+                const report = reportByEngagement[engagement._id];
+                const latestPlan =
+                  report?.latestPlan || latestPlanByEngagement[engagement._id] || null;
+                const latestExecution =
+                  report?.latestExecutionJob ||
+                  latestExecutionByEngagement[engagement._id] ||
+                  null;
+                const topPatterns = report?.patternMatches?.slice(0, 3) || [];
+
+                return (
+                  <article
+                    key={engagement._id}
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-3"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="font-semibold text-foreground">
+                          {engagement.name}
+                        </p>
+                        <p className="text-sm text-slate-600">
+                          {engagement.targetUrl}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {formatDate(engagement.createdAt)}
+                        </p>
                       </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-                        <div
-                          className="h-full rounded-full bg-accent transition-all"
-                          style={{
-                            width: `${progressByEngagement[engagement._id].progressPercent}%`
-                          }}
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold uppercase">
+                        {engagement.status}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Deep-Dive
+                        </p>
+                        <p className="text-xs text-slate-600">
+                          Toggle technical report mode
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-slate-600">
+                          {technicalViewEnabled ? "Technical" : "Executive"}
+                        </span>
+                        <Switch
+                          checked={technicalViewEnabled}
+                          onCheckedChange={(checked) =>
+                            void handleViewModeToggle(engagement._id, checked)
+                          }
+                          aria-label={`Toggle technical report mode for ${engagement.name}`}
                         />
                       </div>
                     </div>
-                  ) : null}
-                </article>
-              ))}
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleGeneratePlan(engagement._id)}
+                        disabled={Boolean(planningById[engagement._id])}
+                        className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {planningById[engagement._id]
+                          ? "Generating..."
+                          : "Generate Plan"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleLoadLatestPlan(engagement._id)}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        View Latest Plan
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleRunHeadersProbe(engagement._id)}
+                        disabled={Boolean(executingById[engagement._id])}
+                        className="rounded-lg border border-accent/40 bg-white px-3 py-1.5 text-xs font-semibold text-accent transition hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {executingById[engagement._id]
+                          ? "Running Probe..."
+                          : "Run Headers Probe"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleLoadLatestExecution(engagement._id)}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        View Latest Probe
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDownloadReport(engagement._id)}
+                        disabled={Boolean(downloadingById[engagement._id])}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        <DownloadIcon />
+                        <span>
+                          {downloadingById[engagement._id]
+                            ? "Downloading..."
+                            : "Download Report"}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleMatchPatterns(engagement._id)}
+                        disabled={Boolean(matchingById[engagement._id])}
+                        className="rounded-lg border border-sky-300 bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {matchingById[engagement._id]
+                          ? "Matching..."
+                          : "Match Patterns"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleRunLearning(engagement._id)}
+                        disabled={Boolean(learningById[engagement._id])}
+                        className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {learningById[engagement._id]
+                          ? "Learning..."
+                          : "Run Learning"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(engagement._id)}
+                        disabled={Boolean(deletingById[engagement._id])}
+                        className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        <TrashIcon />
+                        <span>
+                          {deletingById[engagement._id]
+                            ? "Removing..."
+                            : "Decommission"}
+                        </span>
+                      </button>
+                    </div>
+
+                    {technicalViewEnabled ? (
+                      <div className="mt-3 space-y-2 rounded-lg border border-slate-200 bg-slate-950/95 p-3 text-xs text-slate-100">
+                        <p className="font-semibold uppercase tracking-wide text-slate-300">
+                          Technical Report
+                        </p>
+                        {topPatterns.length > 0 ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              Pattern Match Scores
+                            </p>
+                            <ul className="mt-1 space-y-1">
+                              {topPatterns.map((item) => (
+                                <li key={item.patternId}>
+                                  {item.patternName} | score=
+                                  {item.applicabilityScore.toFixed(2)} | confidence=
+                                  {item.confidence.toFixed(2)}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : (
+                          <p className="text-slate-400">
+                            No pattern scores loaded yet. Run &quot;Match Patterns&quot; or
+                            download
+                            the report.
+                          </p>
+                        )}
+
+                        {latestExecution ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              Latest Execution Metadata
+                            </p>
+                            <pre className="mt-1 max-h-56 overflow-auto rounded border border-slate-800 bg-slate-900 p-2">
+                              {JSON.stringify(latestExecution, null, 2)}
+                            </pre>
+                          </div>
+                        ) : (
+                          <p className="text-slate-400">
+                            No execution metadata available yet.
+                          </p>
+                        )}
+
+                        {latestPlan ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              Latest Plan Metadata
+                            </p>
+                            <pre className="mt-1 max-h-56 overflow-auto rounded border border-slate-800 bg-slate-900 p-2">
+                              {JSON.stringify(latestPlan, null, 2)}
+                            </pre>
+                          </div>
+                        ) : (
+                          <p className="text-slate-400">No plan metadata available yet.</p>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        {latestPlan ? (
+                          <p className="mt-2 text-xs text-slate-600">
+                            Latest plan:{" "}
+                            <span className="font-medium">{latestPlan.summary}</span>
+                          </p>
+                        ) : null}
+                        {latestExecution ? (
+                          <p className="mt-1 text-xs text-slate-600">
+                            Latest probe:{" "}
+                            <span className="font-medium">{latestExecution.toolId}</span>{" "}
+                            {"->"}{" "}
+                            <span className="font-medium uppercase">
+                              {latestExecution.status}
+                            </span>
+                          </p>
+                        ) : null}
+                        {topMatchByEngagement[engagement._id] ? (
+                          <p className="mt-1 text-xs text-slate-600">
+                            Top match:{" "}
+                            <span className="font-medium">
+                              {topMatchByEngagement[engagement._id]?.name}
+                            </span>{" "}
+                            ({topMatchByEngagement[engagement._id]?.score.toFixed(2)})
+                          </p>
+                        ) : null}
+                        {learningSummaryByEngagement[engagement._id] ? (
+                          <p className="mt-1 text-xs text-slate-600">
+                            Learning:{" "}
+                            <span className="font-medium">
+                              {learningSummaryByEngagement[engagement._id]}
+                            </span>
+                          </p>
+                        ) : null}
+                      </>
+                    )}
+
+                    {progressByEngagement[engagement._id] ? (
+                      <div className="mt-2">
+                        <div className="mb-1 flex items-center justify-between text-xs text-slate-600">
+                          <span>
+                            Progress:{" "}
+                            {progressByEngagement[engagement._id].currentPhase}
+                          </span>
+                          <span>
+                            {progressByEngagement[engagement._id].progressPercent}%
+                          </span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                          <div
+                            className="h-full rounded-full bg-accent transition-all"
+                            style={{
+                              width: `${progressByEngagement[engagement._id].progressPercent}%`
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
             </div>
           )}
         </article>
@@ -777,6 +1090,44 @@ export default function DashboardPage() {
           </form>
         </article>
       </section>
+
+      {engagementPendingDelete ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/45 px-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <h3 className="text-lg font-semibold text-slate-900">
+              Confirm Decommission
+            </h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Remove engagement{" "}
+              <span className="font-semibold text-slate-900">
+                {engagementPendingDelete.name}
+              </span>
+              ? This will permanently delete associated plans and execution jobs.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteId(null)}
+                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  void handleDecommissionEngagement(engagementPendingDelete._id)
+                }
+                disabled={Boolean(deletingById[engagementPendingDelete._id])}
+                className="rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {deletingById[engagementPendingDelete._id]
+                  ? "Removing..."
+                  : "Remove Task"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

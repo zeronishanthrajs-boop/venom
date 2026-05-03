@@ -712,3 +712,36 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 
 **Result:**
 - GitHub, Render, and Vercel are synchronized on latest implementation state.
+
+## [2026-05-03 22:48:00 +05:30] - Tactical Reporting & Lifecycle Update
+
+**Status:** Implementation Complete
+
+**Changes:**
+- Added `DELETE /api/engagements/:id` in backend with cascading cleanup for related `Plan` and `ExecutionJob` documents.
+- Added `GET /api/engagements/:id/report` with aggregated report output:
+  - `format=json` for structured dashboard consumption
+  - `format=markdown` for downloadable technical reporting stream
+- Added dashboard report utility: `dashboard/src/lib/reports.ts`
+  - Converts engagement, plan, and execution job JSON into formatted Markdown
+  - Supports PDF export generation from the same report content
+- Added technical deep-dive mode in dashboard engagement cards using shadcn-style switch component:
+  - `dashboard/src/components/ui/switch.tsx`
+  - `viewMode` state (`summary` / `detailed`) per engagement card
+- Added UI lifecycle controls:
+  - Decommission button with confirmation modal
+  - Download Report action with icon near probe actions
+  - Technical report panel showing raw execution/plan metadata and pattern scores
+
+**Verification:**
+- `backend npm test` => pass (`6/6`)
+- `dashboard npm run lint` => pass
+- `dashboard npm run build` => pass
+- API lifecycle smoke validation (local, with Atlas-backed backend):
+  - Create engagement => success
+  - Generate plan => `201`
+  - Execute probe job => `201`
+  - Report aggregate JSON => includes plans/jobs
+  - Report markdown endpoint => `200` with `Content-Type: text/markdown`
+  - Decommission delete => `ok: true`
+  - Post-delete checks => engagement `404`, remaining plans `0`, remaining jobs `0`

@@ -41,8 +41,39 @@ export type ExecutionJob = {
   toolId: string;
   targetUrl: string;
   status: "queued" | "running" | "success" | "failed" | "blocked" | "timeout";
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  output?: Record<string, unknown>;
+  rawOutput?: string;
   errorMessage?: string;
   createdAt: string;
+};
+
+export type DeleteEngagementResponse = {
+  ok: true;
+  deletedEngagementId: string;
+  plansDeleted: number;
+  executionJobsDeleted: number;
+};
+
+export type EngagementReport = {
+  generatedAt: string;
+  engagement: Engagement;
+  summary: {
+    totalPlans: number;
+    totalExecutionJobs: number;
+    successfulJobs: number;
+    failedJobs: number;
+    blockedJobs: number;
+    timeoutJobs: number;
+    runningJobs: number;
+  };
+  latestPlan: Plan | null;
+  latestExecutionJob: ExecutionJob | null;
+  patternMatches: PatternMatch[];
+  plans: Plan[];
+  executionJobs: ExecutionJob[];
 };
 
 export type PatternMatch = {
@@ -242,6 +273,34 @@ export async function fetchEngagements(
   });
 
   return parseResponse<Engagement[]>(response);
+}
+
+export async function deleteEngagement(
+  session: VenomSession,
+  engagementId: string
+): Promise<DeleteEngagementResponse> {
+  const response = await apiFetch(`/api/engagements/${engagementId}`, {
+    method: "DELETE",
+    headers: buildHeaders(session)
+  });
+
+  return parseResponse<DeleteEngagementResponse>(response);
+}
+
+export async function fetchEngagementReport(
+  session: VenomSession,
+  engagementId: string
+): Promise<EngagementReport> {
+  const response = await apiFetch(
+    `/api/engagements/${engagementId}/report?format=json`,
+    {
+      method: "GET",
+      headers: buildHeaders(session),
+      cache: "no-store"
+    }
+  );
+
+  return parseResponse<EngagementReport>(response);
 }
 
 export async function createEngagement(
