@@ -218,6 +218,48 @@ export type CveSyncResponse = {
   syncedAt: string;
 };
 
+export type ReportEmailResponse = {
+  sent: true;
+  to: string;
+  fileName: string;
+};
+
+export type OwaspCoverageItem = {
+  code: string;
+  name: string;
+  tags: string[];
+  findings: Array<{
+    id?: string;
+    severity?: string;
+    category?: string;
+    title?: string;
+    description?: string;
+    recommendation?: string;
+    cvssScore?: number;
+  }>;
+};
+
+export type ComplianceSummary = {
+  engagementId: string;
+  targetUrl: string;
+  totalJobs: number;
+  totalFindings: number;
+  cvssOverallScore: number;
+  cvssSeverity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  owaspCoverage: number;
+  owaspBreakdown: Record<string, OwaspCoverageItem>;
+  owaspRating: "LOW" | "MODERATE" | "HIGH_RISK";
+  remediationPriority: Array<{
+    id?: string;
+    severity?: string;
+    category?: string;
+    title?: string;
+    description?: string;
+    recommendation?: string;
+    cvssScore?: number;
+  }>;
+};
+
 function buildHeaders(session: VenomSession) {
   return {
     "Content-Type": "application/json",
@@ -255,8 +297,14 @@ async function apiFetch(path: string, init: RequestInit): Promise<Response> {
   }
 }
 
-async function parseResponse<T>(response: Response): Promise<T> {
-  const payload = await response.json().catch(() => ({}));
+function throwApiError(response: Response, payload: unknown): never {
+  const payloadError =
+    typeof payload === "object" &&
+    payload !== null &&
+    "error" in payload &&
+    typeof (payload as { error?: unknown }).error === "string"
+      ? ((payload as { error: string }).error || "").trim()
+      : "";
 
   if (!response.ok) {
     console.error("VENOM bridge request failed", {
@@ -277,10 +325,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
     }
 
     if (response.status === 503) {
-      const upstreamMessage =
-        typeof payload?.error === "string"
-          ? payload.error
-          : "Backend unavailable";
+      const upstreamMessage = payloadError || "Backend unavailable";
       throw new Error(
         `${upstreamMessage}. Check backend /ready, MongoDB health, and deployment status.`
       );
@@ -293,10 +338,16 @@ async function parseResponse<T>(response: Response): Promise<T> {
     }
 
     const message =
-      typeof payload?.error === "string"
-        ? payload.error
-        : "Request failed. Check API settings.";
+      payloadError || "Request failed. Check API settings.";
     throw new Error(message);
+  }
+  throw new Error("Unexpected error");
+}
+
+async function parseResponse<T>(response: Response): Promise<T> {
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throwApiError(response, payload);
   }
 
   return payload as T;
@@ -537,4 +588,55 @@ export async function syncCves(
   });
 
   return parseResponse<CveSyncResponse>(response);
+}
+
+export async function fetchComplianceSummary(
+  session: VenomSession,
+  engagementId: string
+): Promise<ComplianceSummary> {
+  const response = await apiFetch(`/api/compliance/${encodeURIComponent(engagementId)}`, {
+    method: "GET",
+    headers: buildHeaders(session),
+    cache: "no-store"
+  });
+
+  return parseResponse<ComplianceSummary>(response);
+}
+
+export async function emailBackendReport(
+  session: VenomSession,
+  engagementId: string,
+  recipientEmail: string
+): Promise<ReportEmailResponse> {
+  const response = await apiFetch(
+    `/api/reports/${encodeURIComponent(engagementId)}/email`,
+    {
+      method: "POST",
+      headers: buildHeaders(session),
+      body: JSON.stringify({ recipientEmail })
+    }
+  );
+
+  return parseResponse<ReportEmailResponse>(response);
+}
+
+export async function downloadBackendPdfReport(
+  session: VenomSession,
+  engagementId: string
+): Promise<Blob> {
+  const response = await apiFetch(
+    `/api/reports/${encodeURIComponent(engagementId)}/pdf`,
+    {
+      method: "GET",
+      headers: buildHeaders(session),
+      cache: "no-store"
+    }
+  );
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throwApiError(response, payload);
+  }
+
+  return response.blob();
 }

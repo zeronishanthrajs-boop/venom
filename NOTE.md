@@ -975,3 +975,78 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 
 **Remaining env action for full Week 8 target mode:**
 - Render still needs valid `CLAUDE_API_KEY` set for `plannerSource=claude-api` (currently template fallback path is active).
+
+## [2026-05-04 16:34:10 +05:30] - Week 9 Implementation (Learning + Reporting + Compliance)
+
+**Status:** Week 9 updates implemented and verified locally
+
+**Backend implementation completed:**
+- Added advanced learning engine:
+  - `backend/services/learner.js`
+  - Enhancements:
+    - baseline pattern outcome updates from execution jobs
+    - tag inference from findings for better pattern categorization
+    - Claude-assisted defensive pattern extraction path (when `CLAUDE_API_KEY` is configured)
+    - heuristic fallback pattern candidate extraction when Claude extraction is unavailable
+- Updated learn route to use learning service:
+  - `backend/routes/learn.js`
+- Extended pattern model for learned metadata:
+  - `backend/models/Pattern.js`
+  - added `prerequisites`, `assessmentSequence`, `source`
+- Added compliance mapping service:
+  - `backend/services/complianceMapper.js`
+  - CVSS overall score + OWASP Top 10 coverage breakdown
+- Added reporting service:
+  - `backend/services/reportGenerator.js`
+  - backend-generated PDF and markdown report pipelines
+  - SMTP email send support for report PDF attachments
+- Added new API routes:
+  - `backend/routes/compliance.js` -> `GET /api/compliance/:engagementId`
+  - `backend/routes/reports.js` ->
+    - `GET /api/reports/:engagementId/pdf`
+    - `GET /api/reports/:engagementId/markdown`
+    - `POST /api/reports/:engagementId/email`
+- Wired new routes in backend server:
+  - `backend/server.js`
+- Added Week 9 dependencies:
+  - `pdfkit`, `nodemailer`
+  - files: `backend/package.json`, `backend/package-lock.json`
+- Updated deployment/env docs:
+  - `backend/.env.example`
+  - `render.yaml`
+  - `README.md`
+  - `docs/DEPLOYMENT.md`
+
+**Dashboard implementation completed:**
+- Added backend Week 9 API integrations in:
+  - `dashboard/src/lib/api.ts`
+  - new actions:
+    - backend PDF download
+    - report email trigger
+    - compliance summary fetch
+- Added UI controls in:
+  - `dashboard/src/app/dashboard/page.tsx`
+  - new per-engagement actions:
+    - Download Backend PDF
+    - Email PDF Report
+    - Load Compliance
+  - compliance snapshot now visible in both executive and forensic views
+
+**Automated verification:**
+- `backend npm test` => pass (`23/23`)
+- `dashboard npm run lint` => pass
+- `dashboard npm run build` => pass
+
+**Runtime smoke verification (local):**
+- Created engagement + executed probe + learning cycle + compliance + report generation:
+  - `POST /api/engagements` => success
+  - `POST /api/execute` (`http_headers_probe`) => `status: success`
+  - `POST /api/learn` => `processedJobs: 1`, `extractionSource: heuristic`
+  - `GET /api/compliance/:engagementId` => CVSS + OWASP response (`cvssOverallScore: 5.5`, `owaspCoverage: 3`)
+  - `GET /api/reports/:engagementId/pdf` => `200`, `Content-Type: application/pdf`
+  - `GET /api/reports/:engagementId/markdown` => `200`
+
+**Week 9 environment notes:**
+- Claude learning extraction path requires `CLAUDE_API_KEY` and (optional) `CLAUDE_LEARNER_MODEL`.
+- Email delivery requires SMTP vars:
+  - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`

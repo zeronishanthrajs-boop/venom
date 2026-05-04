@@ -4,9 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   createEngagement,
+  downloadBackendPdfReport,
   deleteEngagement,
+  emailBackendReport,
   fetchAlerts,
   fetchAllProgress,
+  fetchComplianceSummary,
   fetchCveSummary,
   fetchExecutionJobs,
   fetchEngagementReport,
@@ -20,6 +23,7 @@ import {
   syncCves,
   type AlertItem,
   type CveSummary,
+  type ComplianceSummary,
   type CreateEngagementInput,
   type Engagement,
   type EngagementReport,
@@ -94,6 +98,17 @@ function TrashIcon() {
   );
 }
 
+function triggerBlobDownload(blob: Blob, fileName: string) {
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [session, setSession] = useState<VenomSession | null>(null);
@@ -127,6 +142,12 @@ export default function DashboardPage() {
   const [downloadingById, setDownloadingById] = useState<Record<string, boolean>>(
     {}
   );
+  const [downloadingBackendPdfById, setDownloadingBackendPdfById] = useState<
+    Record<string, boolean>
+  >({});
+  const [emailingReportById, setEmailingReportById] = useState<
+    Record<string, boolean>
+  >({});
   const [deletingById, setDeletingById] = useState<Record<string, boolean>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [metricsOverview, setMetricsOverview] = useState<MetricsOverview | null>(
@@ -137,6 +158,12 @@ export default function DashboardPage() {
   const [syncingCves, setSyncingCves] = useState(false);
   const [progressByEngagement, setProgressByEngagement] = useState<
     Record<string, EngagementProgress>
+  >({});
+  const [complianceByEngagement, setComplianceByEngagement] = useState<
+    Record<string, ComplianceSummary | null>
+  >({});
+  const [complianceLoadingById, setComplianceLoadingById] = useState<
+    Record<string, boolean>
   >({});
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -517,6 +544,29 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleLoadCompliance(engagementId: string) {
+    if (!session) {
+      return;
+    }
+
+    setComplianceLoadingById((prev) => ({ ...prev, [engagementId]: true }));
+    try {
+      const summary = await fetchComplianceSummary(session, engagementId);
+      setComplianceByEngagement((prev) => ({
+        ...prev,
+        [engagementId]: summary
+      }));
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to load compliance summary."
+      );
+    } finally {
+      setComplianceLoadingById((prev) => ({ ...prev, [engagementId]: false }));
+    }
+  }
+
   async function loadReportForEngagement(
     engagementId: string,
     forceRefresh = false
@@ -548,6 +598,7 @@ export default function DashboardPage() {
     if (checked) {
       try {
         await ensurePassiveReconPlan(engagementId);
+        await handleLoadCompliance(engagementId);
         await loadReportForEngagement(engagementId, true);
       } catch (requestError) {
         setError(
@@ -591,6 +642,69 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleDownloadBackendPdf(engagementId: string) {
+    if (!session) {
+      return;
+    }
+
+    setDownloadingBackendPdfById((prev) => ({ ...prev, [engagementId]: true }));
+    setError("");
+    setMessage("");
+
+    try {
+      const blob = await downloadBackendPdfReport(session, engagementId);
+      const engagementName =
+        engagements.find((item) => item._id === engagementId)?.name ||
+        "venom-engagement-report";
+      const safeName = engagementName
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      triggerBlobDownload(blob, `${safeName || "venom-engagement"}-${engagementId}.pdf`);
+      setMessage("Backend PDF report downloaded successfully.");
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to download backend PDF report."
+      );
+    } finally {
+      setDownloadingBackendPdfById((prev) => ({ ...prev, [engagementId]: false }));
+    }
+  }
+
+  async function handleEmailReport(engagementId: string) {
+    if (!session) {
+      return;
+    }
+
+    const recipientEmail = window.prompt(
+      "Send report PDF to email address:",
+      session.email
+    );
+    if (!recipientEmail) {
+      return;
+    }
+
+    setEmailingReportById((prev) => ({ ...prev, [engagementId]: true }));
+    setError("");
+    setMessage("");
+
+    try {
+      const result = await emailBackendReport(session, engagementId, recipientEmail);
+      setMessage(`Report email sent to ${result.to}.`);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to send report email."
+      );
+    } finally {
+      setEmailingReportById((prev) => ({ ...prev, [engagementId]: false }));
+    }
+  }
+
   async function handleDecommissionEngagement(engagementId: string) {
     if (!session) {
       return;
@@ -624,6 +738,11 @@ export default function DashboardPage() {
         return next;
       });
       setReportByEngagement((prev) => {
+        const next = { ...prev };
+        delete next[engagementId];
+        return next;
+      });
+      setComplianceByEngagement((prev) => {
         const next = { ...prev };
         delete next[engagementId];
         return next;
@@ -894,6 +1013,8 @@ export default function DashboardPage() {
                   report?.executionJobs?.find(
                     (job) => job.toolId === "tls_metadata_probe"
                   ) || null;
+                const compliance =
+                  complianceByEngagement[engagement._id] || null;
 
                 return (
                   <article
@@ -990,6 +1111,39 @@ export default function DashboardPage() {
                       </button>
                       <button
                         type="button"
+                        onClick={() => void handleDownloadBackendPdf(engagement._id)}
+                        disabled={Boolean(downloadingBackendPdfById[engagement._id])}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        <DownloadIcon />
+                        <span>
+                          {downloadingBackendPdfById[engagement._id]
+                            ? "Preparing PDF..."
+                            : "Download Backend PDF"}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleEmailReport(engagement._id)}
+                        disabled={Boolean(emailingReportById[engagement._id])}
+                        className="rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {emailingReportById[engagement._id]
+                          ? "Emailing..."
+                          : "Email PDF Report"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleLoadCompliance(engagement._id)}
+                        disabled={Boolean(complianceLoadingById[engagement._id])}
+                        className="rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {complianceLoadingById[engagement._id]
+                          ? "Loading Compliance..."
+                          : "Load Compliance"}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => void handleMatchPatterns(engagement._id)}
                         disabled={Boolean(matchingById[engagement._id])}
                         className="rounded-lg border border-sky-300 bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-70"
@@ -1050,6 +1204,23 @@ export default function DashboardPage() {
                             No pattern scores loaded yet. Run &quot;Match Patterns&quot; or
                             download
                             the report.
+                          </p>
+                        )}
+
+                        {compliance ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              Compliance Snapshot
+                            </p>
+                            <p className="mt-1 text-slate-200">
+                              CVSS {compliance.cvssOverallScore.toFixed(2)} (
+                              {compliance.cvssSeverity}) | OWASP categories{" "}
+                              {compliance.owaspCoverage} | Rating {compliance.owaspRating}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="text-slate-400">
+                            Compliance snapshot unavailable. Run &quot;Load Compliance&quot;.
                           </p>
                         )}
 
@@ -1149,6 +1320,17 @@ export default function DashboardPage() {
                               {topMatchByEngagement[engagement._id]?.name}
                             </span>{" "}
                             ({topMatchByEngagement[engagement._id]?.score.toFixed(2)})
+                          </p>
+                        ) : null}
+                        {compliance ? (
+                          <p className="mt-1 text-xs text-slate-600">
+                            Compliance:{" "}
+                            <span className="font-medium">
+                              CVSS {compliance.cvssOverallScore.toFixed(2)} (
+                              {compliance.cvssSeverity})
+                            </span>{" "}
+                            | OWASP {compliance.owaspCoverage} categories |{" "}
+                            <span className="font-medium">{compliance.owaspRating}</span>
                           </p>
                         ) : null}
                         {learningSummaryByEngagement[engagement._id] ? (

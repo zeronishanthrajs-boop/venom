@@ -25,6 +25,8 @@ services:
         sync: false
       - key: CLAUDE_MODEL
         value: claude-3-5-sonnet-latest
+      - key: CLAUDE_LEARNER_MODEL
+        value: claude-3-5-sonnet-latest
       - key: CLAUDE_PLANNER_STRICT
         value: "false"
       - key: ENABLE_CLAUDE_CVE_TAGGING
@@ -54,6 +56,16 @@ services:
       - key: NVD_NO_KEY_DELAY_MS
         value: "6000"
       - key: NVD_API_KEY
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
         sync: false
       - key: VENOM_MONTHLY_BUDGET_USD
         value: "400"

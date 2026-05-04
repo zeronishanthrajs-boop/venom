@@ -41,6 +41,10 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
 - `POST /api/plan`
 - `GET /api/plan/engagement/:engagementId`
 - `POST /api/learn`
+- `GET /api/compliance/:engagementId`
+- `GET /api/reports/:engagementId/pdf`
+- `GET /api/reports/:engagementId/markdown`
+- `POST /api/reports/:engagementId/email`
 - `GET /api/metrics/overview`
 - `GET /api/metrics/alerts`
 - `GET /api/metrics/progress`
@@ -82,6 +86,8 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
   - `CORS_ORIGINS` including dashboard URL
   - Optional threat-intel: `NVD_API_KEY`, `ENABLE_CVE_SYNC_JOB=true`
   - Suggested Week 8: `ENABLE_CLAUDE_CVE_TAGGING=true`, `CLAUDE_TAGGER_MODEL`, `CVE_SYNC_CRON`
+  - Suggested Week 9: `CLAUDE_LEARNER_MODEL` for pattern extraction
+  - Report email delivery (optional): `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
 - Dashboard (Vercel):
   - `VENOM_DASHBOARD_LOGIN_EMAIL`
   - `VENOM_DASHBOARD_LOGIN_PASSWORD`

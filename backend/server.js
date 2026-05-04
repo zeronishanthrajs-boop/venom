@@ -11,6 +11,8 @@ const executeRouter = require("./routes/execute");
 const learnRouter = require("./routes/learn");
 const metricsRouter = require("./routes/metrics");
 const cvesRouter = require("./routes/cves");
+const reportsRouter = require("./routes/reports");
+const complianceRouter = require("./routes/compliance");
 const { startCveSyncJob, stopCveSyncJob } = require("./jobs/cveJob");
 
 const app = express();
@@ -78,6 +80,8 @@ app.use("/api/learn", authMiddleware, activityLogger, learnRouter);
 app.use("/api/metrics", authMiddleware, activityLogger, metricsRouter);
 app.use("/api/cves", authMiddleware, activityLogger, cvesRouter);
 app.use("/api/cve", authMiddleware, activityLogger, cvesRouter);
+app.use("/api/reports", authMiddleware, activityLogger, reportsRouter);
+app.use("/api/compliance", authMiddleware, activityLogger, complianceRouter);
 
 app.use((error, _req, res, _next) => {
   const isJsonParseError =

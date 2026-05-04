@@ -45,6 +45,18 @@ const patternSchema = new mongoose.Schema(
       type: Number,
       default: 0.5
     },
+    prerequisites: {
+      type: [String],
+      default: []
+    },
+    assessmentSequence: {
+      type: [String],
+      default: []
+    },
+    source: {
+      type: String,
+      default: "system"
+    },
     lastUsedAt: Date,
     tags: {
       type: [String],

@@ -28,6 +28,7 @@ Deploy backend to Render and dashboard to Vercel using the newest secure flow:
 - `ENABLE_INMEMORY_DB=false`
 - `CLAUDE_API_KEY=<optional>`
 - `CLAUDE_MODEL=claude-3-5-sonnet-latest`
+- `CLAUDE_LEARNER_MODEL=claude-3-5-sonnet-latest`
 - `ENABLE_CVE_SYNC_JOB=false` (set `true` to schedule auto NVD sync)
 - `CVE_SYNC_CRON=0 2 * * *`
 - `CVE_SYNC_TIMEZONE=UTC`
@@ -37,6 +38,11 @@ Deploy backend to Render and dashboard to Vercel using the newest secure flow:
 - `NVD_SYNC_LIMIT=25`
 - `NVD_PAGE_SIZE=100`
 - `NVD_API_KEY=<optional but recommended for higher rate limits>`
+- `SMTP_HOST=<optional>`
+- `SMTP_PORT=587`
+- `SMTP_USER=<optional>`
+- `SMTP_PASS=<optional>`
+- `SMTP_FROM=<optional>`
 
 ### Verify backend
 - `GET https://<backend-domain>/health` -> `200`
@@ -69,6 +75,8 @@ Quick checks:
 - Login works only with configured credentials.
 - Calling `https://<dashboard-domain>/api/backend/engagements` without session should return `401`.
 - After login, dashboard reads and writes engagements normally.
+- `GET /api/backend/api/compliance/<engagementId>` returns CVSS + OWASP summary.
+- `GET /api/backend/api/reports/<engagementId>/pdf` downloads backend-rendered PDF.
 
 ## 4) Common Failure Map
 - Login fails with valid credentials:
