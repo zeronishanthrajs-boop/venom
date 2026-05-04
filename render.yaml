@@ -27,8 +27,24 @@ services:
         value: claude-3-5-sonnet-latest
       - key: CLAUDE_LEARNER_MODEL
         value: claude-3-5-sonnet-latest
+      - key: CLAUDE_CHAIN_MODEL
+        value: claude-3-5-sonnet-latest
+      - key: CLAUDE_PROMPT_EVOLVER_MODEL
+        value: claude-3-5-sonnet-latest
       - key: CLAUDE_PLANNER_STRICT
         value: "false"
+      - key: CLAUDE_CHAIN_ENABLED
+        value: "true"
+      - key: MAX_CONCURRENT_TARGETS
+        value: "3"
+      - key: ENABLE_PROMPT_EVOLUTION_JOB
+        value: "false"
+      - key: PROMPT_EVOLUTION_CRON
+        value: 0 3 * * 0
+      - key: PROMPT_EVOLUTION_TIMEZONE
+        value: UTC
+      - key: PROMPT_EVOLUTION_MIN_CONFIDENCE
+        value: "0.70"
       - key: ENABLE_CLAUDE_CVE_TAGGING
         value: "true"
       - key: CLAUDE_TAGGER_MODEL
@@ -57,6 +73,8 @@ services:
         value: "6000"
       - key: NVD_API_KEY
         sync: false
+      - key: ENABLE_DOCKER_TOOLS
+        value: "false"
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT

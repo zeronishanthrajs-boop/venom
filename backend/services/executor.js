@@ -4,6 +4,7 @@ const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { URL } = require("node:url");
 const { getTool } = require("../tooling/toolRegistry");
+const { executeRealTool } = require("../tooling/realTools");
 const {
   analyzeHeaderFindings,
   detectTechnologyFingerprint
@@ -201,6 +202,10 @@ async function runTool(toolId, targetUrl) {
 
   if (toolId === "zap_baseline_passive") {
     return runZapBaselinePassive(targetUrl, tool.timeoutSeconds);
+  }
+
+  if (tool.mode === "docker-real") {
+    return executeRealTool(toolId, targetUrl, tool.timeoutSeconds);
   }
 
   const error = new Error(`No executor registered for ${toolId}`);

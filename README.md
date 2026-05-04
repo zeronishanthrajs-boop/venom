@@ -59,6 +59,15 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
 - `POST /api/execute`
 - `GET /api/execute/:id`
 - `GET /api/execute/engagement/:engagementId`
+- `POST /api/chain/:engagementId`
+- `GET /api/evidence/:engagementId`
+- `GET /api/evidence/:engagementId/verify`
+- `GET /api/prompts/active`
+- `GET /api/prompts/history`
+- `POST /api/prompts/evolve`
+- `GET /api/orchestrate/status`
+- `POST /api/orchestrate`
+- `POST /api/orchestrate/:engagementId`
 
 ## Dashboard Auth
 - Login is private and server-validated by:
@@ -87,6 +96,8 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
   - Optional threat-intel: `NVD_API_KEY`, `ENABLE_CVE_SYNC_JOB=true`
   - Suggested Week 8: `ENABLE_CLAUDE_CVE_TAGGING=true`, `CLAUDE_TAGGER_MODEL`, `CVE_SYNC_CRON`
   - Suggested Week 9: `CLAUDE_LEARNER_MODEL` for pattern extraction
+  - Suggested Week 10: `CLAUDE_CHAIN_ENABLED=true`, `CLAUDE_CHAIN_MODEL`, `ENABLE_DOCKER_TOOLS=true` (only where Docker execution policy is approved)
+  - Suggested Week 11: `MAX_CONCURRENT_TARGETS`, `ENABLE_PROMPT_EVOLUTION_JOB`, `PROMPT_EVOLUTION_CRON`, `PROMPT_EVOLUTION_TIMEZONE`, `PROMPT_EVOLUTION_MIN_CONFIDENCE`, `CLAUDE_PROMPT_EVOLVER_MODEL`
   - Report email delivery (optional): `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
 - Dashboard (Vercel):
   - `VENOM_DASHBOARD_LOGIN_EMAIL`

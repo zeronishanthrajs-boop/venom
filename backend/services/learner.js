@@ -7,6 +7,7 @@ const {
   computeRecentSuccessRate,
   computeSuccessRate
 } = require("./patternEngine");
+const { resolvePromptContent } = require("./promptCatalog");
 
 const SAFE_TARGET_TYPES = new Set(["website", "api", "network", "mixed"]);
 const SAFE_TAGS = new Set([
@@ -236,7 +237,10 @@ async function extractClaudePatternCandidates(successfulJobs) {
   const summary = successfulJobs.map(buildJobSummary);
   const model = process.env.CLAUDE_LEARNER_MODEL || process.env.CLAUDE_MODEL || "claude-3-5-sonnet-latest";
 
+  const learningPrompt = await resolvePromptContent("learning");
   const prompt = [
+    learningPrompt.content || "",
+    "",
     "You are VENOM's defensive learning assistant.",
     "Given completed security validation job outputs, extract NEW reusable defensive assessment patterns.",
     "Do not provide exploit instructions, payloads, privilege escalation steps, or offensive chains.",

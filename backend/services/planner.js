@@ -2,6 +2,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const Pattern = require("../models/Pattern");
 const CveSnapshot = require("../models/CveSnapshot");
+const { resolvePromptContent } = require("./promptCatalog");
 
 const PROMPT_VERSION = "planning_v2_3_2026_05_04";
 const UNSAFE_TERMS =
@@ -207,7 +208,15 @@ function appendCveContextToTemplatePlan(plan, recentCves) {
 
 async function loadSystemPrompt() {
   const promptPath = path.join(__dirname, "..", "prompts", "planning-agent-v2.txt");
-  return fs.readFile(promptPath, "utf8");
+  let fallbackText = "";
+  try {
+    fallbackText = await fs.readFile(promptPath, "utf8");
+  } catch {
+    fallbackText = "";
+  }
+
+  const resolved = await resolvePromptContent("planning", fallbackText);
+  return resolved;
 }
 
 async function loadPlannerContext(engagement) {
@@ -273,10 +282,11 @@ async function callClaudePlanner(engagement, plannerContextInput) {
   }
 
   const model = process.env.CLAUDE_MODEL || "claude-3-5-sonnet-latest";
-  const [systemPrompt, plannerContext] = await Promise.all([
+  const [systemPromptSource, plannerContext] = await Promise.all([
     loadSystemPrompt(),
     plannerContextInput ? Promise.resolve(plannerContextInput) : loadPlannerContext(engagement)
   ]);
+  const systemPrompt = systemPromptSource.content || "";
   const userPayload = buildUserPayload(engagement);
   const contextualSystemPrompt = `${systemPrompt}
 
@@ -374,6 +384,10 @@ Safety constraints:
   return {
     source: "claude-api",
     model,
+    promptVersion:
+      systemPromptSource?.source === "db-active"
+        ? systemPromptSource.version
+        : PROMPT_VERSION,
     plan: normalizePlan(parsed),
     rawModelOutput: rawText
   };
@@ -395,7 +409,7 @@ async function generatePlanForEngagement(engagement) {
   if (claudeResult) {
     return {
       ...claudeResult,
-      promptVersion: PROMPT_VERSION
+      promptVersion: claudeResult.promptVersion || PROMPT_VERSION
     };
   }
 

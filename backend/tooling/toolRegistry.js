@@ -1,3 +1,5 @@
+const { REAL_TOOL_REGISTRY } = require("./realTools");
+
 const TOOL_REGISTRY = {
   http_headers_probe: {
     id: "http_headers_probe",
@@ -41,7 +43,8 @@ const TOOL_REGISTRY = {
     destructive: false,
     timeoutSeconds: 180,
     estimatedCostUsd: 0.08
-  }
+  },
+  ...REAL_TOOL_REGISTRY
 };
 
 function listTools() {

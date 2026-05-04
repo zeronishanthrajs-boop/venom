@@ -69,6 +69,42 @@ export type DeleteEngagementResponse = {
   deletedEngagementId: string;
   plansDeleted: number;
   executionJobsDeleted: number;
+  evidenceDeleted?: number;
+};
+
+export type ChainExecutionResult = {
+  step: number;
+  toolId: string;
+  name: string;
+  rationale: string;
+  status: "queued" | "running" | "success" | "failed" | "blocked" | "timeout";
+  findings: number;
+  jobId: string;
+  durationMs: number;
+};
+
+export type ChainRunResponse = {
+  engagementId: string;
+  targetUrl?: string;
+  source: "claude" | "heuristic";
+  message?: string;
+  stepsPlanned: number;
+  stepsExecuted: number;
+  haltedAt?: {
+    step: number;
+    reason: string;
+  } | null;
+  chainResults: ChainExecutionResult[];
+};
+
+export type EvidenceVerifyResponse = {
+  engagementId: string;
+  valid: boolean;
+  totalItems: number;
+  latestChainIndex?: number;
+  brokenAt?: number;
+  reason?: string;
+  verifiedAt: string;
 };
 
 export type EngagementReport = {
@@ -222,6 +258,103 @@ export type ReportEmailResponse = {
   sent: true;
   to: string;
   fileName: string;
+};
+
+export type PromptVersionRecord = {
+  _id: string;
+  promptType: "planning" | "tagging" | "chain" | "learning" | "research";
+  version: string;
+  parentVersion: string;
+  evolutionReason: string;
+  isActive: boolean;
+  createdByAI: boolean;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PromptActiveResponse = {
+  promptTypesSupported: string[];
+  active: PromptVersionRecord[];
+};
+
+export type PromptHistoryResponse = {
+  count: number;
+  history: PromptVersionRecord[];
+};
+
+export type PromptEvolutionResult = {
+  promptType: string;
+  status: "evolved" | "skipped";
+  reason?: string;
+  version?: string;
+  confidenceScore?: number;
+  sourceModel?: string;
+  filePath?: string;
+};
+
+export type PromptEvolutionResponse = {
+  triggeredAt: string;
+  evolvedCount: number;
+  skippedCount: number;
+  metrics: {
+    totalEngagementsUsed: number;
+    avgFindingsPerEngagement: number;
+    avgPlanQualityScore: number;
+    successRate: number;
+  };
+  results: PromptEvolutionResult[];
+};
+
+export type OrchestratorStatusResponse = {
+  activeCount: number;
+  maxConcurrent: number;
+  active: Record<
+    string,
+    {
+      engagementId: string;
+      targetUrl: string;
+      startedAt: string;
+      startedBy: string;
+      state: string;
+      step: number;
+      totalSteps: number;
+      lastUpdateAt: string;
+    }
+  >;
+};
+
+export type OrchestrationBatchResponse = {
+  requested: number;
+  scheduled: number;
+  skipped: Array<{
+    engagementId: string;
+    reason: string;
+  }>;
+  maxConcurrent: number;
+  currentlyActive: number;
+  results: Array<{
+    engagementId: string;
+    status: "fulfilled" | "rejected";
+    result: unknown;
+  }>;
+};
+
+export type OrchestrationSingleResponse = {
+  engagementId: string;
+  targetUrl: string;
+  status: "completed";
+  promptVersion: string;
+  plannerSource: string;
+  toolSequence: string[];
+  executionResults: Array<{
+    toolId: string;
+    status: string;
+    findings: number;
+    durationMs: number;
+    jobId: string;
+  }>;
+  learningResult: unknown;
 };
 
 export type OwaspCoverageItem = {
@@ -501,6 +634,34 @@ export async function fetchExecutionJobs(
   return parseResponse<ExecutionJob[]>(response);
 }
 
+export async function runAssessmentChain(
+  session: VenomSession,
+  engagementId: string
+): Promise<ChainRunResponse> {
+  const response = await apiFetch(`/api/chain/${encodeURIComponent(engagementId)}`, {
+    method: "POST",
+    headers: buildHeaders(session)
+  }, 120000);
+
+  return parseResponse<ChainRunResponse>(response);
+}
+
+export async function verifyEvidenceChain(
+  session: VenomSession,
+  engagementId: string
+): Promise<EvidenceVerifyResponse> {
+  const response = await apiFetch(
+    `/api/evidence/${encodeURIComponent(engagementId)}/verify`,
+    {
+      method: "GET",
+      headers: buildHeaders(session),
+      cache: "no-store"
+    }
+  );
+
+  return parseResponse<EvidenceVerifyResponse>(response);
+}
+
 export async function fetchMatchedPatterns(
   session: VenomSession,
   engagementId: string
@@ -645,4 +806,90 @@ export async function downloadBackendPdfReport(
   }
 
   return response.blob();
+}
+
+export async function fetchPromptActive(
+  session: VenomSession
+): Promise<PromptActiveResponse> {
+  const response = await apiFetch("/api/prompts/active", {
+    method: "GET",
+    headers: buildHeaders(session),
+    cache: "no-store"
+  });
+
+  return parseResponse<PromptActiveResponse>(response);
+}
+
+export async function fetchPromptHistory(
+  session: VenomSession,
+  promptType?: string,
+  limit = 20
+): Promise<PromptHistoryResponse> {
+  const query = new URLSearchParams();
+  query.set("limit", String(limit));
+  if (promptType) {
+    query.set("promptType", promptType);
+  }
+
+  const response = await apiFetch(`/api/prompts/history?${query.toString()}`, {
+    method: "GET",
+    headers: buildHeaders(session),
+    cache: "no-store"
+  });
+
+  return parseResponse<PromptHistoryResponse>(response);
+}
+
+export async function evolvePromptsNow(
+  session: VenomSession,
+  promptTypes?: string[]
+): Promise<PromptEvolutionResponse> {
+  const response = await apiFetch("/api/prompts/evolve", {
+    method: "POST",
+    headers: buildHeaders(session),
+    body: JSON.stringify({
+      promptTypes: Array.isArray(promptTypes) ? promptTypes : undefined
+    })
+  }, 120000);
+
+  return parseResponse<PromptEvolutionResponse>(response);
+}
+
+export async function fetchOrchestratorStatus(
+  session: VenomSession
+): Promise<OrchestratorStatusResponse> {
+  const response = await apiFetch("/api/orchestrate/status", {
+    method: "GET",
+    headers: buildHeaders(session),
+    cache: "no-store"
+  });
+
+  return parseResponse<OrchestratorStatusResponse>(response);
+}
+
+export async function orchestrateMultipleEngagements(
+  session: VenomSession,
+  engagementIds: string[]
+): Promise<OrchestrationBatchResponse> {
+  const response = await apiFetch("/api/orchestrate", {
+    method: "POST",
+    headers: buildHeaders(session),
+    body: JSON.stringify({
+      engagementIds
+    })
+  }, 300000);
+
+  return parseResponse<OrchestrationBatchResponse>(response);
+}
+
+export async function orchestrateSingleEngagement(
+  session: VenomSession,
+  engagementId: string
+): Promise<OrchestrationSingleResponse> {
+  const response = await apiFetch(`/api/orchestrate/${encodeURIComponent(engagementId)}`, {
+    method: "POST",
+    headers: buildHeaders(session)
+  }, 300000);
+
+  return parseResponse<OrchestrationSingleResponse>(response);
 }

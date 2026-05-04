@@ -89,6 +89,7 @@ const engagementSchema = new mongoose.Schema(
       enum: ["draft", "running", "paused", "completed", "failed"],
       default: "draft"
     },
+    completedAt: Date,
     createdBy: {
       type: String,
       default: "unknown"

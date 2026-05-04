@@ -29,7 +29,16 @@ Deploy backend to Render and dashboard to Vercel using the newest secure flow:
 - `CLAUDE_API_KEY=<optional>`
 - `CLAUDE_MODEL=claude-3-5-sonnet-latest`
 - `CLAUDE_LEARNER_MODEL=claude-3-5-sonnet-latest`
+- `CLAUDE_CHAIN_MODEL=claude-3-5-sonnet-latest`
+- `CLAUDE_PROMPT_EVOLVER_MODEL=claude-3-5-sonnet-latest`
+- `CLAUDE_CHAIN_ENABLED=true`
+- `MAX_CONCURRENT_TARGETS=3`
+- `ENABLE_PROMPT_EVOLUTION_JOB=false` (set `true` to run weekly automatic prompt evolution)
+- `PROMPT_EVOLUTION_CRON=0 3 * * 0`
+- `PROMPT_EVOLUTION_TIMEZONE=UTC`
+- `PROMPT_EVOLUTION_MIN_CONFIDENCE=0.70`
 - `ENABLE_CVE_SYNC_JOB=false` (set `true` to schedule auto NVD sync)
+- `ENABLE_DOCKER_TOOLS=false` (set `true` only when Render runtime has Docker access and policy approval)
 - `CVE_SYNC_CRON=0 2 * * *`
 - `CVE_SYNC_TIMEZONE=UTC`
 - `CVE_SYNC_ON_STARTUP=true`
@@ -77,6 +86,12 @@ Quick checks:
 - After login, dashboard reads and writes engagements normally.
 - `GET /api/backend/api/compliance/<engagementId>` returns CVSS + OWASP summary.
 - `GET /api/backend/api/reports/<engagementId>/pdf` downloads backend-rendered PDF.
+- `POST /api/backend/api/chain/<engagementId>` runs Week 10 chain orchestration.
+- `GET /api/backend/api/evidence/<engagementId>/verify` validates evidence chain-of-custody hashes.
+- `POST /api/backend/api/prompts/evolve` triggers Week 11 prompt evolution cycle.
+- `GET /api/backend/api/prompts/history` returns prompt lineage and evolution log.
+- `GET /api/backend/api/orchestrate/status` shows active orchestration workers.
+- `POST /api/backend/api/orchestrate` runs multi-target orchestration (bounded by `MAX_CONCURRENT_TARGETS`).
 
 ## 4) Common Failure Map
 - Login fails with valid credentials:

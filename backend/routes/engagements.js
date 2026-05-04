@@ -3,6 +3,7 @@ const Engagement = require("../models/Engagement");
 const Plan = require("../models/Plan");
 const ExecutionJob = require("../models/ExecutionJob");
 const Pattern = require("../models/Pattern");
+const Evidence = require("../models/Evidence");
 const engagementConstraints = require("../middleware/engagementConstraints");
 const requireDb = require("../middleware/requireDb");
 const { scorePatternForEngagement } = require("../services/patternEngine");
@@ -412,9 +413,10 @@ router.delete("/:id", requireDb, async (req, res, next) => {
       });
     }
 
-    const [planDeleteResult, jobDeleteResult] = await Promise.all([
+    const [planDeleteResult, jobDeleteResult, evidenceDeleteResult] = await Promise.all([
       Plan.deleteMany({ engagementId: engagement._id }),
-      ExecutionJob.deleteMany({ engagementId: engagement._id })
+      ExecutionJob.deleteMany({ engagementId: engagement._id }),
+      Evidence.deleteMany({ engagementId: engagement._id })
     ]);
 
     await Engagement.deleteOne({ _id: engagement._id });
@@ -423,7 +425,8 @@ router.delete("/:id", requireDb, async (req, res, next) => {
       ok: true,
       deletedEngagementId: String(engagement._id),
       plansDeleted: planDeleteResult.deletedCount || 0,
-      executionJobsDeleted: jobDeleteResult.deletedCount || 0
+      executionJobsDeleted: jobDeleteResult.deletedCount || 0,
+      evidenceDeleted: evidenceDeleteResult.deletedCount || 0
     });
   } catch (error) {
     if (error?.name === "CastError") {

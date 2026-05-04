@@ -4,6 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   createEngagement,
+  runAssessmentChain,
+  evolvePromptsNow,
+  fetchOrchestratorStatus,
+  fetchPromptActive,
+  fetchPromptHistory,
+  orchestrateSingleEngagement,
   downloadBackendPdfReport,
   deleteEngagement,
   emailBackendReport,
@@ -21,15 +27,19 @@ import {
   runLearning,
   runExecutionJob,
   syncCves,
+  verifyEvidenceChain,
   type AlertItem,
+  type ChainRunResponse,
   type CveSummary,
   type ComplianceSummary,
   type CreateEngagementInput,
+  type EvidenceVerifyResponse,
   type Engagement,
   type EngagementReport,
   type EngagementProgress,
   type ExecutionJob,
   type MetricsOverview,
+  type OrchestratorStatusResponse,
   type Plan
 } from "@/lib/api";
 import { downloadEngagementReport, type ReportViewMode } from "@/lib/reports";
@@ -165,6 +175,26 @@ export default function DashboardPage() {
   const [complianceLoadingById, setComplianceLoadingById] = useState<
     Record<string, boolean>
   >({});
+  const [chainRunningById, setChainRunningById] = useState<Record<string, boolean>>(
+    {}
+  );
+  const [chainSummaryByEngagement, setChainSummaryByEngagement] = useState<
+    Record<string, ChainRunResponse | null>
+  >({});
+  const [evidenceStatusByEngagement, setEvidenceStatusByEngagement] = useState<
+    Record<string, EvidenceVerifyResponse | null>
+  >({});
+  const [evidenceLoadingById, setEvidenceLoadingById] = useState<
+    Record<string, boolean>
+  >({});
+  const [evolvingPrompts, setEvolvingPrompts] = useState(false);
+  const [orchestratingById, setOrchestratingById] = useState<Record<string, boolean>>(
+    {}
+  );
+  const [orchestratorStatus, setOrchestratorStatus] =
+    useState<OrchestratorStatusResponse | null>(null);
+  const [activePromptCount, setActivePromptCount] = useState(0);
+  const [latestPromptVersion, setLatestPromptVersion] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -242,6 +272,26 @@ export default function DashboardPage() {
     }
   }
 
+  async function loadWeek11ControlPlane(activeSession: VenomSession) {
+    try {
+      const [orchestrator, promptActive, promptHistory] = await Promise.all([
+        fetchOrchestratorStatus(activeSession),
+        fetchPromptActive(activeSession),
+        fetchPromptHistory(activeSession, undefined, 5)
+      ]);
+
+      setOrchestratorStatus(orchestrator);
+      setActivePromptCount(promptActive.active.length);
+      setLatestPromptVersion(promptHistory.history[0]?.version || null);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to load Week 11 control plane state."
+      );
+    }
+  }
+
   async function handleSyncCveFeed() {
     if (!session) {
       return;
@@ -260,6 +310,7 @@ export default function DashboardPage() {
         `CVE sync complete: fetched ${result.fetched}, upserted ${result.upsertedCount}.`
       );
       await loadWeek7Telemetry(session);
+      await loadWeek11ControlPlane(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -268,6 +319,63 @@ export default function DashboardPage() {
       );
     } finally {
       setSyncingCves(false);
+    }
+  }
+
+  async function handleRunPromptEvolution() {
+    if (!session) {
+      return;
+    }
+
+    setEvolvingPrompts(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const result = await evolvePromptsNow(session, ["planning", "chain", "learning"]);
+      setMessage(
+        `Prompt evolution complete: ${result.evolvedCount} evolved, ${result.skippedCount} skipped.`
+      );
+      await loadWeek11ControlPlane(session);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to run prompt evolution."
+      );
+    } finally {
+      setEvolvingPrompts(false);
+    }
+  }
+
+  async function handleAutonomousRun(engagementId: string) {
+    if (!session) {
+      return;
+    }
+
+    setOrchestratingById((prev) => ({ ...prev, [engagementId]: true }));
+    setError("");
+    setMessage("");
+
+    try {
+      const result = await orchestrateSingleEngagement(session, engagementId);
+      setMessage(
+        `Autonomous run completed (${result.executionResults.length} tool steps, planner=${result.plannerSource}).`
+      );
+      await loadEngagementData(session, false);
+      await loadWeek7Telemetry(session);
+      await loadWeek11ControlPlane(session);
+      await loadReportForEngagement(engagementId, true);
+      await handleLoadCompliance(engagementId);
+      await handleVerifyEvidence(engagementId);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to run autonomous orchestration."
+      );
+    } finally {
+      setOrchestratingById((prev) => ({ ...prev, [engagementId]: false }));
     }
   }
 
@@ -284,6 +392,8 @@ export default function DashboardPage() {
           setEngagements(items);
           setError("");
           await loadWeek7Telemetry(session);
+          await loadWeek11ControlPlane(session);
+          await loadWeek11ControlPlane(session);
         }
       } catch (requestError) {
         if (mounted) {
@@ -312,6 +422,7 @@ export default function DashboardPage() {
 
     const timer = window.setInterval(() => {
       void loadWeek7Telemetry(session);
+      void loadWeek11ControlPlane(session);
     }, 5000);
 
     return () => {
@@ -335,6 +446,7 @@ export default function DashboardPage() {
       setMessage("Engagement created successfully.");
       await loadEngagementData(session);
       await loadWeek7Telemetry(session);
+      await loadWeek11ControlPlane(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -380,6 +492,7 @@ export default function DashboardPage() {
       }));
       setMessage("Plan generated successfully.");
       await loadWeek7Telemetry(session);
+      await loadWeek11ControlPlane(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -431,7 +544,7 @@ export default function DashboardPage() {
     );
   }
 
-  async function handleRunHeadersProbe(engagementId: string) {
+  async function handleRunTool(engagementId: string, toolId: string, label: string) {
     if (!session) {
       return;
     }
@@ -441,25 +554,102 @@ export default function DashboardPage() {
     setMessage("");
 
     try {
-      const job = await runExecutionJob(
-        session,
-        engagementId,
-        "http_headers_probe"
-      );
+      const job = await runExecutionJob(session, engagementId, toolId);
       setLatestExecutionByEngagement((prev) => ({
         ...prev,
         [engagementId]: job
       }));
-      setMessage("Safe execution probe completed.");
+      setMessage(`${label} completed (${job.status.toUpperCase()}).`);
+      await loadReportForEngagement(engagementId, true);
       await loadWeek7Telemetry(session);
+      await loadWeek11ControlPlane(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "Failed to execute probe."
+          : `Failed to execute ${label}.`
       );
     } finally {
       setExecutingById((prev) => ({ ...prev, [engagementId]: false }));
+    }
+  }
+
+  async function handleRunHeadersProbe(engagementId: string) {
+    await handleRunTool(engagementId, "http_headers_probe", "Headers probe");
+  }
+
+  async function handleRunWeek10Tool(
+    engagementId: string,
+    toolId: "nmap_tcp_scan" | "nuclei_scan" | "nikto_scan" | "sqlmap_detect"
+  ) {
+    const labels = {
+      nmap_tcp_scan: "Nmap TCP scan",
+      nuclei_scan: "Nuclei scan",
+      nikto_scan: "Nikto scan",
+      sqlmap_detect: "SQLMap detect"
+    } as const;
+    await handleRunTool(engagementId, toolId, labels[toolId]);
+  }
+
+  async function handleRunWeek10Chain(engagementId: string) {
+    if (!session) {
+      return;
+    }
+
+    setChainRunningById((prev) => ({ ...prev, [engagementId]: true }));
+    setError("");
+    setMessage("");
+
+    try {
+      const result = await runAssessmentChain(session, engagementId);
+      setChainSummaryByEngagement((prev) => ({
+        ...prev,
+        [engagementId]: result
+      }));
+      setMessage(
+        `Week 10 chain executed: ${result.stepsExecuted}/${result.stepsPlanned} step(s) via ${result.source} planner.`
+      );
+      await loadReportForEngagement(engagementId, true);
+      await loadWeek7Telemetry(session);
+      await loadWeek11ControlPlane(session);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to run Week 10 chain."
+      );
+    } finally {
+      setChainRunningById((prev) => ({ ...prev, [engagementId]: false }));
+    }
+  }
+
+  async function handleVerifyEvidence(engagementId: string) {
+    if (!session) {
+      return;
+    }
+
+    setEvidenceLoadingById((prev) => ({ ...prev, [engagementId]: true }));
+    setError("");
+
+    try {
+      const result = await verifyEvidenceChain(session, engagementId);
+      setEvidenceStatusByEngagement((prev) => ({
+        ...prev,
+        [engagementId]: result
+      }));
+      setMessage(
+        result.valid
+          ? `Evidence chain verified (${result.totalItems} item(s)).`
+          : `Evidence chain mismatch at index ${result.brokenAt || "unknown"}.`
+      );
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to verify evidence chain."
+      );
+    } finally {
+      setEvidenceLoadingById((prev) => ({ ...prev, [engagementId]: false }));
     }
   }
 
@@ -533,6 +723,7 @@ export default function DashboardPage() {
       }));
       setMessage("Learning cycle completed.");
       await loadWeek7Telemetry(session);
+      await loadWeek11ControlPlane(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -599,6 +790,7 @@ export default function DashboardPage() {
       try {
         await ensurePassiveReconPlan(engagementId);
         await handleLoadCompliance(engagementId);
+        await handleVerifyEvidence(engagementId);
         await loadReportForEngagement(engagementId, true);
       } catch (requestError) {
         setError(
@@ -754,16 +946,32 @@ export default function DashboardPage() {
         delete next[engagementId];
         return next;
       });
+      setChainSummaryByEngagement((prev) => {
+        const next = { ...prev };
+        delete next[engagementId];
+        return next;
+      });
+      setEvidenceStatusByEngagement((prev) => {
+        const next = { ...prev };
+        delete next[engagementId];
+        return next;
+      });
       setViewModeByEngagement((prev) => {
         const next = { ...prev };
         delete next[engagementId];
         return next;
       });
+      setOrchestratingById((prev) => {
+        const next = { ...prev };
+        delete next[engagementId];
+        return next;
+      });
       setMessage(
-        `Engagement removed. Deleted ${result.plansDeleted} plan(s) and ${result.executionJobsDeleted} execution job(s).`
+        `Engagement removed. Deleted ${result.plansDeleted} plan(s), ${result.executionJobsDeleted} execution job(s), and ${result.evidenceDeleted ?? 0} evidence item(s).`
       );
       await loadEngagementData(session, false);
       await loadWeek7Telemetry(session);
+      await loadWeek11ControlPlane(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -941,6 +1149,62 @@ export default function DashboardPage() {
                   Last update: {cveSummary?.lastUpdatedAt ? formatDate(cveSummary.lastUpdatedAt) : "n/a"}
                 </p>
               </div>
+
+              <div className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Week 11 Autonomy Control Plane
+                    </p>
+                    <p className="text-sm text-slate-600">
+                      Prompt evolution and multi-target orchestration status
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void loadWeek11ControlPlane(session)}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      Refresh Week 11
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleRunPromptEvolution()}
+                      disabled={evolvingPrompts}
+                      className="rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {evolvingPrompts ? "Evolving..." : "Run Prompt Evolution"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                      Active Prompts
+                    </p>
+                    <p className="text-lg font-semibold">{activePromptCount}</p>
+                  </article>
+                  <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                      Orchestrations Active
+                    </p>
+                    <p className="text-lg font-semibold">
+                      {orchestratorStatus?.activeCount ?? 0} /{" "}
+                      {orchestratorStatus?.maxConcurrent ?? 0}
+                    </p>
+                  </article>
+                  <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                      Latest Prompt
+                    </p>
+                    <p className="truncate text-sm font-semibold">
+                      {latestPromptVersion || "n/a"}
+                    </p>
+                  </article>
+                </div>
+              </div>
             </>
           ) : (
             <p className="text-sm text-slate-500">Telemetry not available yet.</p>
@@ -1020,8 +1284,22 @@ export default function DashboardPage() {
                   report?.executionJobs?.find(
                     (job) => job.toolId === "tls_metadata_probe"
                   ) || null;
+                const nmapJob =
+                  report?.executionJobs?.find((job) => job.toolId === "nmap_tcp_scan") ||
+                  null;
+                const nucleiJob =
+                  report?.executionJobs?.find((job) => job.toolId === "nuclei_scan") ||
+                  null;
+                const niktoJob =
+                  report?.executionJobs?.find((job) => job.toolId === "nikto_scan") ||
+                  null;
+                const sqlmapJob =
+                  report?.executionJobs?.find((job) => job.toolId === "sqlmap_detect") ||
+                  null;
                 const compliance =
                   complianceByEngagement[engagement._id] || null;
+                const chainSummary = chainSummaryByEngagement[engagement._id] || null;
+                const evidenceStatus = evidenceStatusByEngagement[engagement._id] || null;
 
                 return (
                   <article
@@ -1095,6 +1373,76 @@ export default function DashboardPage() {
                         {executingById[engagement._id]
                           ? "Running Probe..."
                           : "Run Headers Probe"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleRunWeek10Tool(engagement._id, "nmap_tcp_scan")
+                        }
+                        disabled={Boolean(executingById[engagement._id])}
+                        className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {executingById[engagement._id] ? "Running..." : "Run Nmap TCP"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleRunWeek10Tool(engagement._id, "nuclei_scan")
+                        }
+                        disabled={Boolean(executingById[engagement._id])}
+                        className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-semibold text-orange-700 transition hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {executingById[engagement._id] ? "Running..." : "Run Nuclei"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleRunWeek10Tool(engagement._id, "nikto_scan")
+                        }
+                        disabled={Boolean(executingById[engagement._id])}
+                        className="rounded-lg border border-lime-300 bg-white px-3 py-1.5 text-xs font-semibold text-lime-700 transition hover:bg-lime-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {executingById[engagement._id] ? "Running..." : "Run Nikto"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleRunWeek10Tool(engagement._id, "sqlmap_detect")
+                        }
+                        disabled={Boolean(executingById[engagement._id])}
+                        className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {executingById[engagement._id] ? "Running..." : "Run SQLMap Detect"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleRunWeek10Chain(engagement._id)}
+                        disabled={Boolean(chainRunningById[engagement._id])}
+                        className="rounded-lg border border-fuchsia-300 bg-white px-3 py-1.5 text-xs font-semibold text-fuchsia-700 transition hover:bg-fuchsia-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {chainRunningById[engagement._id]
+                          ? "Running Chain..."
+                          : "Run Week 10 Chain"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleAutonomousRun(engagement._id)}
+                        disabled={Boolean(orchestratingById[engagement._id])}
+                        className="rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {orchestratingById[engagement._id]
+                          ? "Autonomous Run..."
+                          : "Autonomous Run"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleVerifyEvidence(engagement._id)}
+                        disabled={Boolean(evidenceLoadingById[engagement._id])}
+                        className="rounded-lg border border-cyan-300 bg-white px-3 py-1.5 text-xs font-semibold text-cyan-700 transition hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {evidenceLoadingById[engagement._id]
+                          ? "Verifying Evidence..."
+                          : "Verify Evidence Chain"}
                       </button>
                       <button
                         type="button"
@@ -1231,6 +1579,44 @@ export default function DashboardPage() {
                           </p>
                         )}
 
+                        {chainSummary ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              Week 10 Chain Status
+                            </p>
+                            <p className="mt-1 text-slate-200">
+                              Source {chainSummary.source} | Executed{" "}
+                              {chainSummary.stepsExecuted}/{chainSummary.stepsPlanned}
+                              {chainSummary.haltedAt
+                                ? ` | Halted at step ${chainSummary.haltedAt.step} (${chainSummary.haltedAt.reason})`
+                                : ""}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="text-slate-400">
+                            Week 10 chain has not been run yet.
+                          </p>
+                        )}
+
+                        {evidenceStatus ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              Evidence Chain of Custody
+                            </p>
+                            <p className="mt-1 text-slate-200">
+                              Integrity {evidenceStatus.valid ? "VALID" : "BROKEN"} | Items{" "}
+                              {evidenceStatus.totalItems}
+                              {evidenceStatus.brokenAt
+                                ? ` | Broken at ${evidenceStatus.brokenAt}`
+                                : ""}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="text-slate-400">
+                            Evidence chain not verified yet.
+                          </p>
+                        )}
+
                         {latestExecution ? (
                           <div>
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
@@ -1275,6 +1661,50 @@ export default function DashboardPage() {
                             </p>
                             <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
                               {JSON.stringify(tlsProbeJob.output, null, 2)}
+                            </pre>
+                          </div>
+                        ) : null}
+
+                        {nmapJob?.output ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              Nmap TCP Scan Output
+                            </p>
+                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
+                              {JSON.stringify(nmapJob.output, null, 2)}
+                            </pre>
+                          </div>
+                        ) : null}
+
+                        {nucleiJob?.output ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              Nuclei Scan Output
+                            </p>
+                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
+                              {JSON.stringify(nucleiJob.output, null, 2)}
+                            </pre>
+                          </div>
+                        ) : null}
+
+                        {niktoJob?.output ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              Nikto Scan Output
+                            </p>
+                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
+                              {JSON.stringify(niktoJob.output, null, 2)}
+                            </pre>
+                          </div>
+                        ) : null}
+
+                        {sqlmapJob?.output ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              SQLMap Detection Output
+                            </p>
+                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
+                              {JSON.stringify(sqlmapJob.output, null, 2)}
                             </pre>
                           </div>
                         ) : null}
@@ -1345,6 +1775,25 @@ export default function DashboardPage() {
                             Learning:{" "}
                             <span className="font-medium">
                               {learningSummaryByEngagement[engagement._id]}
+                            </span>
+                          </p>
+                        ) : null}
+                        {chainSummary ? (
+                          <p className="mt-1 text-xs text-slate-600">
+                            Week 10 chain:{" "}
+                            <span className="font-medium">
+                              {chainSummary.stepsExecuted}/{chainSummary.stepsPlanned} via{" "}
+                              {chainSummary.source}
+                            </span>
+                          </p>
+                        ) : null}
+                        {evidenceStatus ? (
+                          <p className="mt-1 text-xs text-slate-600">
+                            Evidence integrity:{" "}
+                            <span className="font-medium">
+                              {evidenceStatus.valid
+                                ? `VALID (${evidenceStatus.totalItems})`
+                                : `BROKEN at ${evidenceStatus.brokenAt ?? "unknown"}`}
                             </span>
                           </p>
                         ) : null}

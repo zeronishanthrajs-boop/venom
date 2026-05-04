@@ -1152,3 +1152,189 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 ### Deployment state notes
 - Cloud pipeline (Render + Vercel bridge) is healthy after the hardening push.
 - Planner remains on template fallback in cloud until valid `CLAUDE_API_KEY` is configured/enabled.
+
+## [2026-05-04 17:51:33 +05:30] - Week 10 Implementation Complete (Real Tools + Chain Engine + Evidence Custody)
+
+**Status:** Week 10 delivered locally with verification complete
+
+### Implemented (Backend)
+- Real Docker-gated tool layer integrated:
+  - `backend/tooling/realTools.js`
+  - tools added: `nmap_tcp_scan`, `nuclei_scan`, `nikto_scan`, `sqlmap_detect`
+  - parsers included for normalized finding output and safe metadata truncation
+- Tool registry + executor wiring:
+  - `backend/tooling/toolRegistry.js` now includes Week 10 real tool entries
+  - `backend/services/executor.js` now routes `mode: docker-real` tools through `executeRealTool(...)`
+- Unified execution service added:
+  - `backend/services/executionService.js`
+  - centralizes scope validation, constraint checks, tool execution, status mapping
+  - reused by direct execute route and chain engine
+- Chain orchestration feature added:
+  - `backend/services/chainEngine.js`
+  - `backend/routes/chain.js`
+  - endpoint: `POST /api/chain/:engagementId`
+  - supports safe heuristic chain planning and optional Claude-guided chain planning (`CLAUDE_CHAIN_ENABLED=true`)
+- Evidence chain-of-custody added:
+  - `backend/models/Evidence.js`
+  - `backend/services/evidenceRecorder.js`
+  - `backend/routes/evidence.js`
+  - endpoints:
+    - `GET /api/evidence/:engagementId`
+    - `GET /api/evidence/:engagementId/verify`
+  - SHA-256 content hash + rolling chain hash with integrity verification
+- Engagement cleanup now includes evidence artifacts:
+  - `backend/routes/engagements.js` delete cascade now removes evidence docs too
+- Server route wiring:
+  - `backend/server.js` now mounts `/api/chain` and `/api/evidence`
+
+### Implemented (Dashboard)
+- Week 10 API integration:
+  - `dashboard/src/lib/api.ts`
+  - added:
+    - `runAssessmentChain(...)`
+    - `verifyEvidenceChain(...)`
+    - `ChainRunResponse` and `EvidenceVerifyResponse` types
+- Week 10 UI controls + forensic display:
+  - `dashboard/src/app/dashboard/page.tsx`
+  - added action buttons:
+    - `Run Nmap TCP`
+    - `Run Nuclei`
+    - `Run Nikto`
+    - `Run SQLMap Detect`
+    - `Run Week 10 Chain`
+    - `Verify Evidence Chain`
+  - forensic view now renders:
+    - chain status summary
+    - evidence integrity status
+    - raw outputs for nmap/nuclei/nikto/sqlmap jobs
+
+### Documentation & Env Updates
+- `backend/.env.example`
+  - added `CLAUDE_CHAIN_MODEL`
+  - added `CLAUDE_CHAIN_ENABLED`
+- `render.yaml`
+  - added `CLAUDE_CHAIN_MODEL`, `CLAUDE_CHAIN_ENABLED`, `ENABLE_DOCKER_TOOLS`
+- `README.md`
+  - added Week 10 endpoints and env guidance
+- `docs/DEPLOYMENT.md`
+  - added chain/evidence endpoint verification and Week 10 env notes
+
+### Issue discovered and fixed during Week 10 verification
+1. Evidence records were not persisting from API-triggered execution flows.
+   - Root causes:
+     - `Evidence` pre-validate hook used async+`next` callback style incorrectly (`next is not a function`)
+     - evidence batch writes could collide on chain index generation
+   - Fixes:
+     - converted `Evidence` pre-validate hook to pure async hook without `next` callback
+     - switched evidence writes to sequential creates to preserve deterministic chain index progression
+
+### Verification Results
+- Backend tests: `29/29` passing
+- Dashboard lint: pass
+- Dashboard build: pass
+- Local runtime smoke (new backend process):
+  - `GET /api/execute/tools` returns Week 10 registry (8 tools total)
+  - `POST /api/execute` (`http_headers_probe`) => `success`
+  - `POST /api/chain/:engagementId` => executed chain (`heuristic` source)
+  - `GET /api/evidence/:engagementId/verify` =>
+    - `valid: true`
+    - `totalItems: 11` (evidence chain persisted and verified)
+
+### Week 10 operational note
+- Full real-scan execution in Docker paths requires:
+  - backend runtime with Docker access
+  - `ENABLE_DOCKER_TOOLS=true`
+- With Docker disabled, chain safely halts at blocked docker step and still records immutable evidence for completed steps.
+
+## [2026-05-04 22:19:02 +05:30] - Week 11 Implementation Complete (Prompt Evolution + Multi-Target Orchestration)
+
+**Status:** Week 11 implemented, validated, and integrated into dashboard control flow
+
+### Backend changes delivered
+- Added prompt lineage model:
+  - `backend/models/PromptVersion.js`
+  - stores prompt type, version, parent lineage, evolution reason, performance metrics, active state
+- Added prompt catalog resolver:
+  - `backend/services/promptCatalog.js`
+  - planner/chain/learner now support active prompt overrides from DB with file fallback
+- Added prompt evolver service:
+  - `backend/services/promptEvolver.js`
+  - computes recent engagement performance metrics
+  - requests safe prompt refinement from Claude (if key configured)
+  - persists new active prompt versions and generated prompt files
+- Added weekly evolution cron job:
+  - `backend/jobs/evolutionJob.js`
+  - env-controlled schedule and graceful start/stop lifecycle
+- Added prompt APIs:
+  - `backend/routes/prompts.js`
+  - endpoints:
+    - `GET /api/prompts/active`
+    - `GET /api/prompts/history`
+    - `POST /api/prompts/evolve`
+    - `POST /api/prompts/evolve/run`
+- Added multi-target orchestration engine:
+  - `backend/services/orchestrator.js`
+  - full autonomous run path: `plan -> execute -> learn -> complete`
+  - respects `MAX_CONCURRENT_TARGETS`
+  - exposes active orchestration runtime status map
+- Added orchestration APIs:
+  - `backend/routes/orchestrate.js`
+  - endpoints:
+    - `GET /api/orchestrate/status`
+    - `POST /api/orchestrate`
+    - `POST /api/orchestrate/:engagementId`
+- Backend server wiring updates:
+  - `backend/server.js`
+  - mounted new routes and enabled prompt evolution job lifecycle hooks
+- Planner/chain/learner integration with evolvable prompts:
+  - `backend/services/planner.js` now resolves active planning prompt
+  - `backend/services/chainEngine.js` now resolves active chain prompt
+  - `backend/services/learner.js` now resolves active learning prompt
+- Added fallback prompt files for Week 11 types:
+  - `backend/prompts/chain-agent-v1.txt`
+  - `backend/prompts/learning-agent-v1.txt`
+  - `backend/prompts/tagging-agent-v1.txt`
+  - `backend/prompts/research-agent-v1.txt`
+
+### Dashboard changes delivered
+- Added Week 11 API integrations:
+  - `dashboard/src/lib/api.ts`
+  - prompt history/active/evolve API clients
+  - orchestrator status + single/multi orchestration API clients
+- Added Week 11 UI controls:
+  - `dashboard/src/app/dashboard/page.tsx`
+  - new **Autonomy Control Plane** block in telemetry section:
+    - run prompt evolution
+    - refresh orchestration/prompt status
+    - display active prompts, orchestration load, latest prompt version
+  - per-engagement **Autonomous Run** action button (Week 11 full run trigger)
+
+### Config + documentation updates
+- Environment templates expanded:
+  - `backend/.env.example`
+  - added:
+    - `CLAUDE_PROMPT_EVOLVER_MODEL`
+    - `MAX_CONCURRENT_TARGETS`
+    - `ENABLE_PROMPT_EVOLUTION_JOB`
+    - `PROMPT_EVOLUTION_CRON`
+    - `PROMPT_EVOLUTION_TIMEZONE`
+    - `PROMPT_EVOLUTION_MIN_CONFIDENCE`
+- Cloud blueprint defaults updated:
+  - `render.yaml`
+- Docs updated:
+  - `README.md`
+  - `docs/DEPLOYMENT.md`
+
+### Validation results
+- Backend tests: `35/35` passing
+- Dashboard lint: pass
+- Dashboard build: pass
+- Local Week 11 smoke validation:
+  - `POST /api/prompts/evolve` => executed safely (skipped with no active Claude evolution output in current env, no crash)
+  - `GET /api/prompts/history` => reachable and returning structured history
+  - `POST /api/orchestrate/:engagementId` => completed autonomous run
+  - `GET /api/orchestrate/status` => active orchestration visibility exposed
+
+### Operational note
+- Prompt evolution requires valid `CLAUDE_API_KEY` for real model-generated upgrades.
+- In environments without Docker execution enabled, orchestration still runs safely using available tools and records outcomes without breaking the pipeline.

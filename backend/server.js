@@ -13,7 +13,15 @@ const metricsRouter = require("./routes/metrics");
 const cvesRouter = require("./routes/cves");
 const reportsRouter = require("./routes/reports");
 const complianceRouter = require("./routes/compliance");
+const chainRouter = require("./routes/chain");
+const evidenceRouter = require("./routes/evidence");
+const promptsRouter = require("./routes/prompts");
+const orchestrateRouter = require("./routes/orchestrate");
 const { startCveSyncJob, stopCveSyncJob } = require("./jobs/cveJob");
+const {
+  startPromptEvolutionJob,
+  stopPromptEvolutionJob
+} = require("./jobs/evolutionJob");
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -82,6 +90,10 @@ app.use("/api/cves", authMiddleware, activityLogger, cvesRouter);
 app.use("/api/cve", authMiddleware, activityLogger, cvesRouter);
 app.use("/api/reports", authMiddleware, activityLogger, reportsRouter);
 app.use("/api/compliance", authMiddleware, activityLogger, complianceRouter);
+app.use("/api/chain", authMiddleware, activityLogger, chainRouter);
+app.use("/api/evidence", authMiddleware, activityLogger, evidenceRouter);
+app.use("/api/prompts", authMiddleware, activityLogger, promptsRouter);
+app.use("/api/orchestrate", authMiddleware, activityLogger, orchestrateRouter);
 
 app.use((error, _req, res, _next) => {
   const isJsonParseError =
@@ -106,6 +118,7 @@ app.use((error, _req, res, _next) => {
 async function bootstrap() {
   await connectDB();
   startCveSyncJob();
+  startPromptEvolutionJob();
   app.listen(port, () => {
     console.log(`Server running on port ${port}`);
   });
@@ -114,6 +127,7 @@ async function bootstrap() {
 async function shutdown() {
   try {
     stopCveSyncJob();
+    stopPromptEvolutionJob();
     await stopInMemoryServer();
   } catch (error) {
     console.error("Error during in-memory DB shutdown:", error.message);
