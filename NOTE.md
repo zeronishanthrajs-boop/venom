@@ -878,3 +878,8 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
   - `GET /api/cves/summary` before sync => `total: 0`
   - `POST /api/cves/sync` (`limit=10`, `sinceDays=2`) => `fetched: 10`, `upserted: 10`
   - `GET /api/cves/summary` after sync => `total: 10`
+- Cloud verification (Render + Vercel bridge):
+  - `GET https://venom-backend-x2pj.onrender.com/api/cves/summary` => `200`
+  - `GET /api/backend/api/cves/summary` via dashboard session => `200`
+  - Week8 planner smoke via cloud returns `promptVersion: planning_v2_2_2026_05_04`
+  - `plannerSource` is currently `template` in cloud smoke (Claude key/path not active in this run)
