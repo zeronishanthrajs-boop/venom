@@ -687,12 +687,19 @@ export default function DashboardPage() {
       return;
     }
 
+    const normalizedEmail = recipientEmail.trim();
+    const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
+    if (!emailLooksValid) {
+      setError("Enter a valid recipient email address.");
+      return;
+    }
+
     setEmailingReportById((prev) => ({ ...prev, [engagementId]: true }));
     setError("");
     setMessage("");
 
     try {
-      const result = await emailBackendReport(session, engagementId, recipientEmail);
+      const result = await emailBackendReport(session, engagementId, normalizedEmail);
       setMessage(`Report email sent to ${result.to}.`);
     } catch (requestError) {
       setError(

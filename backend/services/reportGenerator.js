@@ -263,7 +263,7 @@ function buildPdfReportBuffer(context) {
 }
 
 function assertSmtpConfigured() {
-  const required = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"];
+  const required = ["SMTP_HOST", "SMTP_USER", "SMTP_PASS"];
   const missing = required.filter((name) => !process.env[name]);
   if (missing.length > 0) {
     const error = new Error(`SMTP is not configured. Missing: ${missing.join(", ")}`);
@@ -307,7 +307,7 @@ async function emailReport(engagementId, recipientEmail) {
   const fileName = `venom-report-${safeName}-${Date.now()}.pdf`;
 
   await transporter.sendMail({
-    from: process.env.SMTP_FROM,
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: recipientEmail,
     subject: `[VENOM] Security Report - ${context.engagement.name}`,
     text: `Attached is the VENOM security report for ${context.engagement.targetUrl}.`,
@@ -334,4 +334,3 @@ module.exports = {
   generateMarkdownReport,
   emailReport
 };
-

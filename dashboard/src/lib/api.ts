@@ -270,9 +270,13 @@ function buildHeaders(session: VenomSession) {
 
 const API_TIMEOUT_MS = 15000;
 
-async function apiFetch(path: string, init: RequestInit): Promise<Response> {
+async function apiFetch(
+  path: string,
+  init: RequestInit,
+  timeoutMs = API_TIMEOUT_MS
+): Promise<Response> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`/api/backend${path}`, {
@@ -284,7 +288,7 @@ async function apiFetch(path: string, init: RequestInit): Promise<Response> {
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error(
-        `Bridge timeout after ${API_TIMEOUT_MS}ms. Backend may be offline or unreachable.`
+        `Bridge timeout after ${timeoutMs}ms. Backend may be offline or unreachable.`
       );
     }
 
@@ -585,7 +589,7 @@ export async function syncCves(
     method: "POST",
     headers: buildHeaders(session),
     body: JSON.stringify(input || {})
-  });
+  }, 60000);
 
   return parseResponse<CveSyncResponse>(response);
 }
@@ -614,7 +618,8 @@ export async function emailBackendReport(
       method: "POST",
       headers: buildHeaders(session),
       body: JSON.stringify({ recipientEmail })
-    }
+    },
+    45000
   );
 
   return parseResponse<ReportEmailResponse>(response);
@@ -630,7 +635,8 @@ export async function downloadBackendPdfReport(
       method: "GET",
       headers: buildHeaders(session),
       cache: "no-store"
-    }
+    },
+    60000
   );
 
   if (!response.ok) {

@@ -397,6 +397,7 @@ async function runLearningCycle(engagementId) {
 
   const jobs = await ExecutionJob.find({
     engagementId,
+    status: { $in: ["success", "failed", "timeout", "blocked"] },
     learnedAt: { $exists: false }
   })
     .sort({ createdAt: -1 })
@@ -490,4 +491,3 @@ module.exports = {
   sanitizePatternCandidate,
   runLearningCycle
 };
-

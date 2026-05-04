@@ -1050,3 +1050,71 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - Claude learning extraction path requires `CLAUDE_API_KEY` and (optional) `CLAUDE_LEARNER_MODEL`.
 - Email delivery requires SMTP vars:
   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
+
+## [2026-05-04 16:48:52 +05:30] - Full Week 1-9 Audit + Hardening Pass
+
+**Status:** Deep audit complete, confirmed issues fixed
+
+**Audit scope executed:**
+- Codebase sweep for Week 1-9 implementation integrity
+- Backend test suite (`23/23`) + dashboard lint/build
+- End-to-end backend smoke validation across:
+  - Health/readiness
+  - Engagement lifecycle
+  - Planning
+  - Execution
+  - Learning
+  - Pattern matching
+  - Metrics
+  - CVE intelligence
+  - Compliance endpoint
+  - Report downloads (PDF/Markdown)
+
+**Issues found and resolved:**
+1. **Learning engine incorrectly eligible to process non-terminal jobs**
+   - Risk: queued/running jobs could be marked learned early, reducing learning accuracy.
+   - Fix:
+     - `backend/services/learner.js`
+     - constrained learning query to terminal statuses only:
+       - `success`, `failed`, `timeout`, `blocked`
+   - Verification:
+     - Before execution: `processedJobs: 0`
+     - After successful execution: `processedJobs: 1`
+
+2. **SMTP configuration validation too strict**
+   - Risk: report email route blocked when `SMTP_PORT` not explicitly set, despite safe default support.
+   - Fix:
+     - `backend/services/reportGenerator.js`
+     - SMTP required set reduced to:
+       - `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`
+     - sender fallback added:
+       - `from = SMTP_FROM || SMTP_USER`
+   - Verification:
+     - `/api/reports/:id/email` now returns clear `503` JSON if SMTP truly incomplete:
+       - `{"error":"SMTP is not configured. Missing: SMTP_HOST, SMTP_USER, SMTP_PASS"}`
+
+3. **Timeout risk for heavy Week 8/9 operations from dashboard bridge**
+   - Risk: false client failures on longer operations (CVE sync/PDF generation/email send) due fixed 15s timeout.
+   - Fix:
+     - `dashboard/src/lib/api.ts`
+     - added per-request timeout override support in `apiFetch(...)`
+     - applied larger safe timeouts:
+       - `syncCves`: 60s
+       - `downloadBackendPdfReport`: 60s
+       - `emailBackendReport`: 45s
+   - Verification:
+     - dashboard build/lint passes after API contract update.
+
+4. **Client-side report email input accepted malformed addresses**
+   - Risk: avoidable backend failures/user confusion.
+   - Fix:
+     - `dashboard/src/app/dashboard/page.tsx`
+     - added recipient email format validation before calling backend email route.
+   - Verification:
+     - invalid email now blocked immediately with actionable UI error.
+
+**Post-fix validation summary:**
+- `backend npm test` => pass (`23/23`)
+- `dashboard npm run lint` => pass
+- `dashboard npm run build` => pass
+- E2E smoke (local backend) => all key Week 1-9 endpoints responded successfully.
