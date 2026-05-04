@@ -1370,3 +1370,44 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 ### Files changed
 - `dashboard/src/app/dashboard/page.tsx`
 - `dashboard/src/app/globals.css`
+
+## [2026-05-04 23:21:59 +05:30] - Week 9-11 Deploy Recovery + Live Push Verification
+
+### Trigger
+- User reported no Vercel updates for ~22 hours and requested immediate Week 9-11 deploy recovery.
+
+### Issues fixed
+- Dashboard UI stability issues addressed (layout overload, weak hierarchy, unbounded alert growth, long engagement list sprawl).
+- Converted control surface to tactical dark UI with cleaner operator scan path.
+- Split engagement actions into primary actions + collapsible advanced actions.
+- Added severity-based alert tone mapping and summary chips.
+- Capped Alerts and Engagement lists with internal scrolling to prevent runaway page length.
+- Applied sticky right-side New Engagement panel on large screens.
+
+### Quality checks
+- `backend npm test` -> pass (35/35)
+- `dashboard npm run lint` -> pass
+- `dashboard npm run build` -> pass
+
+### Git + deploy actions executed
+- Commit pushed to GitHub main:
+  - `a2e9caf`
+  - message: `fix(ui): stabilize week9-11 dashboard layout and deploy sync`
+- Vercel production deployment forced via CLI:
+  - deployment id: `dpl_BRTdNFKkXhJPViWvVZyQG3g3zrLz`
+  - production URL: `https://dashboard-ntmnnis4p-zeronishanthrajs-boops-projects.vercel.app`
+  - aliased to: `https://dashboard-sigma-puce-87.vercel.app`
+  - created: Mon May 04 2026 23:19:22 +05:30
+- Render backend deployment path:
+  - backend service remains configured `autoDeploy: true` in `render.yaml`
+  - latest push to `main` completed successfully
+
+### Live verification
+- `GET https://dashboard-sigma-puce-87.vercel.app/api/system/ready` -> `200`
+- `GET https://venom-backend-x2pj.onrender.com/health` -> `200`
+- `GET https://venom-backend-x2pj.onrender.com/api/orchestrate/status` (auth) -> `200`
+
+### Outcome
+- Week 9-11 codebase is pushed and live on GitHub.
+- Vercel production now reflects latest deployment.
+- Render backend is reachable and serving authenticated orchestration APIs.
