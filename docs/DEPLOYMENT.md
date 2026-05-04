@@ -65,6 +65,15 @@ Deploy backend to Render and dashboard to Vercel using the newest secure flow:
 - `JIRA_API_TOKEN=<optional>`
 - `VENOM_REALTIME_SECRET=<strong-random-secret>`
 - `VENOM_REALTIME_TOKEN_TTL_MS=600000`
+- `DEFAULT_STARTUP_PROFILE=true`
+- `TRANSLATE_FINDINGS_ON_COMPLETE=true`
+- `ENABLE_DECISION_BRIEF_AI=true` (set false to force heuristic-only briefs)
+- `CLAUDE_DECISION_MODEL=claude-3-5-sonnet-latest`
+- `CLAUDE_TRANSLATOR_MODEL=claude-3-5-haiku-latest`
+- `ENABLE_FINDING_TRANSLATION_AI=false` (set true for AI-generated audience translations)
+- `CONTINUOUS_SCAN_ENABLED=false` (set true for daily baseline snapshots + change detection)
+- `CONTINUOUS_SCAN_CRON=0 6 * * *`
+- `CONTINUOUS_SCAN_TIMEZONE=UTC`
 
 ### Verify backend
 - `GET https://<backend-domain>/health` -> `200`
@@ -108,6 +117,13 @@ Quick checks:
 - `POST /api/backend/api/research/trigger` runs Week 12 threat-intel research cycle.
 - `GET /api/backend/api/research/log?limit=5` returns recent research run history.
 - `GET /api/backend/api/realtime/status` returns WebSocket server and room stats.
+- `POST /api/backend/api/decisions/<engagementId>/brief` generates decision-intelligence top risks.
+- `GET /api/backend/api/control/scope/<engagementId>` returns scope dashboard.
+- `GET /api/backend/api/control/preview/<engagementId>` returns action preview before execution.
+- `POST /api/backend/api/control/killswitch/global` toggles global execution kill switch.
+- `POST /api/backend/api/control/killswitch/engagement/<engagementId>` toggles per-engagement kill switch.
+- `GET /api/backend/api/monitoring/<engagementId>/snapshots` returns security timeline snapshots.
+- `GET /api/backend/api/monitoring/<engagementId>/changes` returns delta since previous snapshot.
 
 ## 4) Common Failure Map
 - Login fails with valid credentials:

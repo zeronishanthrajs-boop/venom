@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { verifyAuthToken } from "@/lib/auth";
+import { isAuthTokenRevoked } from "@/lib/authRevocation";
 import { AUTH_COOKIE_NAME } from "@/lib/authConstants";
 
 export const runtime = "nodejs";
@@ -28,6 +29,9 @@ function getBackendApiKey() {
 
 async function proxyRequest(request: NextRequest, context: RouteContext) {
   const token = request.cookies.get(AUTH_COOKIE_NAME)?.value || null;
+  if (isAuthTokenRevoked(token)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const session = verifyAuthToken(token);
 
   if (!session) {

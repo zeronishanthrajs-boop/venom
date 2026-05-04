@@ -45,6 +45,23 @@ const executionJobSchema = new mongoose.Schema(
           exploitationPotential: { type: String, default: "" },
           cve: { type: String, default: null },
           source: { type: String, default: "" },
+          tags: {
+            type: [String],
+            default: []
+          },
+          cvssScore: {
+            type: Number,
+            default: null
+          },
+          exploitAvailable: {
+            type: Boolean,
+            default: false
+          },
+          translations: {
+            founder: { type: String, default: "" },
+            engineer: { type: String, default: "" },
+            brief: { type: String, default: "" }
+          },
           metadata: {
             type: mongoose.Schema.Types.Mixed,
             default: {}

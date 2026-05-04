@@ -15,6 +15,9 @@ export type CreateEngagementInput = {
   description: string;
   targetUrl: string;
   targetType: "website" | "api" | "network";
+  scanProfile?: "startup";
+  startupConcern?: string;
+  ownershipAssertion?: string;
 };
 
 export type Plan = {
@@ -58,6 +61,14 @@ export type ExecutionJob = {
     exploitationPotential?: string;
     cve?: string | null;
     source: string;
+    tags?: string[];
+    cvssScore?: number | null;
+    exploitAvailable?: boolean;
+    translations?: {
+      founder?: string;
+      engineer?: string;
+      brief?: string;
+    };
     metadata?: Record<string, unknown>;
   }>;
   errorMessage?: string;
@@ -449,6 +460,126 @@ export type ComplianceSummary = {
   }>;
 };
 
+export type DecisionBriefRisk = {
+  rank: number;
+  title: string;
+  whyThisFirst: string;
+  whatCouldHappen: string;
+  fixDifficulty: "easy" | "medium" | "hard";
+  estimatedFixTime: string;
+  immediateAction: string;
+};
+
+export type DecisionBrief = {
+  _id?: string;
+  engagementId: string;
+  topRisks: DecisionBriefRisk[];
+  ignoreList: Array<{ title: string; reason: string }>;
+  overallRiskSentence: string;
+  riskLevel: "critical" | "high" | "medium" | "low" | "clean" | "unknown";
+  shouldPageOnCall: boolean;
+  riskScore: number;
+  totalFindings: number;
+  actionableFindings: number;
+  ignoredFindings: number;
+  source: "heuristic" | "claude";
+  generatedAt: string;
+};
+
+export type ScopeDashboard = {
+  engagementId: string;
+  targetUrl: string;
+  allowedDomains: string[];
+  restrictedPaths: string[];
+  restrictedServices: string[];
+  noDestructiveOps: boolean;
+  quietMode: boolean;
+  maxConcurrentOps: number;
+  timeoutMinutes: number;
+  plannedTools: string[];
+};
+
+export type ActionPreview = {
+  engagementId: string;
+  targetUrl: string;
+  actions: Array<{
+    order: number;
+    toolId: string;
+    riskLevel: "low" | "medium" | "high";
+    destructive: boolean;
+    description: string;
+  }>;
+};
+
+export type KillSwitchState = {
+  blocked: boolean;
+  global: {
+    active: boolean;
+    reason: string;
+    updatedAt: string | null;
+    updatedBy: string;
+  };
+  engagement: {
+    active: boolean;
+    reason: string;
+    updatedAt: string | null;
+    updatedBy: string;
+  };
+};
+
+export type ActivityLogItem = {
+  method: string;
+  path: string;
+  statusCode: number;
+  durationMs: number;
+  userId: string;
+  userRole: string;
+  ip?: string;
+  query?: Record<string, unknown>;
+  bodyKeys?: string[];
+  createdAt: string;
+};
+
+export type ActivityLogResponse = {
+  count: number;
+  logs: ActivityLogItem[];
+};
+
+export type SecuritySnapshot = {
+  _id: string;
+  engagementId: string;
+  snapshotType: "manual" | "scheduled" | "post-engagement";
+  snapshotAt: string;
+  findings: Array<{
+    id?: string;
+    title: string;
+    severity: "critical" | "high" | "medium" | "low" | "info";
+    category?: string;
+    cve?: string;
+  }>;
+  openPorts: Array<{
+    host: string;
+    port: number;
+    protocol: string;
+    service: string;
+  }>;
+  riskScore: number;
+  summary: string;
+  createdBy: string;
+};
+
+export type SecurityChangeSet = {
+  changesFound: boolean;
+  newFindings: SecuritySnapshot["findings"];
+  resolvedFindings: SecuritySnapshot["findings"];
+  newPorts: SecuritySnapshot["openPorts"];
+  closedPorts: SecuritySnapshot["openPorts"];
+  changeSummary: string;
+  scanGapHours: number;
+  currentSnapshotId: string | null;
+  previousSnapshotId: string | null;
+};
+
 function buildHeaders(session: VenomSession) {
   return {
     "Content-Type": "application/json",
@@ -512,6 +643,9 @@ function throwApiError(response: Response, payload: unknown): never {
     }
 
     if (response.status === 404) {
+      if (payloadError) {
+        throw new Error(payloadError);
+      }
       throw new Error(
         "Backend route/service not found (404). Verify VENOM_BACKEND_BASE_URL points to the active Render backend."
       );
@@ -604,6 +738,9 @@ export async function createEngagement(
       description: input.description,
       targetUrl: input.targetUrl,
       targetType: input.targetType,
+      scanProfile: input.scanProfile,
+      startupConcern: input.startupConcern,
+      ownershipAssertion: input.ownershipAssertion,
       scope: {
         allowedDomains: [parsedUrl.hostname],
         restrictedPaths: []
@@ -1006,4 +1143,174 @@ export async function triggerResearchCycle(
   }, 120000);
 
   return parseResponse<ResearchRunResponse>(response);
+}
+
+export async function fetchDecisionBrief(
+  session: VenomSession,
+  engagementId: string,
+  generate = false
+): Promise<DecisionBrief> {
+  const query = generate ? "?generate=true" : "";
+  const response = await apiFetch(
+    `/api/decisions/${encodeURIComponent(engagementId)}/brief${query}`,
+    {
+      method: "GET",
+      headers: buildHeaders(session),
+      cache: "no-store"
+    }
+  );
+
+  return parseResponse<DecisionBrief>(response);
+}
+
+export async function generateDecisionBriefNow(
+  session: VenomSession,
+  engagementId: string
+): Promise<DecisionBrief> {
+  const response = await apiFetch(
+    `/api/decisions/${encodeURIComponent(engagementId)}/brief`,
+    {
+      method: "POST",
+      headers: buildHeaders(session)
+    },
+    45000
+  );
+  return parseResponse<DecisionBrief>(response);
+}
+
+export async function fetchScopeDashboard(
+  session: VenomSession,
+  engagementId: string
+): Promise<ScopeDashboard> {
+  const response = await apiFetch(
+    `/api/control/scope/${encodeURIComponent(engagementId)}`,
+    {
+      method: "GET",
+      headers: buildHeaders(session),
+      cache: "no-store"
+    }
+  );
+  return parseResponse<ScopeDashboard>(response);
+}
+
+export async function fetchActionPreview(
+  session: VenomSession,
+  engagementId: string
+): Promise<ActionPreview> {
+  const response = await apiFetch(
+    `/api/control/preview/${encodeURIComponent(engagementId)}`,
+    {
+      method: "GET",
+      headers: buildHeaders(session),
+      cache: "no-store"
+    }
+  );
+  return parseResponse<ActionPreview>(response);
+}
+
+export async function fetchKillSwitchState(
+  session: VenomSession,
+  engagementId?: string
+): Promise<KillSwitchState> {
+  const query = engagementId
+    ? `?engagementId=${encodeURIComponent(engagementId)}`
+    : "";
+  const response = await apiFetch(`/api/control/killswitch${query}`, {
+    method: "GET",
+    headers: buildHeaders(session),
+    cache: "no-store"
+  });
+  return parseResponse<KillSwitchState>(response);
+}
+
+export async function setGlobalKillSwitchState(
+  session: VenomSession,
+  active: boolean,
+  reason = ""
+): Promise<KillSwitchState> {
+  const response = await apiFetch("/api/control/killswitch/global", {
+    method: "POST",
+    headers: buildHeaders(session),
+    body: JSON.stringify({ active, reason })
+  });
+  return parseResponse<KillSwitchState>(response);
+}
+
+export async function setEngagementKillSwitchState(
+  session: VenomSession,
+  engagementId: string,
+  active: boolean,
+  reason = ""
+): Promise<KillSwitchState> {
+  const response = await apiFetch(
+    `/api/control/killswitch/engagement/${encodeURIComponent(engagementId)}`,
+    {
+      method: "POST",
+      headers: buildHeaders(session),
+      body: JSON.stringify({ active, reason })
+    }
+  );
+  return parseResponse<KillSwitchState>(response);
+}
+
+export async function fetchActivityLogs(
+  session: VenomSession,
+  limit = 25
+): Promise<ActivityLogResponse> {
+  const response = await apiFetch(
+    `/api/control/activity/recent?limit=${encodeURIComponent(String(limit))}`,
+    {
+      method: "GET",
+      headers: buildHeaders(session),
+      cache: "no-store"
+    }
+  );
+  return parseResponse<ActivityLogResponse>(response);
+}
+
+export async function fetchSecuritySnapshots(
+  session: VenomSession,
+  engagementId: string,
+  limit = 20
+): Promise<SecuritySnapshot[]> {
+  const response = await apiFetch(
+    `/api/monitoring/${encodeURIComponent(engagementId)}/snapshots?limit=${encodeURIComponent(String(limit))}`,
+    {
+      method: "GET",
+      headers: buildHeaders(session),
+      cache: "no-store"
+    }
+  );
+  return parseResponse<SecuritySnapshot[]>(response);
+}
+
+export async function createSecuritySnapshot(
+  session: VenomSession,
+  engagementId: string,
+  snapshotType: "manual" | "scheduled" | "post-engagement" = "manual"
+): Promise<SecuritySnapshot> {
+  const response = await apiFetch(
+    `/api/monitoring/${encodeURIComponent(engagementId)}/snapshot`,
+    {
+      method: "POST",
+      headers: buildHeaders(session),
+      body: JSON.stringify({ snapshotType })
+    }
+  );
+  return parseResponse<SecuritySnapshot>(response);
+}
+
+export async function fetchSecurityChanges(
+  session: VenomSession,
+  engagementId: string
+): Promise<SecurityChangeSet> {
+  const response = await apiFetch(
+    `/api/monitoring/${encodeURIComponent(engagementId)}/changes`,
+    {
+      method: "GET",
+      headers: buildHeaders(session),
+      cache: "no-store"
+    }
+  );
+  return parseResponse<SecurityChangeSet>(response);
 }

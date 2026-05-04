@@ -4,6 +4,7 @@ Week 3 dashboard implementation using Next.js App Router + Tailwind CSS.
 
 ## Features
 - `/login` private credential gate (server-side validated)
+- `/onboard` startup-focused guided onboarding (URL -> authorization -> concern -> launch)
 - `/dashboard` engagement list view
 - New engagement creation form
 - Per-engagement plan actions (`Generate Plan`, `View Latest Plan`)
@@ -12,6 +13,11 @@ Week 3 dashboard implementation using Next.js App Router + Tailwind CSS.
 - Week 7 telemetry (`Metrics`, `Alerts`, live progress bars)
 - Week 11 autonomy controls (prompt evolution + orchestration status)
 - Week 12 research/realtime controls (research trigger, socket status, latest research summary)
+- Final 5 controls:
+  - Decision intelligence panel (top risks, ignore list, risk sentence)
+  - Trust/control panel (scope preview, action preview, kill switches, recent activity)
+  - Human-readable finding modes (`Founder`, `Engineer`, `Brief`)
+  - Security timeline snapshots + change detection summary
 - API bridge route (`/api/backend/*`) that forwards to backend with server-held API key
 
 ## Local Run

@@ -1480,3 +1480,206 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - Real-time collaboration channel: complete (tokenized WebSocket)
 - Research APIs + status telemetry: complete
 - End-to-end code/documentation readiness for production push: complete
+
+## [2026-05-05 00:19:43 +05:30] - Full Test Sweep (Normal + Whitebox + Blackbox + Smoke) and Fixes
+
+### Scope executed
+- Whitebox:
+  - `backend npm test` -> pass (`40/40`)
+  - `dashboard npm run lint` -> pass
+  - `dashboard npm run build` -> pass
+- Blackbox API:
+  - health/readiness (`/health`, `/ready`)
+  - auth-gated API behavior (401 without key, success with key)
+  - full engagement lifecycle:
+    - create -> plan -> execute -> pattern-match -> learn -> report(json/markdown) -> delete
+  - Week 12 paths:
+    - `/api/realtime/token`, `/api/realtime/status`, `/api/research/log`
+- Normal website flow:
+  - login page load
+  - invalid login rejection
+  - valid login/session
+  - dashboard backend bridge auth + data fetch
+  - logout behavior
+- Smoke/stability:
+  - 50x repeated `GET /health` and `GET /ready` (all 200)
+  - websocket token + `/ws` handshake receives `realtime_connected`
+  - CORS preflight verified (`OPTIONS /api/engagements` -> 204 with expected allow headers)
+
+### Issue found
+1. Session replay gap:
+   - After logout, an already-captured auth cookie could still be replayed until expiry (stateless token behavior).
+
+### Fix implemented
+- Added server-side token revocation checks for dashboard auth cookies.
+- New file:
+  - `dashboard/src/lib/authRevocation.ts`
+- Updated routes:
+  - `dashboard/src/app/api/auth/logout/route.ts`
+    - now revokes current auth token on logout before clearing cookie.
+  - `dashboard/src/app/api/auth/session/route.ts`
+    - denies revoked tokens (`401`).
+  - `dashboard/src/app/api/backend/[...path]/route.ts`
+    - denies revoked tokens at bridge layer (`401`).
+
+### Verification after fix
+- Re-ran dashboard auth flow:
+  - valid login -> session `200`
+  - logout -> `200`
+  - reusing old cookie after logout:
+    - `/api/auth/session` -> `401`
+    - `/api/backend/api/engagements` -> `401`
+- Re-ran full API lifecycle tests: pass
+- Re-ran whitebox suite: pass
+
+### Remaining risk + strategy
+- Current revocation storage is in-memory on the dashboard runtime.
+- In horizontally scaled/serverless multi-instance production, cross-instance revocation consistency may lag.
+- Strategy for hardening:
+  1. Move revocation state to shared storage (Redis/Upstash/DB table).
+  2. Store token/session id (`jti`) and enforce lookup on session + bridge routes.
+  3. Add periodic cleanup job on shared store by token expiry.
+
+## [2026-05-05 01:14:00 +05:30] - Final 5 Ceiling Unlockers (Major Update Track) Implemented
+
+### Status
+- Final-5 core architecture added and validated locally.
+- Build/test/runtime verification complete.
+
+### Unlocker 1 - Decision Intelligence Layer (implemented)
+- Added `DecisionBrief` persistence model:
+  - `backend/models/DecisionBrief.js`
+- Added decision engine service:
+  - `backend/services/decisionEngine.js`
+  - contextual severity scoring (beyond raw CVSS)
+  - top-risk prioritization, ignore-list generation
+  - aggregate risk score + risk level
+  - optional Claude-powered brief enhancement with safe heuristic fallback
+- Added decision brief routes:
+  - `backend/routes/decisions.js`
+  - `POST /api/decisions/:engagementId/brief`
+  - `GET /api/decisions/:engagementId/brief`
+- Backend wiring:
+  - `backend/server.js` route mounted
+
+### Unlocker 2 - Human-Readable Output Layer (implemented)
+- Added translation service:
+  - `backend/services/translator.js`
+  - founder / engineer / brief audience modes
+  - optional Claude translation + deterministic fallback translation
+- Extended finding schema for richer output:
+  - `backend/models/ExecutionJob.js`
+  - adds `translations`, `tags`, `cvssScore`, `exploitAvailable`
+- Auto-translation on execution completion:
+  - `backend/services/executionService.js`
+  - controlled by `TRANSLATE_FINDINGS_ON_COMPLETE`
+- Dashboard audience rendering component:
+  - `dashboard/src/components/FindingAudiencePanel.tsx`
+
+### Unlocker 3 - Trust + Control Interface (implemented)
+- Added kill-switch model:
+  - `backend/models/KillSwitch.js`
+- Added persistent activity logs model:
+  - `backend/models/ActivityLog.js`
+- Upgraded request logger to persist recent API activity:
+  - `backend/middleware/activityLogger.js`
+- Added trust/control service:
+  - `backend/services/trustControl.js`
+  - scope dashboard, action preview, global/per-engagement kill switch state
+- Added control routes:
+  - `backend/routes/control.js`
+  - `GET /api/control/scope/:engagementId`
+  - `GET /api/control/preview/:engagementId`
+  - `GET /api/control/killswitch`
+  - `POST /api/control/killswitch/global`
+  - `POST /api/control/killswitch/engagement/:engagementId`
+  - `GET /api/control/activity/recent`
+- Runtime enforcement integrated:
+  - `backend/services/executionService.js` now blocks tool execution when kill switch is active (`423`)
+  - `backend/services/orchestrator.js` checks kill switch before orchestration and before each step
+- Dashboard trust UI:
+  - `dashboard/src/components/TrustControlPanel.tsx`
+
+### Unlocker 4 - Change Detection Mode (implemented)
+- Added baseline snapshot model:
+  - `backend/models/SecurityBaseline.js`
+- Added change detector service:
+  - `backend/services/changeDetector.js`
+  - snapshot creation + delta detection across latest baselines
+  - new/resolved findings and port deltas
+  - optional Slack alerting for new high-priority findings
+- Added monitoring routes:
+  - `backend/routes/monitoring.js`
+  - `GET /api/monitoring/:engagementId/snapshots`
+  - `POST /api/monitoring/:engagementId/snapshot`
+  - `GET /api/monitoring/:engagementId/changes`
+- Added scheduled monitoring job:
+  - `backend/jobs/monitoringJob.js`
+  - env-driven daily re-scan cycle
+- Orchestrator post-run baseline:
+  - `backend/services/orchestrator.js`
+  - auto snapshot + delta evaluation after completed orchestration
+- Dashboard timeline UI:
+  - `dashboard/src/components/SecurityTimeline.tsx`
+
+### Unlocker 5 - One Sharp Use Case (Startup Scanner) (implemented)
+- Added startup scan profile:
+  - `backend/profiles/startupScan.js`
+- Applied startup profile in engagement creation:
+  - `backend/routes/engagements.js`
+  - auto-merge startup tool whitelist/restricted paths/constraints when `scanProfile: "startup"` (or default profile enabled)
+  - stores `startupProfileApplied` flag (`backend/models/Engagement.js`)
+- Added startup onboarding flow:
+  - `dashboard/src/app/onboard/page.tsx`
+  - URL -> authorization -> concern -> launch
+- Updated product positioning:
+  - `dashboard/src/app/layout.tsx` metadata updated to startup scanner framing
+  - `dashboard/src/app/page.tsx` now routes to onboarding
+  - `dashboard/src/app/dashboard/page.tsx` branding/tagline and onboarding CTA added
+- Investor-ready report framing:
+  - `backend/services/reportGenerator.js` startup framing sections
+  - dashboard report button text updated to `Download Investor-Ready PDF`
+
+### Dashboard integration updates
+- Added Final-5 components into technical engagement view:
+  - `DecisionBriefPanel`
+  - `TrustControlPanel`
+  - `SecurityTimeline`
+  - `FindingAudiencePanel`
+- API client expanded for all Final-5 endpoints and types:
+  - `dashboard/src/lib/api.ts`
+
+### Tests and quality checks
+- Backend tests:
+  - `npm test` -> pass (`48/48`)
+  - new tests added:
+    - `backend/tests/decisionEngine.test.js`
+    - `backend/tests/translator.test.js`
+    - `backend/tests/trustControl.test.js`
+    - `backend/tests/changeDetector.test.js`
+- Dashboard quality:
+  - `npm run lint` -> pass
+  - `npm run build` -> pass
+
+### Live runtime verification (local)
+- Created startup-profile engagement and verified startup defaults applied.
+- Verified trust endpoints:
+  - scope dashboard + action preview responses valid.
+- Verified kill switch enforcement:
+  - activating engagement kill switch returned `423` on execution attempts.
+- Verified decision brief generation:
+  - `POST /api/decisions/:id/brief` -> `200` with risk output.
+- Verified monitoring endpoints:
+  - snapshot create/list/change routes all successful.
+- Verified activity log endpoint returns recent API logs.
+
+### Config and deployment docs updated
+- `backend/.env.example`:
+  - added Final-5 vars (`ENABLE_DECISION_BRIEF_AI`, translator controls, startup defaults, continuous scan controls)
+- `render.yaml`:
+  - added Final-5 env scaffolding
+- `README.md`, `dashboard/README.md`, `docs/DEPLOYMENT.md` updated for Final-5 routes/env/flow
+
+### Remaining strategy note
+- Kill switch and decision layers are production-capable now.
+- For scale hardening, next increment is shared-state revocation + kill switch cache invalidation across multi-instance deployments.

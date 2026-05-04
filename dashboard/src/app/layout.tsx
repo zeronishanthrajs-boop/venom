@@ -14,8 +14,9 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "VENOM Dashboard",
-  description: "Control panel for VENOM engagements and patterns",
+  title: "VENOM - Security Scanner for Startups",
+  description:
+    "Know your security posture, fix what matters first, and ship confidently.",
 };
 
 export default function RootLayout({

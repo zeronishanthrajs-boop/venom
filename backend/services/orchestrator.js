@@ -4,6 +4,8 @@ const { generatePlanForEngagement, PROMPT_VERSION } = require("./planner");
 const { executeEngagementTool } = require("./executionService");
 const { runLearningCycle } = require("./learner");
 const { broadcastToRoom } = require("./realtimeServer");
+const { assertExecutionAllowed } = require("./trustControl");
+const { createSnapshot, detectChanges } = require("./changeDetector");
 
 const DEFAULT_TOOL_SEQUENCE = {
   website: [
@@ -153,6 +155,8 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
     throw createHttpError(404, "Engagement not found");
   }
 
+  await assertExecutionAllowed(String(engagement._id));
+
   if (
     engagement.authorization?.validUntil &&
     new Date(engagement.authorization.validUntil) < new Date()
@@ -201,6 +205,9 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
 
     const executionResults = [];
     for (let index = 0; index < toolSequence.length; index += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await assertExecutionAllowed(String(engagement._id));
+
       const toolId = toolSequence[index];
       entry.step = index + 1;
       entry.lastUpdateAt = new Date().toISOString();
@@ -240,6 +247,13 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
       { _id: engagement._id },
       { $set: { status: "completed", completedAt: new Date() } }
     );
+
+    await createSnapshot(
+      String(engagement._id),
+      "post-engagement",
+      userId
+    ).catch(() => null);
+    await detectChanges(String(engagement._id)).catch(() => null);
 
     entry.state = "completed";
     entry.lastUpdateAt = new Date().toISOString();

@@ -6,6 +6,8 @@ const { toCamelCaseDeep } = require("../utils/prettyPrint");
 const { recordExecutionEvidence } = require("./evidenceRecorder");
 const { notifyCriticalFindings } = require("./notifier");
 const { broadcastToolResult, broadcastFinding } = require("./realtimeServer");
+const { translateAllFindings } = require("./translator");
+const { assertExecutionAllowed } = require("./trustControl");
 
 function createHttpError(statusCode, message) {
   const error = new Error(message);
@@ -92,6 +94,8 @@ async function executeEngagementTool({
     throw createHttpError(404, "Engagement not found");
   }
 
+  await assertExecutionAllowed(String(engagement._id));
+
   if (
     engagement.authorization?.validUntil &&
     new Date(engagement.authorization.validUntil) < new Date()
@@ -132,6 +136,18 @@ async function executeEngagementTool({
     job.status = "success";
     job.output = output;
     job.findings = Array.isArray(output?.findings) ? output.findings : [];
+    if (
+      process.env.TRANSLATE_FINDINGS_ON_COMPLETE !== "false" &&
+      job.findings.length > 0
+    ) {
+      const translatedFindings = await translateAllFindings(job.findings).catch(
+        () => job.findings
+      );
+      job.findings = translatedFindings;
+      if (job.output && typeof job.output === "object") {
+        job.output.findings = translatedFindings;
+      }
+    }
     if (typeof output?.stdout === "string") {
       job.rawOutput = output.stdout;
     } else if (typeof output?.rawOutput === "string") {

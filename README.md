@@ -4,7 +4,7 @@ Initial Week 1-7 scaffold for the VENOM project.
 
 ## Structure
 - `backend/` Node.js API service
-- `dashboard/` Next.js app (Week 3 implemented)
+- `dashboard/` Next.js app (includes startup onboarding + operator dashboard)
 - `docs/` project documentation
 
 ## Backend Quick Start
@@ -73,6 +73,17 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
 - `POST /api/research/trigger`
 - `GET /api/realtime/token`
 - `GET /api/realtime/status`
+- `POST /api/decisions/:engagementId/brief`
+- `GET /api/decisions/:engagementId/brief`
+- `GET /api/control/scope/:engagementId`
+- `GET /api/control/preview/:engagementId`
+- `GET /api/control/killswitch`
+- `POST /api/control/killswitch/global`
+- `POST /api/control/killswitch/engagement/:engagementId`
+- `GET /api/control/activity/recent`
+- `GET /api/monitoring/:engagementId/snapshots`
+- `POST /api/monitoring/:engagementId/snapshot`
+- `GET /api/monitoring/:engagementId/changes`
 - `WS /ws?token=<signed-token>&engagementId=<optional>`
 
 ## Dashboard Auth
@@ -105,6 +116,7 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
   - Suggested Week 10: `CLAUDE_CHAIN_ENABLED=true`, `CLAUDE_CHAIN_MODEL`, `ENABLE_DOCKER_TOOLS=true` (only where Docker execution policy is approved)
   - Suggested Week 11: `MAX_CONCURRENT_TARGETS`, `ENABLE_PROMPT_EVOLUTION_JOB`, `PROMPT_EVOLUTION_CRON`, `PROMPT_EVOLUTION_TIMEZONE`, `PROMPT_EVOLUTION_MIN_CONFIDENCE`, `CLAUDE_PROMPT_EVOLVER_MODEL`
   - Suggested Week 12: `ENABLE_RESEARCH_JOB`, `RESEARCH_JOB_CRON`, `SLACK_WEBHOOK_URL`, `JIRA_API_URL`, `JIRA_PROJECT_KEY`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `VENOM_REALTIME_SECRET`
+  - Final 5 track: `DEFAULT_STARTUP_PROFILE`, `TRANSLATE_FINDINGS_ON_COMPLETE`, `ENABLE_DECISION_BRIEF_AI`, `CLAUDE_DECISION_MODEL`, `CLAUDE_TRANSLATOR_MODEL`, `ENABLE_FINDING_TRANSLATION_AI`, `CONTINUOUS_SCAN_ENABLED`, `CONTINUOUS_SCAN_CRON`
   - Report email delivery (optional): `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
 - Dashboard (Vercel):
   - `VENOM_DASHBOARD_LOGIN_EMAIL`

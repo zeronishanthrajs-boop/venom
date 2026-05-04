@@ -49,6 +49,10 @@ import {
 } from "@/lib/api";
 import { downloadEngagementReport, type ReportViewMode } from "@/lib/reports";
 import { Switch } from "@/components/ui/switch";
+import { DecisionBriefPanel } from "@/components/DecisionBrief";
+import { TrustControlPanel } from "@/components/TrustControlPanel";
+import { SecurityTimeline } from "@/components/SecurityTimeline";
+import { FindingAudiencePanel } from "@/components/FindingAudiencePanel";
 import {
   fetchSession,
   logoutSession,
@@ -527,7 +531,15 @@ export default function DashboardPage() {
     setMessage("");
 
     try {
-      await createEngagement(session, form);
+      await createEngagement(session, {
+        ...form,
+        scanProfile:
+          form.targetType === "website" || form.targetType === "api"
+            ? "startup"
+            : undefined,
+        startupConcern: "Routine startup security check",
+        ownershipAssertion: "Operator confirmed authorized ownership/scope."
+      });
       setForm(emptyForm);
       setMessage("Engagement created successfully.");
       await loadEngagementData(session);
@@ -1144,16 +1156,26 @@ export default function DashboardPage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lime-300">
-              VENOM Security Dashboard
+              VENOM - Security Scanner for Startups
             </p>
             <h1 className="mt-2 text-3xl font-semibold text-slate-100">
               Engagement Control Center
             </h1>
+            <p className="mt-1 text-xs text-slate-400">
+              Know your security posture. Fix what matters. Ship confidently.
+            </p>
             <p className="mt-2 text-sm text-slate-400">
               Logged in as {session.email} ({session.role})
             </p>
           </div>
           <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => router.push("/onboard")}
+              className="rounded-xl border border-lime-500/40 bg-lime-500/10 px-3 py-2 text-sm font-medium text-lime-200 shadow-sm transition hover:-translate-y-px hover:bg-lime-500/20"
+            >
+              Startup Onboarding
+            </button>
             <button
               type="button"
               onClick={() => void loadEngagementData(session, true)}
@@ -1492,7 +1514,19 @@ export default function DashboardPage() {
           {loading ? (
             <p className="text-sm text-slate-400">Loading engagements...</p>
           ) : engagements.length === 0 ? (
-            <p className="text-sm text-slate-400">No engagements yet.</p>
+            <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-5 text-center">
+              <p className="text-sm text-slate-300">No engagements yet.</p>
+              <p className="mt-1 text-xs text-slate-400">
+                Start with your product URL and run a founder-first startup scan.
+              </p>
+              <button
+                type="button"
+                onClick={() => router.push("/onboard")}
+                className="mt-3 rounded-lg border border-lime-500/45 bg-lime-500/10 px-3 py-1.5 text-xs font-semibold text-lime-200 transition hover:bg-lime-500/20"
+              >
+                Start Startup Scan
+              </button>
+            </div>
           ) : (
             <div className="max-h-[74vh] space-y-3 overflow-y-auto pr-1">
               {engagements.map((engagement) => {
@@ -1756,7 +1790,7 @@ export default function DashboardPage() {
                           <span>
                             {downloadingBackendPdfById[engagement._id]
                               ? "Preparing PDF..."
-                              : "Download Backend PDF"}
+                              : "Download Investor-Ready PDF"}
                           </span>
                         </button>
                         <button
@@ -1974,6 +2008,30 @@ export default function DashboardPage() {
                         ) : (
                           <p className="text-slate-400">No plan metadata available yet.</p>
                         )}
+
+                        <DecisionBriefPanel
+                          session={session}
+                          engagementId={engagement._id}
+                        />
+
+                        <TrustControlPanel
+                          session={session}
+                          engagementId={engagement._id}
+                        />
+
+                        <SecurityTimeline
+                          session={session}
+                          engagementId={engagement._id}
+                        />
+
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                            Human-Readable Finding Modes
+                          </p>
+                          <FindingAudiencePanel
+                            findings={latestExecution?.findings || []}
+                          />
+                        </div>
                       </div>
                     ) : (
                       <>
@@ -2084,7 +2142,7 @@ export default function DashboardPage() {
         <article className="rounded-3xl border border-slate-800 bg-[#11161d]/95 p-5 shadow-[0_20px_50px_rgba(0,0,0,0.35)] backdrop-blur-sm xl:sticky xl:top-4">
           <h2 className="text-lg font-semibold text-slate-100">New Engagement</h2>
           <p className="mb-4 text-sm text-slate-400">
-            Create and queue a new authorized target
+            Create and queue a new authorized startup target
           </p>
 
           <form className="space-y-3" onSubmit={handleCreate}>

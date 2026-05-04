@@ -20,12 +20,19 @@ const promptsRouter = require("./routes/prompts");
 const orchestrateRouter = require("./routes/orchestrate");
 const researchRouter = require("./routes/research");
 const realtimeRouter = require("./routes/realtime");
+const decisionsRouter = require("./routes/decisions");
+const controlRouter = require("./routes/control");
+const monitoringRouter = require("./routes/monitoring");
 const { startCveSyncJob, stopCveSyncJob } = require("./jobs/cveJob");
 const {
   startPromptEvolutionJob,
   stopPromptEvolutionJob
 } = require("./jobs/evolutionJob");
 const { startResearchJob, stopResearchJob } = require("./jobs/researchJob");
+const {
+  startMonitoringJob,
+  stopMonitoringJob
+} = require("./jobs/monitoringJob");
 const {
   initWebSocketServer,
   closeWebSocketServer
@@ -105,6 +112,9 @@ app.use("/api/prompts", authMiddleware, activityLogger, promptsRouter);
 app.use("/api/orchestrate", authMiddleware, activityLogger, orchestrateRouter);
 app.use("/api/research", authMiddleware, activityLogger, researchRouter);
 app.use("/api/realtime", authMiddleware, activityLogger, realtimeRouter);
+app.use("/api/decisions", authMiddleware, activityLogger, decisionsRouter);
+app.use("/api/control", authMiddleware, activityLogger, controlRouter);
+app.use("/api/monitoring", authMiddleware, activityLogger, monitoringRouter);
 
 app.use((error, _req, res, _next) => {
   const isJsonParseError =
@@ -131,6 +141,7 @@ async function bootstrap() {
   startCveSyncJob();
   startPromptEvolutionJob();
   startResearchJob();
+  startMonitoringJob();
   initWebSocketServer(server);
   server.listen(port, () => {
     console.log(`Server running on port ${port}`);
@@ -142,6 +153,7 @@ async function shutdown() {
     stopCveSyncJob();
     stopPromptEvolutionJob();
     stopResearchJob();
+    stopMonitoringJob();
     closeWebSocketServer();
     await new Promise((resolve) => {
       server.close(() => resolve());

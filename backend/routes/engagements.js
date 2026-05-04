@@ -9,19 +9,80 @@ const requireDb = require("../middleware/requireDb");
 const { scorePatternForEngagement } = require("../services/patternEngine");
 const { PROMPT_VERSION } = require("../services/planner");
 const { toCamelCaseDeep, toPrettyPrintedJson } = require("../utils/prettyPrint");
+const { STARTUP_SCAN_PROFILE } = require("../profiles/startupScan");
+
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item) => typeof item === "string" && item.trim() !== "");
+}
+
+function mergeUniqueStringArrays(...lists) {
+  const merged = [];
+  const seen = new Set();
+  for (const list of lists) {
+    for (const item of normalizeStringArray(list)) {
+      const normalized = item.trim();
+      if (!normalized) {
+        continue;
+      }
+      if (seen.has(normalized)) {
+        continue;
+      }
+      seen.add(normalized);
+      merged.push(normalized);
+    }
+  }
+  return merged;
+}
+
+function shouldApplyStartupProfile(body) {
+  const explicit = String(body?.scanProfile || "").toLowerCase() === "startup";
+  const implicit =
+    process.env.DEFAULT_STARTUP_PROFILE === "true" &&
+    ["website", "api"].includes(String(body?.targetType || "website").toLowerCase());
+  return explicit || implicit;
+}
 
 const router = express.Router();
 
 function toEngagementPayload(body, userId) {
+  const applyStartup = shouldApplyStartupProfile(body);
+  const startupConcern = String(body?.startupConcern || "").trim();
+  const ownershipAssertion = String(body?.ownershipAssertion || "").trim();
+  const descriptionSegments = [body.description || ""];
+  if (startupConcern) {
+    descriptionSegments.push(`Startup concern: ${startupConcern}`);
+  }
+  if (ownershipAssertion) {
+    descriptionSegments.push(`Ownership assertion: ${ownershipAssertion}`);
+  }
+
+  const mergedRestrictedPaths = applyStartup
+    ? mergeUniqueStringArrays(
+        body.scope?.restrictedPaths || [],
+        STARTUP_SCAN_PROFILE.restrictedPaths
+      )
+    : body.scope?.restrictedPaths || [];
+
+  const startupWhitelist = applyStartup
+    ? STARTUP_SCAN_PROFILE.toolWhitelist
+    : [];
+  const requestedWhitelist = body.constraints?.toolWhitelist || [];
+  const mergedWhitelist = applyStartup
+    ? mergeUniqueStringArrays(requestedWhitelist, startupWhitelist)
+    : requestedWhitelist;
+
   return {
     name: body.name,
-    description: body.description || "",
+    description: descriptionSegments.filter(Boolean).join(" | "),
     targetUrl: body.targetUrl,
     targetType: body.targetType || "website",
     scope: {
       allowedDomains: body.scope?.allowedDomains || [],
       allowedIpRanges: body.scope?.allowedIpRanges || [],
-      restrictedPaths: body.scope?.restrictedPaths || [],
+      restrictedPaths: mergedRestrictedPaths,
       restrictedServices: body.scope?.restrictedServices || []
     },
     authorization: {
@@ -32,17 +93,29 @@ function toEngagementPayload(body, userId) {
       scopeOfWork: body.authorization?.scopeOfWork || ""
     },
     constraints: {
-      toolWhitelist: body.constraints?.toolWhitelist || [],
+      toolWhitelist: mergedWhitelist,
       noDestructiveOps:
         body.constraints?.noDestructiveOps === undefined
-          ? true
+          ? applyStartup
+            ? STARTUP_SCAN_PROFILE.noDestructiveOps
+            : true
           : Boolean(body.constraints?.noDestructiveOps),
-      quietMode: Boolean(body.constraints?.quietMode),
-      maxConcurrentOps: body.constraints?.maxConcurrentOps || 1,
-      timeoutMinutes: body.constraints?.timeoutMinutes || 60
+      quietMode:
+        body.constraints?.quietMode === undefined
+          ? applyStartup
+            ? STARTUP_SCAN_PROFILE.quietMode
+            : false
+          : Boolean(body.constraints?.quietMode),
+      maxConcurrentOps:
+        body.constraints?.maxConcurrentOps ||
+        (applyStartup ? STARTUP_SCAN_PROFILE.maxConcurrentOps : 1),
+      timeoutMinutes:
+        body.constraints?.timeoutMinutes ||
+        (applyStartup ? STARTUP_SCAN_PROFILE.timeoutMinutes : 60)
     },
     status: body.status || "draft",
-    createdBy: userId
+    createdBy: userId,
+    startupProfileApplied: applyStartup
   };
 }
 
