@@ -950,3 +950,28 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 **Important environment note:**
 - `CLAUDE_API_KEY` is currently empty in local `.env`, so planner source remains `template` in local smoke runs.
 - Once `CLAUDE_API_KEY` is configured in active env, planner path uses `claude-api` with JSON repair fallback.
+
+## [2026-05-04 16:03:14 +05:30] - Week 8 Push + Cloud Smoke
+
+**Status:** Pushed to `main`, cloud reachable
+
+**Git:**
+- Commit: `1f90c1a`
+- Branch push: `main -> origin/main` successful
+
+**Cloud checks:**
+- Render health:
+  - `GET https://venom-backend-x2pj.onrender.com/health` => `200`
+  - `GET /api/cves/stats` => `200`
+  - `GET /api/cve` alias path active through backend route mount
+- Vercel readiness:
+  - `GET https://dashboard-sigma-puce-87.vercel.app/api/system/ready` => `200`
+
+**Cloud smoke engagement:**
+- Created engagement on Render backend and generated plan:
+  - `promptVersion: planning_v2_3_2026_05_04`
+  - `plannerSource: template`
+  - CVE stats available (`total: 43`, `critical: 2`)
+
+**Remaining env action for full Week 8 target mode:**
+- Render still needs valid `CLAUDE_API_KEY` set for `plannerSource=claude-api` (currently template fallback path is active).
