@@ -832,3 +832,49 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - Dashboard forensic cards no longer stretch sideways on long JSON payloads (desktop/mobile class-level fix applied).
 - Technical view now auto-generates plan data when none exists, replacing empty-plan dead-end behavior.
 - Preview payload size from header probe is capped at 1KB for frontend performance stability.
+
+## [2026-05-04 15:27:31 +05:30] - Week 8 Kickoff (Threat Intel + Planner Context)
+
+**Status:** In Progress (Batch 1 Complete)
+
+**Changes shipped:**
+- Added CVE intelligence persistence model:
+  - `backend/models/CveSnapshot.js`
+- Added NVD ingestion service:
+  - `backend/services/cveIngester.js`
+  - query builder, CVSS extraction, CWE/reference/CPE normalization, bulk upsert
+- Added CVE API routes:
+  - `POST /api/cves/sync`
+  - `GET /api/cves`
+  - `GET /api/cves/summary`
+  - file: `backend/routes/cves.js`
+- Added optional scheduled CVE sync job:
+  - `backend/jobs/cveJob.js`
+  - controlled by `ENABLE_CVE_SYNC_JOB` and `CVE_SYNC_INTERVAL_MINUTES`
+- Wired CVE routes + job lifecycle into backend runtime:
+  - `backend/server.js`
+- Enriched planning context with pattern + CVE snapshots:
+  - `backend/services/planner.js`
+  - prompt version bumped to `planning_v2_2_2026_05_04`
+  - planner source now records `claude-api` when Claude path is used
+- Extended `Plan` model enum for planner source:
+  - `backend/models/Plan.js`
+- Added CVE ingestion unit tests:
+  - `backend/tests/cveIngester.test.js`
+- Updated env/docs:
+  - `backend/.env.example`
+  - `README.md`
+  - `docs/DEPLOYMENT.md`
+  - `dashboard/src/lib/api.ts` type update for `plannerSource`
+
+**Implementation boundary (safety):**
+- Work is focused on defensive planning intelligence and evidence-driven validation.
+- Autonomous offensive exploitation-chain automation is intentionally not implemented in this batch.
+
+**Verification snapshot:**
+- `backend npm test` => pass (`11/11`)
+- `dashboard npm run build` => pass
+- Local CVE sync smoke test:
+  - `GET /api/cves/summary` before sync => `total: 0`
+  - `POST /api/cves/sync` (`limit=10`, `sinceDays=2`) => `fetched: 10`, `upserted: 10`
+  - `GET /api/cves/summary` after sync => `total: 10`

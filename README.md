@@ -45,6 +45,9 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
 - `GET /api/metrics/alerts`
 - `GET /api/metrics/progress`
 - `GET /api/metrics/progress/:engagementId`
+- `POST /api/cves/sync`
+- `GET /api/cves`
+- `GET /api/cves/summary`
 - `GET /api/execute/tools`
 - `POST /api/execute`
 - `GET /api/execute/:id`
@@ -74,6 +77,7 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
   - `VENOM_API_KEY`
   - `MONGODB_URI` (required for persistent data)
   - `CORS_ORIGINS` including dashboard URL
+  - Optional threat-intel: `NVD_API_KEY`, `ENABLE_CVE_SYNC_JOB=true`
 - Dashboard (Vercel):
   - `VENOM_DASHBOARD_LOGIN_EMAIL`
   - `VENOM_DASHBOARD_LOGIN_PASSWORD`

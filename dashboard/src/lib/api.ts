@@ -21,7 +21,7 @@ export type Plan = {
   _id: string;
   engagementId: string;
   promptVersion: string;
-  plannerSource: "claude" | "template";
+  plannerSource: "claude" | "claude-api" | "template";
   model: string;
   summary: string;
   phases: Array<{

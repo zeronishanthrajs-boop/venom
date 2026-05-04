@@ -10,6 +10,8 @@ const planRouter = require("./routes/plan");
 const executeRouter = require("./routes/execute");
 const learnRouter = require("./routes/learn");
 const metricsRouter = require("./routes/metrics");
+const cvesRouter = require("./routes/cves");
+const { startCveSyncJob, stopCveSyncJob } = require("./jobs/cveJob");
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -74,6 +76,7 @@ app.use("/api/plan", authMiddleware, activityLogger, planRouter);
 app.use("/api/execute", authMiddleware, activityLogger, executeRouter);
 app.use("/api/learn", authMiddleware, activityLogger, learnRouter);
 app.use("/api/metrics", authMiddleware, activityLogger, metricsRouter);
+app.use("/api/cves", authMiddleware, activityLogger, cvesRouter);
 
 app.use((error, _req, res, _next) => {
   const isJsonParseError =
@@ -97,6 +100,7 @@ app.use((error, _req, res, _next) => {
 
 async function bootstrap() {
   await connectDB();
+  startCveSyncJob();
   app.listen(port, () => {
     console.log(`Server running on port ${port}`);
   });
@@ -104,6 +108,7 @@ async function bootstrap() {
 
 async function shutdown() {
   try {
+    stopCveSyncJob();
     await stopInMemoryServer();
   } catch (error) {
     console.error("Error during in-memory DB shutdown:", error.message);

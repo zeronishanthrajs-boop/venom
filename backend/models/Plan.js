@@ -36,7 +36,7 @@ const planSchema = new mongoose.Schema(
     },
     plannerSource: {
       type: String,
-      enum: ["claude", "template"],
+      enum: ["claude", "claude-api", "template"],
       required: true
     },
     model: {

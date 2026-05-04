@@ -1,7 +1,9 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const Pattern = require("../models/Pattern");
+const CveSnapshot = require("../models/CveSnapshot");
 
-const PROMPT_VERSION = "planning_v2_1_2026_05_04";
+const PROMPT_VERSION = "planning_v2_2_2026_05_04";
 const UNSAFE_TERMS =
   /exploit|payload|reverse shell|rce|privilege escalation|lateral movement|drop table|sqlmap/i;
 
@@ -180,6 +182,40 @@ async function loadSystemPrompt() {
   return fs.readFile(promptPath, "utf8");
 }
 
+async function loadPlannerContext(engagement) {
+  const [patterns, recentCves] = await Promise.all([
+    Pattern.find({
+      $or: [{ targetType: engagement.targetType }, { targetType: "mixed" }]
+    })
+      .sort({ confidence: -1, recentSuccessRate: -1 })
+      .limit(8)
+      .lean(),
+    CveSnapshot.find({})
+      .sort({ publishedAt: -1, cvssScore: -1 })
+      .limit(12)
+      .lean()
+  ]);
+
+  return {
+    patterns: patterns.map((pattern) => ({
+      name: pattern.name,
+      description: pattern.description,
+      targetType: pattern.targetType,
+      confidence: pattern.confidence,
+      recentSuccessRate: pattern.recentSuccessRate,
+      tags: pattern.tags || []
+    })),
+    recentCves: recentCves.map((cve) => ({
+      cveId: cve.cveId,
+      description: cve.description,
+      cvssScore: cve.cvssScore,
+      cvssSeverity: cve.cvssSeverity,
+      cweIds: cve.cweIds || [],
+      publishedAt: cve.publishedAt
+    }))
+  };
+}
+
 function buildUserPayload(engagement) {
   return {
     target: {
@@ -207,8 +243,26 @@ async function callClaudePlanner(engagement) {
   }
 
   const model = process.env.CLAUDE_MODEL || "claude-3-5-sonnet-latest";
-  const systemPrompt = await loadSystemPrompt();
+  const [systemPrompt, plannerContext] = await Promise.all([
+    loadSystemPrompt(),
+    loadPlannerContext(engagement)
+  ]);
   const userPayload = buildUserPayload(engagement);
+  const contextualSystemPrompt = `${systemPrompt}
+
+Context to improve planning quality:
+- Historical defensive patterns with confidence/success metadata
+- Recent CVE intelligence snapshot to prioritize verification checks
+
+PATTERN_CONTEXT:
+${JSON.stringify(plannerContext.patterns, null, 2)}
+
+CVE_CONTEXT:
+${JSON.stringify(plannerContext.recentCves, null, 2)}
+
+Safety constraints:
+- Do not propose offensive exploitation instructions.
+- Focus on authorized validation, evidence collection, and mitigation-oriented reasoning.`;
 
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -221,7 +275,7 @@ async function callClaudePlanner(engagement) {
       model,
       max_tokens: 1200,
       temperature: 0.2,
-      system: systemPrompt,
+      system: contextualSystemPrompt,
       messages: [
         {
           role: "user",
@@ -251,7 +305,7 @@ async function callClaudePlanner(engagement) {
   const parsed = JSON.parse(jsonText);
 
   return {
-    source: "claude",
+    source: "claude-api",
     model,
     plan: normalizePlan(parsed),
     rawModelOutput: rawText
