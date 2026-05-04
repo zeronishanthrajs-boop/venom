@@ -357,6 +357,62 @@ export type OrchestrationSingleResponse = {
   learningResult: unknown;
 };
 
+export type ResearchSourceResult = {
+  source: string;
+  status: "ok" | "error";
+  fetchedCount: number;
+  generatedPatterns: number;
+  summary?: string;
+  error?: string;
+};
+
+export type ResearchRunResponse = {
+  runId: string;
+  trigger: "manual" | "cron" | "startup";
+  sourcesChecked: number;
+  newPatternsCreated: number;
+  updatedPatterns: number;
+  promptEvolutionTriggered: boolean;
+  summary: string;
+  sourceResults: ResearchSourceResult[];
+  errors: string[];
+};
+
+export type ResearchLogEntry = {
+  _id: string;
+  trigger: "manual" | "cron" | "startup";
+  createdBy: string;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  sourcesChecked: number;
+  newPatternsCreated: number;
+  promptEvolutionTriggered: boolean;
+  summary: string;
+  sourceResults: ResearchSourceResult[];
+  errors: string[];
+  createdAt: string;
+};
+
+export type ResearchLogsResponse = {
+  count: number;
+  logs: ResearchLogEntry[];
+};
+
+export type RealtimeTokenResponse = {
+  token: string;
+  engagementId?: string | null;
+  wsPath: string;
+  expiresInMs: number;
+};
+
+export type RealtimeStatusResponse = {
+  enabled: boolean;
+  totalSockets: number;
+  rooms: Record<string, number>;
+  tokenTtlMs: number;
+};
+
 export type OwaspCoverageItem = {
   code: string;
   name: string;
@@ -892,4 +948,62 @@ export async function orchestrateSingleEngagement(
   }, 300000);
 
   return parseResponse<OrchestrationSingleResponse>(response);
+}
+
+export async function fetchRealtimeToken(
+  session: VenomSession,
+  engagementId?: string
+): Promise<RealtimeTokenResponse> {
+  const query = new URLSearchParams();
+  if (engagementId) {
+    query.set("engagementId", engagementId);
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const response = await apiFetch(`/api/realtime/token${suffix}`, {
+    method: "GET",
+    headers: buildHeaders(session),
+    cache: "no-store"
+  });
+
+  return parseResponse<RealtimeTokenResponse>(response);
+}
+
+export async function fetchRealtimeStatus(
+  session: VenomSession
+): Promise<RealtimeStatusResponse> {
+  const response = await apiFetch("/api/realtime/status", {
+    method: "GET",
+    headers: buildHeaders(session),
+    cache: "no-store"
+  });
+
+  return parseResponse<RealtimeStatusResponse>(response);
+}
+
+export async function fetchResearchLogs(
+  session: VenomSession,
+  limit = 20
+): Promise<ResearchLogsResponse> {
+  const response = await apiFetch(`/api/research/log?limit=${encodeURIComponent(String(limit))}`, {
+    method: "GET",
+    headers: buildHeaders(session),
+    cache: "no-store"
+  });
+
+  return parseResponse<ResearchLogsResponse>(response);
+}
+
+export async function triggerResearchCycle(
+  session: VenomSession,
+  sourceFilter?: string[]
+): Promise<ResearchRunResponse> {
+  const response = await apiFetch("/api/research/trigger", {
+    method: "POST",
+    headers: buildHeaders(session),
+    body: JSON.stringify({
+      sourceFilter: Array.isArray(sourceFilter) ? sourceFilter : undefined
+    })
+  }, 120000);
+
+  return parseResponse<ResearchRunResponse>(response);
 }

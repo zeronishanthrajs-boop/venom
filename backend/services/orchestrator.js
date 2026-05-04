@@ -3,6 +3,7 @@ const Plan = require("../models/Plan");
 const { generatePlanForEngagement, PROMPT_VERSION } = require("./planner");
 const { executeEngagementTool } = require("./executionService");
 const { runLearningCycle } = require("./learner");
+const { broadcastToRoom } = require("./realtimeServer");
 
 const DEFAULT_TOOL_SEQUENCE = {
   website: [
@@ -93,6 +94,14 @@ function serializeActiveOrchestration(entry) {
   };
 }
 
+function broadcastOrchestrationEvent(engagementId, event, payload) {
+  try {
+    broadcastToRoom(engagementId, event, payload);
+  } catch {
+    // no-op for orchestrator control flow
+  }
+}
+
 function getOrchestratorStatus() {
   const active = {};
   for (const [engagementId, entry] of activeOrchestrations.entries()) {
@@ -164,6 +173,11 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
 
   const entry = activeOrchestrations.get(engagementId);
   try {
+    broadcastOrchestrationEvent(engagementId, "orchestration_state", {
+      state: "planning",
+      engagementId
+    });
+
     await Engagement.updateOne(
       { _id: engagement._id },
       { $set: { status: "running" } }
@@ -179,12 +193,23 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
     entry.state = "executing";
     entry.totalSteps = toolSequence.length;
     entry.lastUpdateAt = new Date().toISOString();
+    broadcastOrchestrationEvent(engagementId, "orchestration_state", {
+      state: "executing",
+      engagementId,
+      totalSteps: entry.totalSteps
+    });
 
     const executionResults = [];
     for (let index = 0; index < toolSequence.length; index += 1) {
       const toolId = toolSequence[index];
       entry.step = index + 1;
       entry.lastUpdateAt = new Date().toISOString();
+      broadcastOrchestrationEvent(engagementId, "orchestration_step", {
+        engagementId,
+        step: entry.step,
+        totalSteps: entry.totalSteps,
+        toolId
+      });
 
       // eslint-disable-next-line no-await-in-loop
       const execution = await executeEngagementTool({
@@ -205,6 +230,10 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
 
     entry.state = "learning";
     entry.lastUpdateAt = new Date().toISOString();
+    broadcastOrchestrationEvent(engagementId, "orchestration_state", {
+      state: "learning",
+      engagementId
+    });
     const learningResult = await runLearningCycle(String(engagement._id));
 
     await Engagement.updateOne(
@@ -214,6 +243,10 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
 
     entry.state = "completed";
     entry.lastUpdateAt = new Date().toISOString();
+    broadcastOrchestrationEvent(engagementId, "orchestration_state", {
+      state: "completed",
+      engagementId
+    });
     return {
       engagementId: String(engagement._id),
       targetUrl: engagement.targetUrl,
@@ -231,6 +264,11 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
     ).catch(() => {});
     entry.state = "failed";
     entry.lastUpdateAt = new Date().toISOString();
+    broadcastOrchestrationEvent(engagementId, "orchestration_state", {
+      state: "failed",
+      engagementId,
+      error: error?.message || "orchestration failed"
+    });
     throw error;
   } finally {
     setTimeout(() => {

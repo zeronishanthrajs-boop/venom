@@ -9,6 +9,8 @@ import {
   fetchOrchestratorStatus,
   fetchPromptActive,
   fetchPromptHistory,
+  fetchRealtimeStatus,
+  fetchResearchLogs,
   orchestrateSingleEngagement,
   downloadBackendPdfReport,
   deleteEngagement,
@@ -27,6 +29,7 @@ import {
   runLearning,
   runExecutionJob,
   syncCves,
+  triggerResearchCycle,
   verifyEvidenceChain,
   type AlertItem,
   type ChainRunResponse,
@@ -40,6 +43,8 @@ import {
   type ExecutionJob,
   type MetricsOverview,
   type OrchestratorStatusResponse,
+  type RealtimeStatusResponse,
+  type ResearchLogEntry,
   type Plan
 } from "@/lib/api";
 import { downloadEngagementReport, type ReportViewMode } from "@/lib/reports";
@@ -49,6 +54,7 @@ import {
   logoutSession,
   type VenomSession
 } from "@/lib/session";
+import { useVenomSocket } from "@/hooks/useVenomSocket";
 
 const emptyForm: CreateEngagementInput = {
   name: "",
@@ -223,6 +229,11 @@ export default function DashboardPage() {
     useState<OrchestratorStatusResponse | null>(null);
   const [activePromptCount, setActivePromptCount] = useState(0);
   const [latestPromptVersion, setLatestPromptVersion] = useState<string | null>(null);
+  const [realtimeStatus, setRealtimeStatus] =
+    useState<RealtimeStatusResponse | null>(null);
+  const [researchLogs, setResearchLogs] = useState<ResearchLogEntry[]>([]);
+  const [researchRunning, setResearchRunning] = useState(false);
+  const [socketEventCounter, setSocketEventCounter] = useState(0);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -320,6 +331,23 @@ export default function DashboardPage() {
     }
   }
 
+  async function loadWeek12Ops(activeSession: VenomSession) {
+    try {
+      const [realtime, research] = await Promise.all([
+        fetchRealtimeStatus(activeSession),
+        fetchResearchLogs(activeSession, 5)
+      ]);
+      setRealtimeStatus(realtime);
+      setResearchLogs(research.logs || []);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to load Week 12 operations state."
+      );
+    }
+  }
+
   async function handleSyncCveFeed() {
     if (!session) {
       return;
@@ -339,6 +367,7 @@ export default function DashboardPage() {
       );
       await loadWeek7Telemetry(session);
       await loadWeek11ControlPlane(session);
+      await loadWeek12Ops(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -365,6 +394,7 @@ export default function DashboardPage() {
         `Prompt evolution complete: ${result.evolvedCount} evolved, ${result.skippedCount} skipped.`
       );
       await loadWeek11ControlPlane(session);
+      await loadWeek12Ops(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -373,6 +403,32 @@ export default function DashboardPage() {
       );
     } finally {
       setEvolvingPrompts(false);
+    }
+  }
+
+  async function handleRunResearchCycle() {
+    if (!session) {
+      return;
+    }
+
+    setResearchRunning(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await triggerResearchCycle(session);
+      setMessage(
+        `Research cycle complete: ${result.newPatternsCreated} new pattern(s), ${result.updatedPatterns} updated.`
+      );
+      await loadWeek12Ops(session);
+      await loadWeek11ControlPlane(session);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to run research cycle."
+      );
+    } finally {
+      setResearchRunning(false);
     }
   }
 
@@ -393,6 +449,7 @@ export default function DashboardPage() {
       await loadEngagementData(session, false);
       await loadWeek7Telemetry(session);
       await loadWeek11ControlPlane(session);
+      await loadWeek12Ops(session);
       await loadReportForEngagement(engagementId, true);
       await handleLoadCompliance(engagementId);
       await handleVerifyEvidence(engagementId);
@@ -421,7 +478,7 @@ export default function DashboardPage() {
           setError("");
           await loadWeek7Telemetry(session);
           await loadWeek11ControlPlane(session);
-          await loadWeek11ControlPlane(session);
+          await loadWeek12Ops(session);
         }
       } catch (requestError) {
         if (mounted) {
@@ -451,6 +508,7 @@ export default function DashboardPage() {
     const timer = window.setInterval(() => {
       void loadWeek7Telemetry(session);
       void loadWeek11ControlPlane(session);
+      void loadWeek12Ops(session);
     }, 5000);
 
     return () => {
@@ -475,6 +533,7 @@ export default function DashboardPage() {
       await loadEngagementData(session);
       await loadWeek7Telemetry(session);
       await loadWeek11ControlPlane(session);
+      await loadWeek12Ops(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -499,6 +558,13 @@ export default function DashboardPage() {
     }),
     [engagements]
   );
+  const activeRealtimeEngagementId = useMemo(() => {
+    const running = engagements.find((item) => item.status === "running");
+    if (running) {
+      return running._id;
+    }
+    return engagements[0]?._id || null;
+  }, [engagements]);
   const alertSeverityCounts = useMemo(() => {
     return alerts.reduce(
       (acc, alert) => {
@@ -509,6 +575,35 @@ export default function DashboardPage() {
       { total: 0, critical: 0, high: 0, medium: 0, low: 0 }
     );
   }, [alerts]);
+  const socketState = useVenomSocket(session, activeRealtimeEngagementId, {
+    realtime_connected: () => {
+      setSocketEventCounter((prev) => prev + 1);
+    },
+    tool_result: () => {
+      setSocketEventCounter((prev) => prev + 1);
+      if (session) {
+        void loadWeek7Telemetry(session);
+      }
+    },
+    new_finding: () => {
+      setSocketEventCounter((prev) => prev + 1);
+      if (session) {
+        void loadWeek7Telemetry(session);
+      }
+    },
+    research_update: () => {
+      setSocketEventCounter((prev) => prev + 1);
+      if (session) {
+        void loadWeek12Ops(session);
+      }
+    },
+    orchestration_state: () => {
+      setSocketEventCounter((prev) => prev + 1);
+      if (session) {
+        void loadWeek11ControlPlane(session);
+      }
+    }
+  });
   const engagementPendingDelete = engagements.find(
     (item) => item._id === confirmDeleteId
   );
@@ -531,6 +626,7 @@ export default function DashboardPage() {
       setMessage("Plan generated successfully.");
       await loadWeek7Telemetry(session);
       await loadWeek11ControlPlane(session);
+      await loadWeek12Ops(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -601,6 +697,7 @@ export default function DashboardPage() {
       await loadReportForEngagement(engagementId, true);
       await loadWeek7Telemetry(session);
       await loadWeek11ControlPlane(session);
+      await loadWeek12Ops(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -650,6 +747,7 @@ export default function DashboardPage() {
       await loadReportForEngagement(engagementId, true);
       await loadWeek7Telemetry(session);
       await loadWeek11ControlPlane(session);
+      await loadWeek12Ops(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -762,6 +860,7 @@ export default function DashboardPage() {
       setMessage("Learning cycle completed.");
       await loadWeek7Telemetry(session);
       await loadWeek11ControlPlane(session);
+      await loadWeek12Ops(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -1010,6 +1109,7 @@ export default function DashboardPage() {
       await loadEngagementData(session, false);
       await loadWeek7Telemetry(session);
       await loadWeek11ControlPlane(session);
+      await loadWeek12Ops(session);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -1253,6 +1353,82 @@ export default function DashboardPage() {
                     </p>
                   </article>
                 </div>
+              </div>
+
+              <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      Week 12 Research + Collaboration
+                    </p>
+                    <p className="text-sm text-slate-300">
+                      Live socket status, threat-intel research cycles, and team sync state
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void loadWeek12Ops(session)}
+                      className="rounded-lg border border-slate-600 bg-slate-950 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+                    >
+                      Refresh Week 12
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleRunResearchCycle()}
+                      disabled={researchRunning}
+                      className="rounded-lg border border-lime-500/45 bg-lime-500/10 px-3 py-1.5 text-xs font-semibold text-lime-200 transition hover:bg-lime-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {researchRunning ? "Researching..." : "Run Research Cycle"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                  <article className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                      Socket
+                    </p>
+                    <p className="text-sm font-semibold text-slate-100">
+                      {socketState.connected ? "CONNECTED" : "DISCONNECTED"}
+                    </p>
+                  </article>
+                  <article className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                      Connections
+                    </p>
+                    <p className="text-sm font-semibold text-slate-100">
+                      {realtimeStatus?.totalSockets ?? 0}
+                    </p>
+                  </article>
+                  <article className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                      Socket Events
+                    </p>
+                    <p className="text-sm font-semibold text-slate-100">
+                      {socketEventCounter}
+                    </p>
+                  </article>
+                  <article className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                      New Patterns
+                    </p>
+                    <p className="text-sm font-semibold text-slate-100">
+                      {researchLogs[0]?.newPatternsCreated ?? 0}
+                    </p>
+                  </article>
+                </div>
+
+                <p className="mt-2 text-xs text-slate-400">
+                  {socketState.lastError
+                    ? `Socket warning: ${socketState.lastError}`
+                    : socketState.lastEventAt
+                    ? `Last socket event at ${formatDate(socketState.lastEventAt)}`
+                    : "No realtime events yet."}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Latest research: {researchLogs[0]?.summary || "No research cycles recorded yet."}
+                </p>
               </div>
             </>
           ) : (

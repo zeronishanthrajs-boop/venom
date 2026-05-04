@@ -4,6 +4,8 @@ const { runTool } = require("./executor");
 const { getTool } = require("../tooling/toolRegistry");
 const { toCamelCaseDeep } = require("../utils/prettyPrint");
 const { recordExecutionEvidence } = require("./evidenceRecorder");
+const { notifyCriticalFindings } = require("./notifier");
+const { broadcastToolResult, broadcastFinding } = require("./realtimeServer");
 
 function createHttpError(statusCode, message) {
   const error = new Error(message);
@@ -151,8 +153,30 @@ async function executeEngagementTool({
   job.durationMs = Date.now() - startedAtMs;
   await job.save();
 
+  const jobObject = job.toObject();
+
   try {
-    await recordExecutionEvidence(job.toObject(), userId);
+    broadcastToolResult(String(engagement._id), {
+      jobId: String(jobObject._id),
+      toolId,
+      status: jobObject.status,
+      durationMs: jobObject.durationMs || 0,
+      findingsCount: Array.isArray(jobObject.findings)
+        ? jobObject.findings.length
+        : 0
+    });
+    for (const finding of Array.isArray(jobObject.findings) ? jobObject.findings : []) {
+      broadcastFinding(String(engagement._id), {
+        toolId,
+        finding
+      });
+    }
+  } catch (realtimeError) {
+    console.warn("[Realtime] Unable to broadcast tool result:", realtimeError.message);
+  }
+
+  try {
+    await recordExecutionEvidence(jobObject, userId);
   } catch (evidenceError) {
     console.warn(
       "[Evidence] Unable to persist execution evidence:",
@@ -160,8 +184,18 @@ async function executeEngagementTool({
     );
   }
 
+  try {
+    await notifyCriticalFindings({
+      engagementId: String(engagement._id),
+      engagementName: engagement.name || String(engagement._id),
+      findings: jobObject.findings
+    });
+  } catch (notifyError) {
+    console.warn("[Notifier] Unable to dispatch alerts:", notifyError.message);
+  }
+
   return {
-    job: job.toObject(),
+    job: jobObject,
     httpStatus: mapJobStatusToHttpStatus(job.status)
   };
 }

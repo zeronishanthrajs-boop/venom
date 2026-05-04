@@ -68,6 +68,12 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
 - `GET /api/orchestrate/status`
 - `POST /api/orchestrate`
 - `POST /api/orchestrate/:engagementId`
+- `GET /api/research/latest`
+- `GET /api/research/log`
+- `POST /api/research/trigger`
+- `GET /api/realtime/token`
+- `GET /api/realtime/status`
+- `WS /ws?token=<signed-token>&engagementId=<optional>`
 
 ## Dashboard Auth
 - Login is private and server-validated by:
@@ -98,6 +104,7 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
   - Suggested Week 9: `CLAUDE_LEARNER_MODEL` for pattern extraction
   - Suggested Week 10: `CLAUDE_CHAIN_ENABLED=true`, `CLAUDE_CHAIN_MODEL`, `ENABLE_DOCKER_TOOLS=true` (only where Docker execution policy is approved)
   - Suggested Week 11: `MAX_CONCURRENT_TARGETS`, `ENABLE_PROMPT_EVOLUTION_JOB`, `PROMPT_EVOLUTION_CRON`, `PROMPT_EVOLUTION_TIMEZONE`, `PROMPT_EVOLUTION_MIN_CONFIDENCE`, `CLAUDE_PROMPT_EVOLVER_MODEL`
+  - Suggested Week 12: `ENABLE_RESEARCH_JOB`, `RESEARCH_JOB_CRON`, `SLACK_WEBHOOK_URL`, `JIRA_API_URL`, `JIRA_PROJECT_KEY`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `VENOM_REALTIME_SECRET`
   - Report email delivery (optional): `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
 - Dashboard (Vercel):
   - `VENOM_DASHBOARD_LOGIN_EMAIL`

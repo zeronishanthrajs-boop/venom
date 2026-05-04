@@ -1,4 +1,5 @@
 require("dotenv").config();
+const http = require("node:http");
 const express = require("express");
 const cors = require("cors");
 const { connectDB, getDbStatus, stopInMemoryServer } = require("./config/db");
@@ -17,13 +18,21 @@ const chainRouter = require("./routes/chain");
 const evidenceRouter = require("./routes/evidence");
 const promptsRouter = require("./routes/prompts");
 const orchestrateRouter = require("./routes/orchestrate");
+const researchRouter = require("./routes/research");
+const realtimeRouter = require("./routes/realtime");
 const { startCveSyncJob, stopCveSyncJob } = require("./jobs/cveJob");
 const {
   startPromptEvolutionJob,
   stopPromptEvolutionJob
 } = require("./jobs/evolutionJob");
+const { startResearchJob, stopResearchJob } = require("./jobs/researchJob");
+const {
+  initWebSocketServer,
+  closeWebSocketServer
+} = require("./services/realtimeServer");
 
 const app = express();
+const server = http.createServer(app);
 const port = process.env.PORT || 5000;
 const allowedOrigins = (process.env.CORS_ORIGINS ||
   "http://localhost:3000,http://127.0.0.1:3000").split(",");
@@ -94,6 +103,8 @@ app.use("/api/chain", authMiddleware, activityLogger, chainRouter);
 app.use("/api/evidence", authMiddleware, activityLogger, evidenceRouter);
 app.use("/api/prompts", authMiddleware, activityLogger, promptsRouter);
 app.use("/api/orchestrate", authMiddleware, activityLogger, orchestrateRouter);
+app.use("/api/research", authMiddleware, activityLogger, researchRouter);
+app.use("/api/realtime", authMiddleware, activityLogger, realtimeRouter);
 
 app.use((error, _req, res, _next) => {
   const isJsonParseError =
@@ -119,7 +130,9 @@ async function bootstrap() {
   await connectDB();
   startCveSyncJob();
   startPromptEvolutionJob();
-  app.listen(port, () => {
+  startResearchJob();
+  initWebSocketServer(server);
+  server.listen(port, () => {
     console.log(`Server running on port ${port}`);
   });
 }
@@ -128,6 +141,11 @@ async function shutdown() {
   try {
     stopCveSyncJob();
     stopPromptEvolutionJob();
+    stopResearchJob();
+    closeWebSocketServer();
+    await new Promise((resolve) => {
+      server.close(() => resolve());
+    });
     await stopInMemoryServer();
   } catch (error) {
     console.error("Error during in-memory DB shutdown:", error.message);

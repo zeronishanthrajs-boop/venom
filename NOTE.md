@@ -1411,3 +1411,72 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - Week 9-11 codebase is pushed and live on GitHub.
 - Vercel production now reflects latest deployment.
 - Render backend is reachable and serving authenticated orchestration APIs.
+
+## [2026-05-04 23:49:40 +05:30] - Week 12 Completion (Research + Integrations + Realtime)
+
+### Status
+- Week 12 implementation completed and validated locally.
+
+### Implemented
+1. Threat-intel research engine and lifecycle logging
+- Added `backend/services/researchEngine.js` with multi-source ingest orchestration:
+  - NVD recent CVEs
+  - CISA KEV catalog
+  - GitHub Security Advisories
+- Added normalized research-to-pattern mapping with safe assessment sequences (non-destructive validation flow).
+- Added `backend/models/ResearchLog.js` to persist each cycle outcome.
+- Added `backend/routes/research.js`:
+  - `GET /api/research/latest`
+  - `GET /api/research/log?limit=`
+  - `POST /api/research/trigger`
+- Added scheduled research job: `backend/jobs/researchJob.js`.
+
+2. Real-time collaboration infrastructure
+- Added WebSocket server with signed short-lived tokens:
+  - `backend/services/realtimeServer.js`
+  - Socket endpoint: `/ws`
+- Added `backend/routes/realtime.js`:
+  - `GET /api/realtime/token`
+  - `GET /api/realtime/status`
+- Backend now initializes and cleanly shuts down WebSocket runtime in `backend/server.js`.
+
+3. Notifications and external integration hooks
+- Added `backend/services/notifier.js`:
+  - Slack webhook alert dispatch for high/critical findings.
+  - Jira issue creation support for high-priority findings.
+- Integrated notifier + realtime broadcasts into `backend/services/executionService.js`.
+- Integrated orchestration state broadcast events into `backend/services/orchestrator.js`.
+
+4. Dashboard Week 12 ops controls and live socket client
+- Added client socket hook: `dashboard/src/hooks/useVenomSocket.ts`.
+- Extended dashboard API client (`dashboard/src/lib/api.ts`) with:
+  - realtime token/status fetchers
+  - research trigger/log endpoints
+- Extended dashboard page (`dashboard/src/app/dashboard/page.tsx`) with Week 12 panel:
+  - realtime connection state
+  - socket event telemetry
+  - research cycle trigger
+  - latest research summary/status
+
+5. Config/documentation updates
+- Updated `backend/.env.example` with Week 12 vars:
+  - research job scheduler
+  - Slack/Jira integration envs
+  - realtime token secret/TTL
+- Updated `render.yaml` with Week 12 env scaffolding.
+- Updated docs:
+  - `README.md` endpoint and env list
+  - `docs/DEPLOYMENT.md` Week 12 deployment variables and checks
+  - `dashboard/README.md` features list
+
+### Validation
+- Backend test suite: `40/40` pass
+- Dashboard lint: pass
+- Dashboard production build: pass
+
+### Week 12 deliverable mapping
+- Research engine: complete
+- Slack/Jira hooks: complete (env-driven, safe no-op if unconfigured)
+- Real-time collaboration channel: complete (tokenized WebSocket)
+- Research APIs + status telemetry: complete
+- End-to-end code/documentation readiness for production push: complete

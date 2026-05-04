@@ -52,6 +52,19 @@ Deploy backend to Render and dashboard to Vercel using the newest secure flow:
 - `SMTP_USER=<optional>`
 - `SMTP_PASS=<optional>`
 - `SMTP_FROM=<optional>`
+- `ENABLE_RESEARCH_JOB=false` (set `true` for scheduled autonomous research cycles)
+- `RESEARCH_JOB_CRON=0 4 * * 2,5`
+- `RESEARCH_JOB_TIMEZONE=UTC`
+- `RESEARCH_NVD_DAYS=2`
+- `RESEARCH_NVD_LIMIT=40`
+- `ENABLE_RESEARCH_PROMPT_EVOLUTION=true`
+- `SLACK_WEBHOOK_URL=<optional>` (critical finding alerting)
+- `JIRA_API_URL=<optional>`
+- `JIRA_PROJECT_KEY=<optional>`
+- `JIRA_EMAIL=<optional>`
+- `JIRA_API_TOKEN=<optional>`
+- `VENOM_REALTIME_SECRET=<strong-random-secret>`
+- `VENOM_REALTIME_TOKEN_TTL_MS=600000`
 
 ### Verify backend
 - `GET https://<backend-domain>/health` -> `200`
@@ -92,6 +105,9 @@ Quick checks:
 - `GET /api/backend/api/prompts/history` returns prompt lineage and evolution log.
 - `GET /api/backend/api/orchestrate/status` shows active orchestration workers.
 - `POST /api/backend/api/orchestrate` runs multi-target orchestration (bounded by `MAX_CONCURRENT_TARGETS`).
+- `POST /api/backend/api/research/trigger` runs Week 12 threat-intel research cycle.
+- `GET /api/backend/api/research/log?limit=5` returns recent research run history.
+- `GET /api/backend/api/realtime/status` returns WebSocket server and room stats.
 
 ## 4) Common Failure Map
 - Login fails with valid credentials:

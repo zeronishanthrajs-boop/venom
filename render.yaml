@@ -85,5 +85,31 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
+      - key: ENABLE_RESEARCH_JOB
+        value: "false"
+      - key: RESEARCH_JOB_CRON
+        value: 0 4 * * 2,5
+      - key: RESEARCH_JOB_TIMEZONE
+        value: UTC
+      - key: RESEARCH_NVD_DAYS
+        value: "2"
+      - key: RESEARCH_NVD_LIMIT
+        value: "40"
+      - key: ENABLE_RESEARCH_PROMPT_EVOLUTION
+        value: "true"
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+      - key: JIRA_API_URL
+        sync: false
+      - key: JIRA_PROJECT_KEY
+        sync: false
+      - key: JIRA_EMAIL
+        sync: false
+      - key: JIRA_API_TOKEN
+        sync: false
+      - key: VENOM_REALTIME_SECRET
+        sync: false
+      - key: VENOM_REALTIME_TOKEN_TTL_MS
+        value: "600000"
       - key: VENOM_MONTHLY_BUDGET_USD
         value: "400"

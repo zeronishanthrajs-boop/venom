@@ -10,6 +10,8 @@ Week 3 dashboard implementation using Next.js App Router + Tailwind CSS.
 - Per-engagement safe probe actions (`Run Headers Probe`, `View Latest Probe`)
 - Per-engagement Week 6 actions (`Match Patterns`, `Run Learning`)
 - Week 7 telemetry (`Metrics`, `Alerts`, live progress bars)
+- Week 11 autonomy controls (prompt evolution + orchestration status)
+- Week 12 research/realtime controls (research trigger, socket status, latest research summary)
 - API bridge route (`/api/backend/*`) that forwards to backend with server-held API key
 
 ## Local Run
