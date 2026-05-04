@@ -7,6 +7,7 @@ import {
   deleteEngagement,
   fetchAlerts,
   fetchAllProgress,
+  fetchCveSummary,
   fetchExecutionJobs,
   fetchEngagementReport,
   fetchMetricsOverview,
@@ -16,7 +17,9 @@ import {
   generatePlan,
   runLearning,
   runExecutionJob,
+  syncCves,
   type AlertItem,
+  type CveSummary,
   type CreateEngagementInput,
   type Engagement,
   type EngagementReport,
@@ -130,6 +133,8 @@ export default function DashboardPage() {
     null
   );
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [cveSummary, setCveSummary] = useState<CveSummary | null>(null);
+  const [syncingCves, setSyncingCves] = useState(false);
   const [progressByEngagement, setProgressByEngagement] = useState<
     Record<string, EngagementProgress>
   >({});
@@ -186,13 +191,15 @@ export default function DashboardPage() {
 
   async function loadWeek7Telemetry(activeSession: VenomSession) {
     try {
-      const [overview, alertPayload, progress] = await Promise.all([
+      const [overview, alertPayload, progress, cves] = await Promise.all([
         fetchMetricsOverview(activeSession),
         fetchAlerts(activeSession),
-        fetchAllProgress(activeSession)
+        fetchAllProgress(activeSession),
+        fetchCveSummary(activeSession)
       ]);
       setMetricsOverview(overview);
       setAlerts(alertPayload.alerts);
+      setCveSummary(cves);
       setProgressByEngagement(
         progress.reduce<Record<string, EngagementProgress>>((acc, item) => {
           acc[item.engagementId] = item;
@@ -205,6 +212,35 @@ export default function DashboardPage() {
           ? requestError.message
           : "Failed to load telemetry."
       );
+    }
+  }
+
+  async function handleSyncCveFeed() {
+    if (!session) {
+      return;
+    }
+
+    setSyncingCves(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const result = await syncCves(session, {
+        sinceDays: 7,
+        limit: 50
+      });
+      setMessage(
+        `CVE sync complete: fetched ${result.fetched}, upserted ${result.upsertedCount}.`
+      );
+      await loadWeek7Telemetry(session);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to sync CVE feed."
+      );
+    } finally {
+      setSyncingCves(false);
     }
   }
 
@@ -727,6 +763,58 @@ export default function DashboardPage() {
                   {(metricsOverview.weekOverWeek.delta * 100).toFixed(1)}%
                 </span>
               </p>
+
+              <div className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Week 8 Threat Intel
+                    </p>
+                    <p className="text-sm text-slate-600">
+                      NVD/CVE feed snapshot used by planning context
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleSyncCveFeed()}
+                    disabled={syncingCves}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {syncingCves ? "Syncing..." : "Sync CVE Feed"}
+                  </button>
+                </div>
+                {cveSummary ? (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                    <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-500">Total</p>
+                      <p className="text-lg font-semibold">{cveSummary.total}</p>
+                    </article>
+                    <article className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                        Critical
+                      </p>
+                      <p className="text-lg font-semibold">{cveSummary.critical}</p>
+                    </article>
+                    <article className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-500">High</p>
+                      <p className="text-lg font-semibold">{cveSummary.high}</p>
+                    </article>
+                    <article className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                        KEV/Exploit
+                      </p>
+                      <p className="text-lg font-semibold">{cveSummary.withExploit}</p>
+                    </article>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Threat-intel summary unavailable.
+                  </p>
+                )}
+                <p className="mt-2 text-[11px] text-slate-500">
+                  Last update: {cveSummary?.lastUpdatedAt ? formatDate(cveSummary.lastUpdatedAt) : "n/a"}
+                </p>
+              </div>
             </>
           ) : (
             <p className="text-sm text-slate-500">Telemetry not available yet.</p>

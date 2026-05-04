@@ -194,6 +194,30 @@ export type EngagementProgress = {
   };
 };
 
+export type CveSummary = {
+  total: number;
+  critical: number;
+  high: number;
+  medium: number;
+  withExploit: number;
+  bySeverity: {
+    critical: number;
+    high: number;
+    medium: number;
+  };
+  lastUpdatedAt: string | null;
+};
+
+export type CveSyncResponse = {
+  ok: true;
+  fetched: number;
+  normalized: number;
+  matchedCount: number;
+  modifiedCount: number;
+  upsertedCount: number;
+  syncedAt: string;
+};
+
 function buildHeaders(session: VenomSession) {
   return {
     "Content-Type": "application/json",
@@ -485,4 +509,32 @@ export async function fetchAllProgress(
   });
 
   return parseResponse<EngagementProgress[]>(response);
+}
+
+export async function fetchCveSummary(session: VenomSession): Promise<CveSummary> {
+  const response = await apiFetch("/api/cves/summary", {
+    method: "GET",
+    headers: buildHeaders(session),
+    cache: "no-store"
+  });
+
+  return parseResponse<CveSummary>(response);
+}
+
+export async function syncCves(
+  session: VenomSession,
+  input?: {
+    limit?: number;
+    sinceDays?: number;
+    severity?: string;
+    keywordSearch?: string;
+  }
+): Promise<CveSyncResponse> {
+  const response = await apiFetch("/api/cves/sync", {
+    method: "POST",
+    headers: buildHeaders(session),
+    body: JSON.stringify(input || {})
+  });
+
+  return parseResponse<CveSyncResponse>(response);
 }

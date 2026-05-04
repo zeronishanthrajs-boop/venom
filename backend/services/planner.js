@@ -3,7 +3,7 @@ const path = require("node:path");
 const Pattern = require("../models/Pattern");
 const CveSnapshot = require("../models/CveSnapshot");
 
-const PROMPT_VERSION = "planning_v2_2_2026_05_04";
+const PROMPT_VERSION = "planning_v2_3_2026_05_04";
 const UNSAFE_TERMS =
   /exploit|payload|reverse shell|rce|privilege escalation|lateral movement|drop table|sqlmap/i;
 
@@ -129,6 +129,16 @@ function stripCodeFences(text) {
     .trim();
 }
 
+function extractJsonObjectText(text) {
+  const candidate = stripCodeFences(String(text || "").trim());
+  const firstBrace = candidate.indexOf("{");
+  const lastBrace = candidate.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return candidate.slice(firstBrace, lastBrace + 1);
+  }
+  return candidate;
+}
+
 function normalizePlan(rawPlan) {
   const safePlan = {
     summary:
@@ -177,6 +187,24 @@ function normalizePlan(rawPlan) {
   return safePlan;
 }
 
+function appendCveContextToTemplatePlan(plan, recentCves) {
+  const cveHighlights = Array.isArray(recentCves) ? recentCves.slice(0, 3) : [];
+  if (cveHighlights.length === 0) {
+    return plan;
+  }
+
+  const cveNotes = cveHighlights.map((item) => {
+    const severity = item.cvssSeverity || "UNKNOWN";
+    const score = Number.isFinite(item.cvssScore) ? item.cvssScore.toFixed(1) : "n/a";
+    return `Recent CVE context: ${item.cveId} (${severity}, CVSS ${score}) -> verify whether any exposed components match this vulnerability profile.`;
+  });
+
+  return {
+    ...plan,
+    riskNotes: [...(plan.riskNotes || []), ...cveNotes]
+  };
+}
+
 async function loadSystemPrompt() {
   const promptPath = path.join(__dirname, "..", "prompts", "planning-agent-v2.txt");
   return fs.readFile(promptPath, "utf8");
@@ -210,6 +238,8 @@ async function loadPlannerContext(engagement) {
       description: cve.description,
       cvssScore: cve.cvssScore,
       cvssSeverity: cve.cvssSeverity,
+      tags: cve.applicabilityTags || cve.tags || [],
+      venomRelevanceScore: cve.venomRelevanceScore || 0,
       cweIds: cve.cweIds || [],
       publishedAt: cve.publishedAt
     }))
@@ -236,7 +266,7 @@ function buildUserPayload(engagement) {
   };
 }
 
-async function callClaudePlanner(engagement) {
+async function callClaudePlanner(engagement, plannerContextInput) {
   const apiKey = process.env.CLAUDE_API_KEY;
   if (!apiKey) {
     return null;
@@ -245,7 +275,7 @@ async function callClaudePlanner(engagement) {
   const model = process.env.CLAUDE_MODEL || "claude-3-5-sonnet-latest";
   const [systemPrompt, plannerContext] = await Promise.all([
     loadSystemPrompt(),
-    loadPlannerContext(engagement)
+    plannerContextInput ? Promise.resolve(plannerContextInput) : loadPlannerContext(engagement)
   ]);
   const userPayload = buildUserPayload(engagement);
   const contextualSystemPrompt = `${systemPrompt}
@@ -301,8 +331,45 @@ Safety constraints:
     ? payload.content.find((item) => item?.type === "text")
     : null;
   const rawText = textBlock?.text || "";
-  const jsonText = stripCodeFences(rawText);
-  const parsed = JSON.parse(jsonText);
+
+  let parsed;
+  try {
+    parsed = JSON.parse(extractJsonObjectText(rawText));
+  } catch {
+    const repairModel = process.env.CLAUDE_JSON_REPAIR_MODEL || model;
+    const repairResponse = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model: repairModel,
+        max_tokens: 1200,
+        temperature: 0,
+        messages: [
+          {
+            role: "user",
+            content: `Convert the following text into strict valid JSON that matches VENOM plan schema. Output JSON only.\n\n${rawText}`
+          }
+        ]
+      })
+    });
+
+    if (!repairResponse.ok) {
+      const repairFailure = await repairResponse.text().catch(() => "");
+      throw new Error(
+        `Claude JSON repair failed (${repairResponse.status}): ${repairFailure}`
+      );
+    }
+
+    const repairPayload = await repairResponse.json();
+    const repairText = Array.isArray(repairPayload?.content)
+      ? repairPayload.content.find((item) => item?.type === "text")?.text || ""
+      : "";
+    parsed = JSON.parse(extractJsonObjectText(repairText));
+  }
 
   return {
     source: "claude-api",
@@ -313,7 +380,14 @@ Safety constraints:
 }
 
 async function generatePlanForEngagement(engagement) {
-  const claudeResult = await callClaudePlanner(engagement).catch((error) => {
+  const hasClaudeKey = Boolean(process.env.CLAUDE_API_KEY);
+  const strictPlanner = process.env.CLAUDE_PLANNER_STRICT === "true";
+  const plannerContext = await loadPlannerContext(engagement);
+
+  const claudeResult = await callClaudePlanner(engagement, plannerContext).catch((error) => {
+    if (hasClaudeKey && strictPlanner) {
+      throw error;
+    }
     console.warn("Claude planner unavailable, using template:", error.message);
     return null;
   });
@@ -329,7 +403,10 @@ async function generatePlanForEngagement(engagement) {
     source: "template",
     model: "template-planner-v1",
     promptVersion: PROMPT_VERSION,
-    plan: normalizePlan(templatePlan(engagement)),
+    plan: appendCveContextToTemplatePlan(
+      normalizePlan(templatePlan(engagement)),
+      plannerContext.recentCves
+    ),
     rawModelOutput: ""
   };
 }

@@ -60,6 +60,21 @@ router.post("/", requireDb, async (req, res, next) => {
         error: "Invalid engagement id"
       });
     }
+
+    if (typeof error?.message === "string" && /Claude API request failed/i.test(error.message)) {
+      return res.status(502).json({
+        error: "Planner upstream (Claude API) unavailable",
+        details: error.message
+      });
+    }
+
+    if (typeof error?.message === "string" && /Claude JSON repair failed/i.test(error.message)) {
+      return res.status(502).json({
+        error: "Planner JSON normalization upstream unavailable",
+        details: error.message
+      });
+    }
+
     return next(error);
   }
 });

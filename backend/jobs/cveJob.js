@@ -1,6 +1,7 @@
+const cron = require("node-cron");
 const { syncRecentCves } = require("../services/cveIngester");
 
-let intervalHandle = null;
+let scheduledTask = null;
 let running = false;
 
 function toInteger(value, fallback) {
@@ -8,7 +9,7 @@ function toInteger(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-async function runCveSyncCycle(reason = "scheduled") {
+async function runCveSyncCycle(reason = "scheduled", options = {}) {
   if (running) {
     return {
       skipped: true,
@@ -19,7 +20,7 @@ async function runCveSyncCycle(reason = "scheduled") {
   running = true;
   const startedAt = Date.now();
   try {
-    const result = await syncRecentCves();
+    const result = await syncRecentCves(options);
     const durationMs = Date.now() - startedAt;
     console.log(
       `[cve-job] ${reason} sync complete fetched=${result.fetched} normalized=${result.normalized} upserted=${result.upsertedCount} duration_ms=${durationMs}`
@@ -45,26 +46,49 @@ function startCveSyncJob() {
     return null;
   }
 
-  const intervalMinutes = Math.max(toInteger(process.env.CVE_SYNC_INTERVAL_MINUTES, 360), 15);
-  const intervalMs = intervalMinutes * 60 * 1000;
-
-  if (intervalHandle) {
-    return intervalHandle;
+  if (scheduledTask) {
+    return scheduledTask;
   }
 
-  void runCveSyncCycle("startup");
-  intervalHandle = setInterval(() => {
-    void runCveSyncCycle("scheduled");
-  }, intervalMs);
+  const schedule = process.env.CVE_SYNC_CRON || "0 2 * * *";
+  const timezone = process.env.CVE_SYNC_TIMEZONE || "UTC";
 
-  console.log(`[cve-job] scheduled every ${intervalMinutes} minute(s)`);
-  return intervalHandle;
+  if (!cron.validate(schedule)) {
+    console.error(`[cve-job] invalid cron schedule: ${schedule}`);
+    return null;
+  }
+
+  scheduledTask = cron.schedule(
+    schedule,
+    async () => {
+      await runCveSyncCycle("cron");
+    },
+    {
+      timezone
+    }
+  );
+
+  console.log(`[cve-job] scheduled cron='${schedule}' timezone='${timezone}'`);
+
+  const bootstrapEnabled = process.env.CVE_SYNC_ON_STARTUP !== "false";
+  if (bootstrapEnabled && process.env.NODE_ENV === "production") {
+    const bootstrapDelayMs = Math.max(
+      toInteger(process.env.CVE_SYNC_STARTUP_DELAY_MS, 10000),
+      0
+    );
+    setTimeout(() => {
+      void runCveSyncCycle("startup");
+    }, bootstrapDelayMs);
+  }
+
+  return scheduledTask;
 }
 
 function stopCveSyncJob() {
-  if (intervalHandle) {
-    clearInterval(intervalHandle);
-    intervalHandle = null;
+  if (scheduledTask) {
+    scheduledTask.stop();
+    scheduledTask.destroy();
+    scheduledTask = null;
   }
 }
 

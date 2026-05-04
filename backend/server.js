@@ -77,6 +77,7 @@ app.use("/api/execute", authMiddleware, activityLogger, executeRouter);
 app.use("/api/learn", authMiddleware, activityLogger, learnRouter);
 app.use("/api/metrics", authMiddleware, activityLogger, metricsRouter);
 app.use("/api/cves", authMiddleware, activityLogger, cvesRouter);
+app.use("/api/cve", authMiddleware, activityLogger, cvesRouter);
 
 app.use((error, _req, res, _next) => {
   const isJsonParseError =

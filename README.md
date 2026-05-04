@@ -48,6 +48,9 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
 - `POST /api/cves/sync`
 - `GET /api/cves`
 - `GET /api/cves/summary`
+- `GET /api/cves/stats`
+- `GET /api/cve` (compat alias)
+- `GET /api/cve/stats` (compat alias)
 - `GET /api/execute/tools`
 - `POST /api/execute`
 - `GET /api/execute/:id`
@@ -78,6 +81,7 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
   - `MONGODB_URI` (required for persistent data)
   - `CORS_ORIGINS` including dashboard URL
   - Optional threat-intel: `NVD_API_KEY`, `ENABLE_CVE_SYNC_JOB=true`
+  - Suggested Week 8: `ENABLE_CLAUDE_CVE_TAGGING=true`, `CLAUDE_TAGGER_MODEL`, `CVE_SYNC_CRON`
 - Dashboard (Vercel):
   - `VENOM_DASHBOARD_LOGIN_EMAIL`
   - `VENOM_DASHBOARD_LOGIN_PASSWORD`

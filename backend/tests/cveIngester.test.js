@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 
 const {
   buildCveQuery,
+  computeRelevanceScore,
+  inferTagsHeuristic,
   pickCvssMetric,
   normalizeCveRecord
 } = require("../services/cveIngester");
@@ -91,4 +93,36 @@ test("normalizeCveRecord extracts core fields and tags", () => {
   assert.deepEqual(normalized.cweIds, ["CWE-79"]);
   assert.ok(normalized.tags.includes("known-exploited"));
   assert.ok(normalized.tags.includes("critical"));
+  assert.equal(normalized.severity, "CRITICAL");
+  assert.equal(normalized.exploitAvailable, true);
+});
+
+test("inferTagsHeuristic detects common web auth attack classes", () => {
+  const tags = inferTagsHeuristic({
+    description:
+      "Authentication bypass in GraphQL API allows SQL injection and information disclosure.",
+    cweIds: ["CWE-287", "CWE-89"],
+    cpes: ["cpe:2.3:a:wordpress:wordpress:6.5:*:*:*:*:*:*:*"]
+  });
+
+  assert.ok(tags.includes("auth"));
+  assert.ok(tags.includes("api"));
+  assert.ok(tags.includes("sqli"));
+  assert.ok(tags.includes("cms"));
+});
+
+test("computeRelevanceScore increases with high score, priority tags and KEV signal", () => {
+  const low = computeRelevanceScore({
+    cvssScore: 4.3,
+    applicabilityTags: ["information-disclosure"],
+    exploitAvailable: false
+  });
+  const high = computeRelevanceScore({
+    cvssScore: 9.1,
+    applicabilityTags: ["rce", "auth", "web"],
+    exploitAvailable: true
+  });
+
+  assert.ok(high > low);
+  assert.ok(high <= 100);
 });

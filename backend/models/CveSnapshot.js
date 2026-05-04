@@ -39,9 +39,30 @@ const cveSnapshotSchema = new mongoose.Schema(
       enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL", ""],
       default: ""
     },
+    severity: {
+      type: String,
+      enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL", ""],
+      default: ""
+    },
     cvssVector: {
       type: String,
       default: ""
+    },
+    affectedProducts: {
+      type: [String],
+      default: []
+    },
+    exploitAvailable: {
+      type: Boolean,
+      default: false
+    },
+    applicabilityTags: {
+      type: [String],
+      default: []
+    },
+    venomRelevanceScore: {
+      type: Number,
+      default: 0
     },
     cweIds: {
       type: [String],
@@ -62,6 +83,10 @@ const cveSnapshotSchema = new mongoose.Schema(
     raw: {
       type: mongoose.Schema.Types.Mixed,
       default: {}
+    },
+    ingestedAt: {
+      type: Date,
+      default: Date.now
     }
   },
   { timestamps: true }
@@ -70,6 +95,8 @@ const cveSnapshotSchema = new mongoose.Schema(
 cveSnapshotSchema.index({ publishedAt: -1 });
 cveSnapshotSchema.index({ lastModifiedAt: -1 });
 cveSnapshotSchema.index({ cvssScore: -1 });
+cveSnapshotSchema.index({ venomRelevanceScore: -1 });
 cveSnapshotSchema.index({ tags: 1 });
+cveSnapshotSchema.index({ applicabilityTags: 1 });
 
 module.exports = mongoose.model("CveSnapshot", cveSnapshotSchema);

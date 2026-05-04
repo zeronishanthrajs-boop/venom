@@ -883,3 +883,70 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
   - `GET /api/backend/api/cves/summary` via dashboard session => `200`
   - Week8 planner smoke via cloud returns `promptVersion: planning_v2_2_2026_05_04`
   - `plannerSource` is currently `template` in cloud smoke (Claude key/path not active in this run)
+
+## [2026-05-04 15:51:21 +05:30] - Week 8 Completion Pass (Final)
+
+**Status:** Week 8 implementation complete in codebase
+
+**Delivered in this pass:**
+- Planner upgraded to `planning_v2_3_2026_05_04` with:
+  - pattern + CVE-enriched system context
+  - strict JSON extraction + repair call path
+  - optional strict mode (`CLAUDE_PLANNER_STRICT`) for Claude-only planning
+  - CVE-aware fallback notes when Claude is unavailable
+- CVE engine upgraded with:
+  - NVD pagination + bounded fetch window
+  - Claude Haiku tagging path (`ENABLE_CLAUDE_CVE_TAGGING`, `CLAUDE_TAGGER_MODEL`)
+  - heuristic fallback tagging when Claude tagging unavailable
+  - relevance scoring (`venomRelevanceScore`) + exploit signal handling
+- CVE API completed:
+  - `POST /api/cves/sync`
+  - `GET /api/cves`
+  - `GET /api/cves/stats`
+  - `GET /api/cves/summary`
+  - compat aliases on `/api/cve/*`
+- CVE cron automation hardened:
+  - `node-cron` schedule support (`CVE_SYNC_CRON`, `CVE_SYNC_TIMEZONE`)
+  - production startup bootstrap sync (`CVE_SYNC_ON_STARTUP`)
+- Dashboard Week 8 telemetry:
+  - CVE summary cards (total / critical / high / exploit signal)
+  - manual **Sync CVE Feed** action
+
+**Validation:**
+- `backend npm test` => pass (`13/13`)
+- `dashboard npm run lint` => pass
+- `dashboard npm run build` => pass
+- Local Week 8 smoke:
+  - `/api/cves/sync` ingests and upserts CVEs
+  - `/api/cve` returns tagged + scored CVEs (`applicabilityTags`, `venomRelevanceScore`)
+  - generated plans include CVE-aware risk notes
+
+**Week 8 final caveat (environmental, not code):**
+- `plannerSource=claude-api` requires valid `CLAUDE_API_KEY` in active environment.
+- Current local run had no configured Claude key, so planner correctly used template fallback while preserving CVE-aware context.
+
+## [2026-05-04 15:59:27 +05:30] - Week 8 Final Verification + Release Prep
+
+**Status:** Week 8 engineering complete and release-candidate validated
+
+**Runtime verification (local):**
+- Backend health:
+  - `GET /health` => `status: up`, `db.readyState: 1`, `db.source: external-uri`
+  - `GET /ready` => `status: ready`
+- CVE pipeline:
+  - `POST /api/cves/sync` (`limit=6`, `sinceDays=3`) => success
+  - `GET /api/cves/stats` => populated severity counters
+  - `GET /api/cve?limit=3` => tagged/scored CVEs returned (`applicabilityTags`, `venomRelevanceScore`)
+- Plan generation:
+  - Engagement creation + `POST /api/plan` succeeded
+  - `promptVersion: planning_v2_3_2026_05_04`
+  - `riskNotes` include CVE-aware context notes
+
+**Quality gates:**
+- `backend npm test` => pass (`13/13`)
+- `dashboard npm run lint` => pass
+- `dashboard npm run build` => pass
+
+**Important environment note:**
+- `CLAUDE_API_KEY` is currently empty in local `.env`, so planner source remains `template` in local smoke runs.
+- Once `CLAUDE_API_KEY` is configured in active env, planner path uses `claude-api` with JSON repair fallback.

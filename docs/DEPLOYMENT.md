@@ -29,9 +29,13 @@ Deploy backend to Render and dashboard to Vercel using the newest secure flow:
 - `CLAUDE_API_KEY=<optional>`
 - `CLAUDE_MODEL=claude-3-5-sonnet-latest`
 - `ENABLE_CVE_SYNC_JOB=false` (set `true` to schedule auto NVD sync)
-- `CVE_SYNC_INTERVAL_MINUTES=360`
+- `CVE_SYNC_CRON=0 2 * * *`
+- `CVE_SYNC_TIMEZONE=UTC`
+- `CVE_SYNC_ON_STARTUP=true`
+- `CVE_SYNC_STARTUP_DELAY_MS=10000`
 - `NVD_SYNC_DAYS=7`
 - `NVD_SYNC_LIMIT=25`
+- `NVD_PAGE_SIZE=100`
 - `NVD_API_KEY=<optional but recommended for higher rate limits>`
 
 ### Verify backend
