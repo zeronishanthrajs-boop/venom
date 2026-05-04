@@ -1,14 +1,14 @@
 ﻿@import "tailwindcss";
 
 :root {
-  --background: #e9f1f4;
-  --background-soft: #f6fbff;
-  --foreground: #0d1f2d;
-  --card: #ffffff;
-  --accent: #0a7b6e;
-  --accent-strong: #0f4f62;
-  --accent-soft: #d8efe9;
-  --danger: #b42318;
+  --background: #060708;
+  --background-soft: #0b0f14;
+  --foreground: #e7edf5;
+  --card: #11161d;
+  --accent: #d1ff00;
+  --accent-strong: #98bc00;
+  --accent-soft: rgba(209, 255, 0, 0.16);
+  --danger: #ff3e3e;
 }
 
 @theme inline {
@@ -33,9 +33,9 @@ body {
   color: var(--foreground);
   font-family: var(--font-space-grotesk), "Segoe UI", sans-serif;
   background-image:
-    radial-gradient(circle at 12% 14%, rgba(10, 123, 110, 0.26) 0%, transparent 36%),
-    radial-gradient(circle at 88% 4%, rgba(15, 79, 98, 0.16) 0%, transparent 30%),
-    linear-gradient(180deg, #f7fbff 0%, #eaf2f7 100%);
+    radial-gradient(circle at 12% 14%, rgba(209, 255, 0, 0.15) 0%, transparent 36%),
+    radial-gradient(circle at 88% 4%, rgba(255, 62, 62, 0.1) 0%, transparent 30%),
+    linear-gradient(180deg, #07090d 0%, #0b1015 100%);
 }
 
 .venom-noise {

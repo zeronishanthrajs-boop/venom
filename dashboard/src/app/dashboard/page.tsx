@@ -108,6 +108,34 @@ function TrashIcon() {
   );
 }
 
+function getStatusBadgeTone(status: Engagement["status"]) {
+  switch (status) {
+    case "running":
+      return "border-lime-400/35 bg-lime-500/10 text-lime-200";
+    case "completed":
+      return "border-cyan-400/35 bg-cyan-500/10 text-cyan-200";
+    case "failed":
+      return "border-rose-400/35 bg-rose-500/10 text-rose-200";
+    case "paused":
+      return "border-amber-400/35 bg-amber-500/10 text-amber-200";
+    default:
+      return "border-slate-600 bg-slate-800/70 text-slate-200";
+  }
+}
+
+function getAlertTone(severity: AlertItem["severity"]) {
+  switch (severity) {
+    case "critical":
+      return "border-rose-500/60 bg-rose-500/10";
+    case "high":
+      return "border-orange-500/55 bg-orange-500/10";
+    case "medium":
+      return "border-amber-500/50 bg-amber-500/10";
+    default:
+      return "border-cyan-500/45 bg-cyan-500/10";
+  }
+}
+
 function triggerBlobDownload(blob: Blob, fileName: string) {
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -471,6 +499,16 @@ export default function DashboardPage() {
     }),
     [engagements]
   );
+  const alertSeverityCounts = useMemo(() => {
+    return alerts.reduce(
+      (acc, alert) => {
+        acc.total += 1;
+        acc[alert.severity] += 1;
+        return acc;
+      },
+      { total: 0, critical: 0, high: 0, medium: 0, low: 0 }
+    );
+  }, [alerts]);
   const engagementPendingDelete = engagements.find(
     (item) => item._id === confirmDeleteId
   );
@@ -985,9 +1023,9 @@ export default function DashboardPage() {
 
   if (!sessionReady) {
     return (
-      <main className="flex min-h-screen items-center justify-center px-6">
-        <div className="rounded-3xl border border-white/40 bg-white/80 px-6 py-4 shadow-lg backdrop-blur">
-          <p className="text-sm font-medium text-slate-700">
+      <main className="flex min-h-screen items-center justify-center bg-[#07090d] px-6">
+        <div className="rounded-3xl border border-slate-700 bg-slate-900/85 px-6 py-4 shadow-lg backdrop-blur">
+          <p className="text-sm font-medium text-slate-200">
             Verifying secure session...
           </p>
         </div>
@@ -1000,18 +1038,18 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="relative mx-auto w-full max-w-7xl px-4 py-8 lg:px-8">
-      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-64 rounded-b-[3rem] bg-gradient-to-r from-emerald-100/60 via-white/70 to-cyan-100/50 blur-2xl" />
-      <header className="mb-8 rounded-[28px] border border-white/70 bg-white/80 p-6 shadow-[0_24px_70px_rgba(15,23,42,0.14)] backdrop-blur-xl lg:p-8">
+    <main className="relative mx-auto min-h-screen w-full max-w-[1440px] px-4 py-6 text-slate-100 lg:px-8">
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-72 rounded-b-[3rem] bg-[radial-gradient(circle_at_15%_20%,rgba(209,255,0,0.14),transparent_35%),radial-gradient(circle_at_86%_5%,rgba(255,62,62,0.12),transparent_30%),linear-gradient(180deg,#060708_0%,#0a0d12_68%,#0b0f14_100%)]" />
+      <header className="mb-6 rounded-[28px] border border-slate-800 bg-[#0f1319]/95 p-6 shadow-[0_24px_70px_rgba(0,0,0,0.45)] backdrop-blur-xl lg:p-7">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-accent-strong">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-lime-300">
               VENOM Security Dashboard
             </p>
-            <h1 className="mt-2 text-3xl font-semibold text-foreground">
+            <h1 className="mt-2 text-3xl font-semibold text-slate-100">
               Engagement Control Center
             </h1>
-            <p className="mt-2 text-sm text-slate-600">
+            <p className="mt-2 text-sm text-slate-400">
               Logged in as {session.email} ({session.role})
             </p>
           </div>
@@ -1019,14 +1057,14 @@ export default function DashboardPage() {
             <button
               type="button"
               onClick={() => void loadEngagementData(session, true)}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium shadow-sm transition hover:-translate-y-px hover:bg-slate-50"
+              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-200 shadow-sm transition hover:-translate-y-px hover:bg-slate-800"
             >
               Refresh
             </button>
             <button
               type="button"
               onClick={() => void handleLogout()}
-              className="rounded-xl bg-gradient-to-r from-slate-800 to-slate-700 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-px"
+              className="rounded-xl bg-gradient-to-r from-slate-700 to-slate-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:-translate-y-px"
             >
               Logout
             </button>
@@ -1034,77 +1072,88 @@ export default function DashboardPage() {
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
-          <article className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-            <p className="text-xs uppercase tracking-wide text-slate-600">Total</p>
-            <p className="text-2xl font-semibold">{summary.total}</p>
+          <article className="rounded-xl border border-lime-500/40 bg-lime-500/10 px-4 py-3">
+            <p className="text-xs uppercase tracking-wide text-lime-200/85">Total</p>
+            <p className="text-2xl font-semibold text-lime-100">{summary.total}</p>
           </article>
-          <article className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-            <p className="text-xs uppercase tracking-wide text-slate-600">Running</p>
-            <p className="text-2xl font-semibold">{summary.running}</p>
+          <article className="rounded-xl border border-cyan-500/35 bg-cyan-500/10 px-4 py-3">
+            <p className="text-xs uppercase tracking-wide text-cyan-100/80">Running</p>
+            <p className="text-2xl font-semibold text-cyan-100">{summary.running}</p>
           </article>
-          <article className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-            <p className="text-xs uppercase tracking-wide text-slate-600">Draft</p>
-            <p className="text-2xl font-semibold">{summary.draft}</p>
+          <article className="rounded-xl border border-slate-700 bg-slate-900/85 px-4 py-3">
+            <p className="text-xs uppercase tracking-wide text-slate-300">Draft</p>
+            <p className="text-2xl font-semibold text-slate-100">{summary.draft}</p>
           </article>
         </div>
+
+        {error ? (
+          <p className="mt-4 rounded-xl border border-rose-500/45 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+            {error}
+          </p>
+        ) : null}
+        {message ? (
+          <p className="mt-4 rounded-xl border border-lime-500/45 bg-lime-500/10 px-3 py-2 text-sm text-lime-200">
+            {message}
+          </p>
+        ) : null}
       </header>
 
-      <section className="mb-8 grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-        <article className="rounded-3xl border border-white/70 bg-white/85 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.10)] backdrop-blur-sm">
-          <h2 className="text-lg font-semibold">Week 7 Metrics</h2>
-          <p className="mb-4 text-sm text-slate-600">
+      <section className="mb-6 grid items-start gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+        <article className="rounded-3xl border border-slate-800 bg-[#11161d]/95 p-5 shadow-[0_20px_50px_rgba(0,0,0,0.35)] backdrop-blur-sm">
+          <h2 className="text-lg font-semibold text-slate-100">Week 7 Metrics</h2>
+          <p className="mb-4 text-sm text-slate-400">
             Live performance and learning telemetry
           </p>
           {metricsOverview ? (
             <>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <article className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-600">
+                <article className="rounded-xl border border-slate-700 bg-slate-900/85 px-4 py-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
                     Success Rate
                   </p>
-                  <p className="text-2xl font-semibold">
+                  <p className="text-2xl font-semibold text-lime-200">
                     {(metricsOverview.jobSummary.successRate * 100).toFixed(1)}%
                   </p>
                 </article>
-                <article className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-600">
+                <article className="rounded-xl border border-slate-700 bg-slate-900/85 px-4 py-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
                     Findings
                   </p>
-                  <p className="text-2xl font-semibold">
+                  <p className="text-2xl font-semibold text-cyan-200">
                     {metricsOverview.jobSummary.findingsCount}
                   </p>
                 </article>
-                <article className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-600">
+                <article className="rounded-xl border border-slate-700 bg-slate-900/85 px-4 py-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
                     Avg Duration
                   </p>
-                  <p className="text-2xl font-semibold">
+                  <p className="text-2xl font-semibold text-slate-100">
                     {metricsOverview.jobSummary.avgDurationSeconds}s
                   </p>
                 </article>
-                <article className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-600">
+                <article className="rounded-xl border border-slate-700 bg-slate-900/85 px-4 py-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
                     Est. Cost
                   </p>
-                  <p className="text-2xl font-semibold">
+                  <p className="text-2xl font-semibold text-amber-200">
                     ${metricsOverview.jobSummary.totalCostUsd.toFixed(2)}
                   </p>
                 </article>
               </div>
-              <p className="mt-3 text-sm text-slate-600">
+              <p className="mt-3 text-sm text-slate-300">
                 Week-over-week delta:{" "}
                 <span className="font-medium">
                   {(metricsOverview.weekOverWeek.delta * 100).toFixed(1)}%
                 </span>
               </p>
 
-              <div className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-3">
+              <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                       Week 8 Threat Intel
                     </p>
-                    <p className="text-sm text-slate-600">
+                    <p className="text-sm text-slate-300">
                       NVD/CVE feed snapshot used by planning context
                     </p>
                   </div>
@@ -1112,51 +1161,51 @@ export default function DashboardPage() {
                     type="button"
                     onClick={() => void handleSyncCveFeed()}
                     disabled={syncingCves}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+                    className="rounded-lg border border-slate-600 bg-slate-950 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
                   >
                     {syncingCves ? "Syncing..." : "Sync CVE Feed"}
                   </button>
                 </div>
                 {cveSummary ? (
                   <div className="mt-3 grid gap-2 sm:grid-cols-4">
-                    <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500">Total</p>
-                      <p className="text-lg font-semibold">{cveSummary.total}</p>
+                    <article className="rounded-lg border border-slate-700 bg-slate-900/75 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-400">Total</p>
+                      <p className="text-lg font-semibold text-slate-100">{cveSummary.total}</p>
                     </article>
-                    <article className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                    <article className="rounded-lg border border-rose-500/45 bg-rose-500/10 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-rose-200/90">
                         Critical
                       </p>
-                      <p className="text-lg font-semibold">{cveSummary.critical}</p>
+                      <p className="text-lg font-semibold text-rose-200">{cveSummary.critical}</p>
                     </article>
-                    <article className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500">High</p>
-                      <p className="text-lg font-semibold">{cveSummary.high}</p>
+                    <article className="rounded-lg border border-amber-500/45 bg-amber-500/10 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-amber-200/90">High</p>
+                      <p className="text-lg font-semibold text-amber-200">{cveSummary.high}</p>
                     </article>
-                    <article className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                    <article className="rounded-lg border border-cyan-500/45 bg-cyan-500/10 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-cyan-200/90">
                         KEV/Exploit
                       </p>
-                      <p className="text-lg font-semibold">{cveSummary.withExploit}</p>
+                      <p className="text-lg font-semibold text-cyan-200">{cveSummary.withExploit}</p>
                     </article>
                   </div>
                 ) : (
-                  <p className="mt-2 text-xs text-slate-500">
+                  <p className="mt-2 text-xs text-slate-400">
                     Threat-intel summary unavailable.
                   </p>
                 )}
-                <p className="mt-2 text-[11px] text-slate-500">
+                <p className="mt-2 text-[11px] text-slate-400">
                   Last update: {cveSummary?.lastUpdatedAt ? formatDate(cveSummary.lastUpdatedAt) : "n/a"}
                 </p>
               </div>
 
-              <div className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-3">
+              <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                       Week 11 Autonomy Control Plane
                     </p>
-                    <p className="text-sm text-slate-600">
+                    <p className="text-sm text-slate-300">
                       Prompt evolution and multi-target orchestration status
                     </p>
                   </div>
@@ -1164,7 +1213,7 @@ export default function DashboardPage() {
                     <button
                       type="button"
                       onClick={() => void loadWeek11ControlPlane(session)}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                      className="rounded-lg border border-slate-600 bg-slate-950 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
                     >
                       Refresh Week 11
                     </button>
@@ -1172,7 +1221,7 @@ export default function DashboardPage() {
                       type="button"
                       onClick={() => void handleRunPromptEvolution()}
                       disabled={evolvingPrompts}
-                      className="rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-70"
+                      className="rounded-lg border border-violet-500/45 bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-200 transition hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-70"
                     >
                       {evolvingPrompts ? "Evolving..." : "Run Prompt Evolution"}
                     </button>
@@ -1180,26 +1229,26 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                  <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                    <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                  <article className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-400">
                       Active Prompts
                     </p>
-                    <p className="text-lg font-semibold">{activePromptCount}</p>
+                    <p className="text-lg font-semibold text-slate-100">{activePromptCount}</p>
                   </article>
-                  <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                    <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                  <article className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-400">
                       Orchestrations Active
                     </p>
-                    <p className="text-lg font-semibold">
+                    <p className="text-lg font-semibold text-slate-100">
                       {orchestratorStatus?.activeCount ?? 0} /{" "}
                       {orchestratorStatus?.maxConcurrent ?? 0}
                     </p>
                   </article>
-                  <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                    <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                  <article className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-400">
                       Latest Prompt
                     </p>
-                    <p className="truncate text-sm font-semibold">
+                    <p className="truncate text-sm font-semibold text-slate-100">
                       {latestPromptVersion || "n/a"}
                     </p>
                   </article>
@@ -1207,39 +1256,48 @@ export default function DashboardPage() {
               </div>
             </>
           ) : (
-            <p className="text-sm text-slate-500">Telemetry not available yet.</p>
+            <p className="text-sm text-slate-400">Telemetry not available yet.</p>
           )}
         </article>
 
-        <article className="rounded-3xl border border-white/70 bg-white/85 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.10)] backdrop-blur-sm">
-          <h2 className="text-lg font-semibold">Alerts</h2>
-          <p className="mb-4 text-sm text-slate-600">
+        <article className="rounded-3xl border border-slate-800 bg-[#11161d]/95 p-5 shadow-[0_20px_50px_rgba(0,0,0,0.35)] backdrop-blur-sm">
+          <h2 className="text-lg font-semibold text-slate-100">Alerts</h2>
+          <p className="mb-4 text-sm text-slate-400">
             Automated health and budget warnings
           </p>
+          <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <article className="rounded-lg border border-slate-700 bg-slate-900/75 px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-slate-400">Total</p>
+              <p className="text-base font-semibold text-slate-100">{alertSeverityCounts.total}</p>
+            </article>
+            <article className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-rose-200/90">Critical</p>
+              <p className="text-base font-semibold text-rose-200">{alertSeverityCounts.critical}</p>
+            </article>
+            <article className="rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-orange-200/90">High</p>
+              <p className="text-base font-semibold text-orange-200">{alertSeverityCounts.high}</p>
+            </article>
+            <article className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-amber-200/90">Medium</p>
+              <p className="text-base font-semibold text-amber-200">{alertSeverityCounts.medium}</p>
+            </article>
+          </div>
           {alerts.length === 0 ? (
-            <p className="text-sm text-slate-500">No active alerts.</p>
+            <p className="text-sm text-slate-400">No active alerts.</p>
           ) : (
-            <div className="space-y-3">
+            <div className="max-h-[460px] space-y-2 overflow-y-auto pr-1">
               {alerts.map((alert) => {
-                const severityStyle =
-                  alert.severity === "critical"
-                    ? "border-rose-400 bg-rose-50"
-                    : alert.severity === "high"
-                    ? "border-rose-300 bg-rose-50/80"
-                    : alert.severity === "medium"
-                    ? "border-amber-300 bg-amber-50/80"
-                    : "border-slate-200 bg-white";
-
                 return (
                   <article
                     key={alert.id}
-                    className={`rounded-xl border px-3 py-2 ${severityStyle}`}
+                    className={`rounded-xl border px-3 py-2 ${getAlertTone(alert.severity)}`}
                   >
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">
                       {alert.severity}
                     </p>
-                    <p className="font-medium">{alert.title}</p>
-                    <p className="text-sm text-slate-600">{alert.message}</p>
+                    <p className="font-medium text-slate-100">{alert.title}</p>
+                    <p className="text-sm text-slate-300">{alert.message}</p>
                   </article>
                 );
               })}
@@ -1248,19 +1306,19 @@ export default function DashboardPage() {
         </article>
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-        <article className="rounded-3xl border border-white/70 bg-white/85 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.10)] backdrop-blur-sm">
-          <h2 className="text-lg font-semibold">Engagements</h2>
-          <p className="mb-4 text-sm text-slate-600">
+      <section className="grid items-start gap-4 xl:grid-cols-[1.25fr_0.75fr]">
+        <article className="rounded-3xl border border-slate-800 bg-[#11161d]/95 p-5 shadow-[0_20px_50px_rgba(0,0,0,0.35)] backdrop-blur-sm">
+          <h2 className="text-lg font-semibold text-slate-100">Engagements</h2>
+          <p className="mb-4 text-sm text-slate-400">
             Latest tests from the VENOM backend
           </p>
 
           {loading ? (
-            <p className="text-sm text-slate-500">Loading engagements...</p>
+            <p className="text-sm text-slate-400">Loading engagements...</p>
           ) : engagements.length === 0 ? (
-            <p className="text-sm text-slate-500">No engagements yet.</p>
+            <p className="text-sm text-slate-400">No engagements yet.</p>
           ) : (
-            <div className="space-y-3">
+            <div className="max-h-[74vh] space-y-3 overflow-y-auto pr-1">
               {engagements.map((engagement) => {
                 const viewMode = viewModeByEngagement[engagement._id] || "summary";
                 const technicalViewEnabled = viewMode === "detailed";
@@ -1304,36 +1362,40 @@ export default function DashboardPage() {
                 return (
                   <article
                     key={engagement._id}
-                    className="rounded-xl border border-slate-200 bg-white px-4 py-3"
+                    className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-3"
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div>
-                        <p className="font-semibold text-foreground">
+                        <p className="font-semibold text-slate-100">
                           {engagement.name}
                         </p>
-                        <p className="text-sm text-slate-600">
+                        <p className="text-sm text-slate-300">
                           {engagement.targetUrl}
                         </p>
-                        <p className="mt-1 text-xs text-slate-500">
+                        <p className="mt-1 text-xs text-slate-400">
                           {formatDate(engagement.createdAt)}
                         </p>
                       </div>
-                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold uppercase">
+                      <span
+                        className={`rounded-full border px-2 py-1 text-xs font-semibold uppercase ${getStatusBadgeTone(
+                          engagement.status
+                        )}`}
+                      >
                         {engagement.status}
                       </span>
                     </div>
 
-                    <div className="mt-3 flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div className="mt-3 flex items-center justify-between rounded-lg border border-slate-700 bg-slate-950/80 px-3 py-2">
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                           Deep-Dive
                         </p>
-                        <p className="text-xs text-slate-600">
+                        <p className="text-xs text-slate-300">
                           Toggle technical report mode
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium text-slate-600">
+                        <span className="text-xs font-medium text-slate-300">
                           {technicalViewEnabled ? "Technical" : "Executive"}
                         </span>
                         <Switch
@@ -1346,12 +1408,12 @@ export default function DashboardPage() {
                       </div>
                     </div>
 
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                       <button
                         type="button"
                         onClick={() => void handleGeneratePlan(engagement._id)}
                         disabled={Boolean(planningById[engagement._id])}
-                        className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
+                        className="rounded-lg bg-lime-500/90 px-3 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-lime-400 disabled:cursor-not-allowed disabled:opacity-70"
                       >
                         {planningById[engagement._id]
                           ? "Generating..."
@@ -1359,16 +1421,9 @@ export default function DashboardPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => void handleLoadLatestPlan(engagement._id)}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                      >
-                        View Latest Plan
-                      </button>
-                      <button
-                        type="button"
                         onClick={() => void handleRunHeadersProbe(engagement._id)}
                         disabled={Boolean(executingById[engagement._id])}
-                        className="rounded-lg border border-accent/40 bg-white px-3 py-1.5 text-xs font-semibold text-accent transition hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-70"
+                        className="rounded-lg border border-cyan-500/45 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-70"
                       >
                         {executingById[engagement._id]
                           ? "Running Probe..."
@@ -1376,49 +1431,9 @@ export default function DashboardPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() =>
-                          void handleRunWeek10Tool(engagement._id, "nmap_tcp_scan")
-                        }
-                        disabled={Boolean(executingById[engagement._id])}
-                        className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        {executingById[engagement._id] ? "Running..." : "Run Nmap TCP"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void handleRunWeek10Tool(engagement._id, "nuclei_scan")
-                        }
-                        disabled={Boolean(executingById[engagement._id])}
-                        className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-semibold text-orange-700 transition hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        {executingById[engagement._id] ? "Running..." : "Run Nuclei"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void handleRunWeek10Tool(engagement._id, "nikto_scan")
-                        }
-                        disabled={Boolean(executingById[engagement._id])}
-                        className="rounded-lg border border-lime-300 bg-white px-3 py-1.5 text-xs font-semibold text-lime-700 transition hover:bg-lime-50 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        {executingById[engagement._id] ? "Running..." : "Run Nikto"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void handleRunWeek10Tool(engagement._id, "sqlmap_detect")
-                        }
-                        disabled={Boolean(executingById[engagement._id])}
-                        className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        {executingById[engagement._id] ? "Running..." : "Run SQLMap Detect"}
-                      </button>
-                      <button
-                        type="button"
                         onClick={() => void handleRunWeek10Chain(engagement._id)}
                         disabled={Boolean(chainRunningById[engagement._id])}
-                        className="rounded-lg border border-fuchsia-300 bg-white px-3 py-1.5 text-xs font-semibold text-fuchsia-700 transition hover:bg-fuchsia-50 disabled:cursor-not-allowed disabled:opacity-70"
+                        className="rounded-lg border border-fuchsia-500/45 bg-fuchsia-500/10 px-3 py-1.5 text-xs font-semibold text-fuchsia-200 transition hover:bg-fuchsia-500/20 disabled:cursor-not-allowed disabled:opacity-70"
                       >
                         {chainRunningById[engagement._id]
                           ? "Running Chain..."
@@ -1428,114 +1443,176 @@ export default function DashboardPage() {
                         type="button"
                         onClick={() => void handleAutonomousRun(engagement._id)}
                         disabled={Boolean(orchestratingById[engagement._id])}
-                        className="rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-70"
+                        className="rounded-lg border border-violet-500/45 bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-200 transition hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-70"
                       >
                         {orchestratingById[engagement._id]
                           ? "Autonomous Run..."
                           : "Autonomous Run"}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleVerifyEvidence(engagement._id)}
-                        disabled={Boolean(evidenceLoadingById[engagement._id])}
-                        className="rounded-lg border border-cyan-300 bg-white px-3 py-1.5 text-xs font-semibold text-cyan-700 transition hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        {evidenceLoadingById[engagement._id]
-                          ? "Verifying Evidence..."
-                          : "Verify Evidence Chain"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleLoadLatestExecution(engagement._id)}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                      >
-                        View Latest Probe
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleDownloadReport(engagement._id)}
-                        disabled={Boolean(downloadingById[engagement._id])}
-                        className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        <DownloadIcon />
-                        <span>
-                          {downloadingById[engagement._id]
-                            ? "Downloading..."
-                            : "Download Report"}
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleDownloadBackendPdf(engagement._id)}
-                        disabled={Boolean(downloadingBackendPdfById[engagement._id])}
-                        className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        <DownloadIcon />
-                        <span>
-                          {downloadingBackendPdfById[engagement._id]
-                            ? "Preparing PDF..."
-                            : "Download Backend PDF"}
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleEmailReport(engagement._id)}
-                        disabled={Boolean(emailingReportById[engagement._id])}
-                        className="rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        {emailingReportById[engagement._id]
-                          ? "Emailing..."
-                          : "Email PDF Report"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleLoadCompliance(engagement._id)}
-                        disabled={Boolean(complianceLoadingById[engagement._id])}
-                        className="rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        {complianceLoadingById[engagement._id]
-                          ? "Loading Compliance..."
-                          : "Load Compliance"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleMatchPatterns(engagement._id)}
-                        disabled={Boolean(matchingById[engagement._id])}
-                        className="rounded-lg border border-sky-300 bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        {matchingById[engagement._id]
-                          ? "Matching..."
-                          : "Match Patterns"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleRunLearning(engagement._id)}
-                        disabled={Boolean(learningById[engagement._id])}
-                        className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        {learningById[engagement._id]
-                          ? "Learning..."
-                          : "Run Learning"}
-                      </button>
-                      {technicalViewEnabled ? (
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDeleteId(engagement._id)}
-                          disabled={Boolean(deletingById[engagement._id])}
-                          className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-70"
-                        >
-                          <TrashIcon />
-                          <span>
-                            {deletingById[engagement._id]
-                              ? "Removing..."
-                              : "Decommission"}
-                          </span>
-                        </button>
-                      ) : null}
                     </div>
 
+                    <details className="group mt-2 rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2">
+                      <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-300 marker:content-none">
+                        <span>Advanced Actions</span>
+                        <span className="text-[10px] text-slate-500 group-open:hidden">
+                          Expand
+                        </span>
+                        <span className="hidden text-[10px] text-slate-500 group-open:inline">
+                          Collapse
+                        </span>
+                      </summary>
+
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                        <button
+                          type="button"
+                          onClick={() => void handleLoadLatestPlan(engagement._id)}
+                          className="rounded-lg border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+                        >
+                          View Latest Plan
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleLoadLatestExecution(engagement._id)}
+                          className="rounded-lg border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+                        >
+                          View Latest Probe
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleLoadCompliance(engagement._id)}
+                          disabled={Boolean(complianceLoadingById[engagement._id])}
+                          className="rounded-lg border border-indigo-500/45 bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-200 transition hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {complianceLoadingById[engagement._id]
+                            ? "Loading Compliance..."
+                            : "Load Compliance"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleMatchPatterns(engagement._id)}
+                          disabled={Boolean(matchingById[engagement._id])}
+                          className="rounded-lg border border-sky-500/45 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-200 transition hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {matchingById[engagement._id]
+                            ? "Matching..."
+                            : "Match Patterns"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleRunLearning(engagement._id)}
+                          disabled={Boolean(learningById[engagement._id])}
+                          className="rounded-lg border border-emerald-500/45 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {learningById[engagement._id]
+                            ? "Learning..."
+                            : "Run Learning"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleVerifyEvidence(engagement._id)}
+                          disabled={Boolean(evidenceLoadingById[engagement._id])}
+                          className="rounded-lg border border-cyan-500/45 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {evidenceLoadingById[engagement._id]
+                            ? "Verifying..."
+                            : "Verify Evidence"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleRunWeek10Tool(engagement._id, "nmap_tcp_scan")
+                          }
+                          disabled={Boolean(executingById[engagement._id])}
+                          className="rounded-lg border border-amber-500/45 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-200 transition hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {executingById[engagement._id] ? "Running..." : "Run Nmap TCP"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleRunWeek10Tool(engagement._id, "nuclei_scan")
+                          }
+                          disabled={Boolean(executingById[engagement._id])}
+                          className="rounded-lg border border-orange-500/45 bg-orange-500/10 px-3 py-1.5 text-xs font-semibold text-orange-200 transition hover:bg-orange-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {executingById[engagement._id] ? "Running..." : "Run Nuclei"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleRunWeek10Tool(engagement._id, "nikto_scan")
+                          }
+                          disabled={Boolean(executingById[engagement._id])}
+                          className="rounded-lg border border-lime-500/45 bg-lime-500/10 px-3 py-1.5 text-xs font-semibold text-lime-200 transition hover:bg-lime-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {executingById[engagement._id] ? "Running..." : "Run Nikto"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleRunWeek10Tool(engagement._id, "sqlmap_detect")
+                          }
+                          disabled={Boolean(executingById[engagement._id])}
+                          className="rounded-lg border border-rose-500/45 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {executingById[engagement._id] ? "Running..." : "Run SQLMap Detect"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDownloadReport(engagement._id)}
+                          disabled={Boolean(downloadingById[engagement._id])}
+                          className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          <DownloadIcon />
+                          <span>
+                            {downloadingById[engagement._id]
+                              ? "Downloading..."
+                              : "Download Report"}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDownloadBackendPdf(engagement._id)}
+                          disabled={Boolean(downloadingBackendPdfById[engagement._id])}
+                          className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          <DownloadIcon />
+                          <span>
+                            {downloadingBackendPdfById[engagement._id]
+                              ? "Preparing PDF..."
+                              : "Download Backend PDF"}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleEmailReport(engagement._id)}
+                          disabled={Boolean(emailingReportById[engagement._id])}
+                          className="rounded-lg border border-violet-500/45 bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-200 transition hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {emailingReportById[engagement._id]
+                            ? "Emailing..."
+                            : "Email PDF Report"}
+                        </button>
+                        {technicalViewEnabled ? (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(engagement._id)}
+                            disabled={Boolean(deletingById[engagement._id])}
+                            className="inline-flex items-center justify-center gap-1 rounded-lg border border-rose-500/45 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                          >
+                            <TrashIcon />
+                            <span>
+                              {deletingById[engagement._id]
+                                ? "Removing..."
+                                : "Decommission"}
+                            </span>
+                          </button>
+                        ) : null}
+                      </div>
+                    </details>
+
                     {technicalViewEnabled ? (
-                      <div className="mt-3 w-full max-w-full space-y-2 overflow-hidden rounded-lg border border-slate-200 bg-slate-950/95 p-3 text-xs text-slate-100">
+                      <div className="mt-3 w-full max-w-full space-y-2 overflow-hidden rounded-lg border border-slate-700 bg-slate-950/95 p-3 text-xs text-slate-100">
                         <p className="font-semibold uppercase tracking-wide text-slate-300">
                           Forensic View
                         </p>
@@ -1725,7 +1802,7 @@ export default function DashboardPage() {
                     ) : (
                       <>
                         {report?.summary ? (
-                          <p className="mt-2 text-xs text-slate-600">
+                          <p className="mt-2 text-xs text-slate-300">
                             Executive metrics:{" "}
                             <span className="font-medium">
                               Success {(report.summary.successRate * 100).toFixed(1)}%,
@@ -1735,13 +1812,13 @@ export default function DashboardPage() {
                           </p>
                         ) : null}
                         {latestPlan ? (
-                          <p className="mt-2 text-xs text-slate-600">
+                          <p className="mt-2 text-xs text-slate-300">
                             Latest plan:{" "}
                             <span className="font-medium">{latestPlan.summary}</span>
                           </p>
                         ) : null}
                         {latestExecution ? (
-                          <p className="mt-1 text-xs text-slate-600">
+                          <p className="mt-1 text-xs text-slate-300">
                             Latest probe:{" "}
                             <span className="font-medium">{latestExecution.toolId}</span>{" "}
                             {"->"}{" "}
@@ -1751,7 +1828,7 @@ export default function DashboardPage() {
                           </p>
                         ) : null}
                         {topMatchByEngagement[engagement._id] ? (
-                          <p className="mt-1 text-xs text-slate-600">
+                          <p className="mt-1 text-xs text-slate-300">
                             Top match:{" "}
                             <span className="font-medium">
                               {topMatchByEngagement[engagement._id]?.name}
@@ -1760,7 +1837,7 @@ export default function DashboardPage() {
                           </p>
                         ) : null}
                         {compliance ? (
-                          <p className="mt-1 text-xs text-slate-600">
+                          <p className="mt-1 text-xs text-slate-300">
                             Compliance:{" "}
                             <span className="font-medium">
                               CVSS {compliance.cvssOverallScore.toFixed(2)} (
@@ -1771,7 +1848,7 @@ export default function DashboardPage() {
                           </p>
                         ) : null}
                         {learningSummaryByEngagement[engagement._id] ? (
-                          <p className="mt-1 text-xs text-slate-600">
+                          <p className="mt-1 text-xs text-slate-300">
                             Learning:{" "}
                             <span className="font-medium">
                               {learningSummaryByEngagement[engagement._id]}
@@ -1779,7 +1856,7 @@ export default function DashboardPage() {
                           </p>
                         ) : null}
                         {chainSummary ? (
-                          <p className="mt-1 text-xs text-slate-600">
+                          <p className="mt-1 text-xs text-slate-300">
                             Week 10 chain:{" "}
                             <span className="font-medium">
                               {chainSummary.stepsExecuted}/{chainSummary.stepsPlanned} via{" "}
@@ -1788,7 +1865,7 @@ export default function DashboardPage() {
                           </p>
                         ) : null}
                         {evidenceStatus ? (
-                          <p className="mt-1 text-xs text-slate-600">
+                          <p className="mt-1 text-xs text-slate-300">
                             Evidence integrity:{" "}
                             <span className="font-medium">
                               {evidenceStatus.valid
@@ -1802,7 +1879,7 @@ export default function DashboardPage() {
 
                     {progressByEngagement[engagement._id] ? (
                       <div className="mt-2">
-                        <div className="mb-1 flex items-center justify-between text-xs text-slate-600">
+                        <div className="mb-1 flex items-center justify-between text-xs text-slate-300">
                           <span>
                             Progress:{" "}
                             {progressByEngagement[engagement._id].currentPhase}
@@ -1811,7 +1888,7 @@ export default function DashboardPage() {
                             {progressByEngagement[engagement._id].progressPercent}%
                           </span>
                         </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                        <div className="h-2 overflow-hidden rounded-full bg-slate-800">
                           <div
                             className="h-full rounded-full bg-accent transition-all"
                             style={{
@@ -1828,9 +1905,9 @@ export default function DashboardPage() {
           )}
         </article>
 
-        <article className="rounded-3xl border border-white/70 bg-white/85 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.10)] backdrop-blur-sm">
-          <h2 className="text-lg font-semibold">New Engagement</h2>
-          <p className="mb-4 text-sm text-slate-600">
+        <article className="rounded-3xl border border-slate-800 bg-[#11161d]/95 p-5 shadow-[0_20px_50px_rgba(0,0,0,0.35)] backdrop-blur-sm xl:sticky xl:top-4">
+          <h2 className="text-lg font-semibold text-slate-100">New Engagement</h2>
+          <p className="mb-4 text-sm text-slate-400">
             Create and queue a new authorized target
           </p>
 
@@ -1843,7 +1920,7 @@ export default function DashboardPage() {
                 onChange={(event) =>
                   setForm((prev) => ({ ...prev, name: event.target.value }))
                 }
-                className="w-full rounded-xl border border-slate-300 px-3 py-2 outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+                className="w-full rounded-xl border border-slate-700 bg-slate-900/85 px-3 py-2 text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-lime-400 focus:ring-2 focus:ring-lime-500/20"
                 placeholder="Acme staging baseline"
               />
             </label>
@@ -1857,7 +1934,7 @@ export default function DashboardPage() {
                 onChange={(event) =>
                   setForm((prev) => ({ ...prev, targetUrl: event.target.value }))
                 }
-                className="w-full rounded-xl border border-slate-300 px-3 py-2 outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+                className="w-full rounded-xl border border-slate-700 bg-slate-900/85 px-3 py-2 text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-lime-400 focus:ring-2 focus:ring-lime-500/20"
                 placeholder="https://staging.example.com"
               />
             </label>
@@ -1872,7 +1949,7 @@ export default function DashboardPage() {
                     targetType: event.target.value as CreateEngagementInput["targetType"]
                   }))
                 }
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+                className="w-full rounded-xl border border-slate-700 bg-slate-900/85 px-3 py-2 text-slate-100 outline-none transition focus:border-lime-400 focus:ring-2 focus:ring-lime-500/20"
               >
                 <option value="website">Website</option>
                 <option value="api">API</option>
@@ -1891,18 +1968,18 @@ export default function DashboardPage() {
                     description: event.target.value
                   }))
                 }
-                className="w-full rounded-xl border border-slate-300 px-3 py-2 outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+                className="w-full rounded-xl border border-slate-700 bg-slate-900/85 px-3 py-2 text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-lime-400 focus:ring-2 focus:ring-lime-500/20"
                 placeholder="Scope notes, objective, and context"
               />
             </label>
 
-            {error ? <p className="text-sm text-danger">{error}</p> : null}
-            {message ? <p className="text-sm text-accent">{message}</p> : null}
+            {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+            {message ? <p className="text-sm text-lime-200">{message}</p> : null}
 
             <button
               type="submit"
               disabled={creating}
-              className="w-full rounded-xl bg-accent px-4 py-2 font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
+              className="w-full rounded-xl bg-lime-500/90 px-4 py-2 font-semibold text-slate-950 transition hover:bg-lime-400 disabled:cursor-not-allowed disabled:opacity-70"
             >
               {creating ? "Creating..." : "Create Engagement"}
             </button>
@@ -1912,13 +1989,13 @@ export default function DashboardPage() {
 
       {engagementPendingDelete ? (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/45 px-4">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <h3 className="text-lg font-semibold text-slate-900">
+          <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl">
+            <h3 className="text-lg font-semibold text-slate-100">
               Confirm Decommission
             </h3>
-            <p className="mt-2 text-sm text-slate-600">
+            <p className="mt-2 text-sm text-slate-300">
               Remove engagement{" "}
-              <span className="font-semibold text-slate-900">
+              <span className="font-semibold text-slate-100">
                 {engagementPendingDelete.name}
               </span>
               ? This will permanently delete associated plans and execution jobs.
@@ -1927,7 +2004,7 @@ export default function DashboardPage() {
               <button
                 type="button"
                 onClick={() => setConfirmDeleteId(null)}
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                className="rounded-lg border border-slate-600 px-3 py-1.5 text-sm font-medium text-slate-200 transition hover:bg-slate-800"
               >
                 Cancel
               </button>

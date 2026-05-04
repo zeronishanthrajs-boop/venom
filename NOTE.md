@@ -1338,3 +1338,35 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 ### Operational note
 - Prompt evolution requires valid `CLAUDE_API_KEY` for real model-generated upgrades.
 - In environments without Docker execution enabled, orchestration still runs safely using available tools and records outcomes without breaking the pipeline.
+
+## [2026-05-04 23:04:52 +05:30] - Dashboard UI/UX Stabilization Patch
+
+### Status
+- Implemented and verified.
+
+### Issues observed from current UI
+- Alerts panel was unbounded, creating excessive vertical growth and weak scanability.
+- Engagement cards exposed too many controls at once, causing cognitive overload.
+- Light card palette reduced tactical hierarchy and contrast for a security workflow.
+- Long engagement lists pushed the page into continuous scroll with poor right-panel usability.
+
+### Changes implemented
+- Refactored dashboard visual system to a tactical dark interface:
+  - Updated `dashboard/src/app/globals.css` theme tokens to obsidian/lime/red palette.
+  - Strengthened contrast and component hierarchy across header, metrics, alerts, cards, and modal.
+- Added alert severity aggregation + summary chips (Total/Critical/High/Medium).
+- Capped alerts list height with internal scrolling for stable layout.
+- Capped engagements list height with internal scrolling to prevent runaway page length.
+- Made New Engagement panel sticky on desktop (`xl:sticky`) for constant access.
+- Reworked engagement controls:
+  - Primary action row for high-frequency operations.
+  - Collapsible "Advanced Actions" section for all secondary operations.
+- Added status/severity tone helpers for clearer visual semantics.
+- Added top-level status message banners in header for faster operator feedback.
+
+### Validation
+- `dashboard npm run build` => pass (Next.js production build successful).
+
+### Files changed
+- `dashboard/src/app/dashboard/page.tsx`
+- `dashboard/src/app/globals.css`
