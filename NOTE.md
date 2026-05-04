@@ -1118,3 +1118,37 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - `dashboard npm run lint` => pass
 - `dashboard npm run build` => pass
 - E2E smoke (local backend) => all key Week 1-9 endpoints responded successfully.
+
+## [2026-05-04 16:56:22 +05:30] - Post-Audit Push + Cloud Redeploy Checks + Bridge Smoke
+
+**Status:** Completed all requested actions
+
+### 1) Commit + Push completed
+- Commit: `94a9005`
+- Message: `fix(audit): harden week1-9 reliability and timeout handling`
+- Branch push: `main -> origin/main` successful
+
+### 2) Render/Vercel redeploy checks completed
+- Render:
+  - `GET /health` => `200`
+  - `GET /ready` => `200`
+- Vercel:
+  - `GET /api/system/ready` => `200`
+
+### 3) Cloud smoke verification completed
+- Created cloud engagement and executed full Week 1-9 flow:
+  - `POST /api/engagements` => success
+  - `POST /api/plan` => success (`promptVersion=planning_v2_3_2026_05_04`, source=`template`)
+  - `POST /api/execute` (`http_headers_probe`) => `success`
+  - `POST /api/learn` => `processedJobs=1`, `extractionSource=heuristic`
+  - `GET /api/compliance/:engagementId` => CVSS/OWASP returned (`cvss=5.5`, `owaspCoverage=3`)
+  - `GET /api/reports/:engagementId/pdf` => `200` (`application/pdf`)
+- Vercel auth + backend bridge validation:
+  - `POST /api/auth/login` => `200`
+  - `GET /api/backend/api/cves/summary` => `200`
+  - `GET /api/backend/api/compliance/:engagementId` => `200`
+  - `GET /api/backend/api/reports/:engagementId/pdf` => `200`
+
+### Deployment state notes
+- Cloud pipeline (Render + Vercel bridge) is healthy after the hardening push.
+- Planner remains on template fallback in cloud until valid `CLAUDE_API_KEY` is configured/enabled.
