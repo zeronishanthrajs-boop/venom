@@ -69,23 +69,33 @@ router.post("/fix-tool-whitelists", requireDb, async (_req, res, next) => {
     const whitelist = Array.isArray(STARTUP_SCAN_PROFILE.toolWhitelist)
       ? STARTUP_SCAN_PROFILE.toolWhitelist
       : [];
+    const engagements = await Engagement.find({})
+      .select("_id targetType constraints.toolWhitelist")
+      .lean();
 
-    const result = await Engagement.updateMany(
-      {
-        $or: [
-          { "constraints.toolWhitelist": { $exists: false } },
-          { "constraints.toolWhitelist": { $size: 0 } }
-        ]
-      },
-      {
-        $set: {
-          "constraints.toolWhitelist": whitelist
-        }
+    let updated = 0;
+    for (const engagement of engagements) {
+      const currentWhitelist = Array.isArray(engagement?.constraints?.toolWhitelist)
+        ? engagement.constraints.toolWhitelist
+        : [];
+      const normalizedCurrent = currentWhitelist.map((item) => String(item).trim());
+      const hasAllRequired = whitelist.every((requiredTool) =>
+        normalizedCurrent.includes(requiredTool)
+      );
+      if (hasAllRequired) {
+        continue;
       }
-    );
 
+      const merged = [...new Set([...normalizedCurrent, ...whitelist])];
+      // eslint-disable-next-line no-await-in-loop
+      await Engagement.updateOne(
+        { _id: engagement._id },
+        { $set: { "constraints.toolWhitelist": merged } }
+      );
+      updated += 1;
+    }
     return res.status(200).json({
-      updated: result.modifiedCount || 0,
+      updated,
       whitelistApplied: whitelist
     });
   } catch (error) {

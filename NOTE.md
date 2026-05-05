@@ -1910,3 +1910,26 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
   - `backend npm test` -> PASS (`50/50`)
   - `dashboard npm run lint` -> PASS
   - `dashboard npm run build` -> PASS
+
+---
+
+## [2026-05-05 11:28:40 +05:30] - Round 3.1 Whitelist Migration Completeness Fix
+
+**Status:** Implemented + validated; ready for production run
+
+### Why this follow-up was needed
+- Initial `fix-tool-whitelists` migration handled only missing/empty lists.
+- Live `zeroops` engagement had a **partial** list (4 tools), so `nikto_scan`/`nmap_tcp_scan`/`sqlmap_detect` remained blocked.
+
+### Change made
+- Updated [admin.js](/mnt/c/Users/nisha/Music/VENOM/backend/routes/admin.js):
+  - `POST /api/admin/fix-tool-whitelists` now:
+    - scans all engagements,
+    - detects missing required startup tools,
+    - merges required tools into `constraints.toolWhitelist`,
+    - updates each incomplete record.
+
+### Validation
+- `backend npm test` -> PASS (`50/50`)
+- `dashboard npm run lint` -> PASS
+- `dashboard npm run build` -> PASS
