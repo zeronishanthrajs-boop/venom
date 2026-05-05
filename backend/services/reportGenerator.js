@@ -4,6 +4,7 @@ const Engagement = require("../models/Engagement");
 const ExecutionJob = require("../models/ExecutionJob");
 const Plan = require("../models/Plan");
 const { generateComplianceSummary } = require("./complianceMapper");
+const { deduplicateFindings } = require("../utils/deduplicateFindings");
 
 function flattenFindings(jobs = []) {
   return jobs.flatMap((job) => {
@@ -83,7 +84,7 @@ async function loadReportContext(engagementId) {
     ExecutionJob.find({ engagementId }).sort({ createdAt: -1 }).lean()
   ]);
 
-  const findings = flattenFindings(jobs);
+  const findings = deduplicateFindings(flattenFindings(jobs));
   const severity = computeSeverityBreakdown(findings);
   const executionSummary = buildExecutionSummary(jobs);
   const compliance = generateComplianceSummary(findings);
@@ -151,6 +152,9 @@ function buildMarkdownReport(context) {
           finding.title || "Untitled finding"
         }`
       );
+      if (Number(finding.count || 1) > 1) {
+        lines.push(`   - Repeated Signals: ${finding.count}`);
+      }
       lines.push(`   - Category: ${finding.category || "n/a"}`);
       lines.push(`   - Description: ${finding.description || "n/a"}`);
       lines.push(`   - Recommendation: ${finding.recommendation || "n/a"}`);
@@ -241,6 +245,9 @@ function buildPdfReportBuffer(context) {
             finding.title || "Untitled finding"
           }`
         );
+        if (Number(finding.count || 1) > 1) {
+          doc.text(`   Repeated Signals: ${finding.count}`);
+        }
         if (finding.description) {
           doc.text(`   ${finding.description}`);
         }

@@ -70,6 +70,18 @@ function mapJobStatusToHttpStatus(status) {
   return 422;
 }
 
+async function markEngagementRunningIfDraft(engagementId) {
+  await Engagement.findOneAndUpdate(
+    {
+      _id: engagementId,
+      status: "draft"
+    },
+    {
+      status: "running"
+    }
+  );
+}
+
 async function executeEngagementTool({
   engagementId,
   toolId,
@@ -130,6 +142,7 @@ async function executeEngagementTool({
     startedAt: new Date(),
     createdBy: userId
   });
+  await markEngagementRunningIfDraft(engagement._id);
 
   try {
     const output = toCamelCaseDeep(await runTool(toolId, targetUrl));
@@ -168,6 +181,33 @@ async function executeEngagementTool({
   job.finishedAt = new Date();
   job.durationMs = Date.now() - startedAtMs;
   await job.save();
+  await markEngagementRunningIfDraft(job.engagementId);
+
+  setImmediate(async () => {
+    try {
+      if (process.env.AUTO_DECISION_BRIEF_ON_PROBE !== "false") {
+        const { generateDecisionBrief } = require("./decisionEngine");
+        await generateDecisionBrief(String(job.engagementId));
+      }
+    } catch (error) {
+      console.error("[AutoBrief] Failed:", error?.message || "unknown error");
+    }
+  });
+
+  setImmediate(async () => {
+    try {
+      if (process.env.AUTO_SNAPSHOT_ON_PROBE !== "false") {
+        const { createSnapshot } = require("./changeDetector");
+        await createSnapshot(
+          String(job.engagementId),
+          "post-probe",
+          userId || "unknown"
+        );
+      }
+    } catch (error) {
+      console.error("[AutoSnapshot] Failed:", error?.message || "unknown error");
+    }
+  });
 
   const jobObject = job.toObject();
 

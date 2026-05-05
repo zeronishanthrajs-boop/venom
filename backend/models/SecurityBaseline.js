@@ -35,7 +35,7 @@ const securityBaselineSchema = new mongoose.Schema(
     },
     snapshotType: {
       type: String,
-      enum: ["manual", "scheduled", "post-engagement"],
+      enum: ["manual", "scheduled", "post-engagement", "post-probe", "post-deploy"],
       default: "manual"
     },
     snapshotAt: {
@@ -71,4 +71,3 @@ const securityBaselineSchema = new mongoose.Schema(
 securityBaselineSchema.index({ engagementId: 1, snapshotAt: -1 });
 
 module.exports = mongoose.model("SecurityBaseline", securityBaselineSchema);
-

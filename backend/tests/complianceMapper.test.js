@@ -16,7 +16,8 @@ test("extractFindingTags infers useful compliance tags", () => {
   });
 
   assert.ok(tags.includes("header-hardening"));
-  assert.ok(tags.includes("web"));
+  assert.ok(tags.includes("headers"));
+  assert.ok(tags.includes("csp"));
   assert.ok(tags.includes("misconfiguration"));
 });
 
@@ -39,6 +40,8 @@ test("mapFindingsToOwasp maps findings to expected categories", () => {
 
   assert.ok(mapped.A06);
   assert.ok(mapped.A05);
+  assert.equal(Boolean(mapped.A03), false);
+  assert.equal(Boolean(mapped.A04), false);
 });
 
 test("computeOverallCvssScore blends max and average severity", () => {
@@ -48,6 +51,18 @@ test("computeOverallCvssScore blends max and average severity", () => {
     { severity: "low", cvssScore: 3.1 }
   ]);
   assert.ok(score >= 7.5 && score <= 9.5);
+});
+
+test("computeOverallCvssScore does not inflate medium-only header findings", () => {
+  const score = computeOverallCvssScore([
+    {
+      severity: "medium",
+      category: "header-hardening",
+      title: "Missing Content-Security-Policy Header",
+      description: "CSP not present"
+    }
+  ]);
+  assert.ok(score <= 5.5);
 });
 
 test("generateComplianceSummary returns cvss + owasp breakdown", () => {
@@ -72,4 +87,3 @@ test("generateComplianceSummary returns cvss + owasp breakdown", () => {
   assert.ok(summary.owaspCoverage >= 1);
   assert.ok(Array.isArray(summary.remediationPriority));
 });
-

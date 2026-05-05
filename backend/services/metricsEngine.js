@@ -1,4 +1,5 @@
 const { getTool } = require("../tooling/toolRegistry");
+const { deduplicateFindings } = require("../utils/deduplicateFindings");
 
 const TERMINAL_STATUSES = new Set(["success", "failed", "timeout", "blocked"]);
 
@@ -42,6 +43,16 @@ function extractFindingCount(job) {
   return findings;
 }
 
+function collectRawFindings(job) {
+  if (Array.isArray(job?.findings) && job.findings.length > 0) {
+    return job.findings;
+  }
+  if (Array.isArray(job?.output?.findings) && job.output.findings.length > 0) {
+    return job.output.findings;
+  }
+  return [];
+}
+
 function severityRank(severity) {
   if (severity === "critical") {
     return 4;
@@ -70,7 +81,13 @@ function computeJobSummary(jobs) {
     0
   );
   const totalCostUsd = jobs.reduce((total, job) => total + estimateJobCostUsd(job), 0);
-  const findingsCount = jobs.reduce((total, job) => total + extractFindingCount(job), 0);
+  const dedupedFindings = deduplicateFindings(
+    jobs.flatMap((job) => collectRawFindings(job))
+  );
+  const findingsCount =
+    dedupedFindings.length > 0
+      ? dedupedFindings.length
+      : jobs.reduce((total, job) => total + extractFindingCount(job), 0);
   const successRate =
     terminalJobs.length === 0
       ? 0
@@ -249,31 +266,48 @@ function generateAlerts(jobs, patterns, budgetUsd = 400) {
     return createdAt && createdAt >= dayAgo;
   });
 
-  const findingAlerts = [];
+  const rawFindingAlerts = [];
   for (const job of recentJobs) {
-    if (!Array.isArray(job.findings)) {
+    const jobFindings = collectRawFindings(job);
+    if (!Array.isArray(jobFindings) || jobFindings.length === 0) {
       continue;
     }
 
-    for (const finding of job.findings) {
+    for (const finding of jobFindings) {
       const sev = finding?.severity || "low";
       if (severityRank(sev) < severityRank("medium")) {
         continue;
       }
 
-      findingAlerts.push({
+      rawFindingAlerts.push({
         id: `finding-${job._id}-${finding.id || finding.title || "unknown"}`,
         severity: sev === "critical" ? "high" : sev,
         title: finding.title || "Security finding detected",
         message: `${finding.description || "Review finding details."} (tool=${job.toolId}${
           finding.cve ? `, ${finding.cve}` : ""
-        })`
+        })`,
+        count: Number(finding?.count || 1)
       });
     }
   }
 
-  if (findingAlerts.length > 0) {
-    alerts.push(...findingAlerts.slice(0, 10));
+  if (rawFindingAlerts.length > 0) {
+    const dedupedAlertFindings = deduplicateFindings(
+      rawFindingAlerts.map((item) => ({
+        title: item.title,
+        description: item.message,
+        severity: item.severity,
+        source: "metrics_alert"
+      }))
+    );
+    const mappedAlerts = dedupedAlertFindings.map((item) => ({
+      id: `finding-${item.dedupKey}`,
+      severity: item.severity === "critical" ? "high" : item.severity || "medium",
+      title: item.title || "Security finding detected",
+      message: item.description || "Review finding details.",
+      count: Number(item.count || 1)
+    }));
+    alerts.push(...mappedAlerts.slice(0, 10));
   }
 
   return alerts;

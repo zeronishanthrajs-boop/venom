@@ -1,39 +1,50 @@
+const { deduplicateFindings } = require("../utils/deduplicateFindings");
+
 const OWASP_TOP_10_2021 = {
   A01: {
     name: "Broken Access Control",
-    tags: ["idor", "auth", "privilege-escalation"]
+    tags: ["idor", "privilege-escalation", "auth-bypass"]
   },
   A02: {
     name: "Cryptographic Failures",
-    tags: ["tls", "information-disclosure"]
+    tags: ["tls", "weak-crypto", "information-disclosure"]
   },
   A03: {
     name: "Injection",
-    tags: ["sqli", "xss", "rce", "lfi", "rfi", "ssrf"]
+    tags: ["sqli", "rce", "lfi", "rfi", "command-injection"]
   },
   A04: {
     name: "Insecure Design",
-    tags: ["design", "misconfiguration"]
+    tags: ["design-flaw", "logic-error"]
   },
   A05: {
     name: "Security Misconfiguration",
-    tags: ["web", "cloud", "container", "api", "header-hardening"]
+    tags: [
+      "misconfiguration",
+      "headers",
+      "header-hardening",
+      "csp",
+      "cors",
+      "cloud",
+      "container",
+      "default-credentials"
+    ]
   },
   A06: {
     name: "Vulnerable and Outdated Components",
-    tags: ["cms", "known-cve", "deserialization"]
+    tags: ["cms", "deserialization", "outdated-component", "known-cve"]
   },
   A07: {
     name: "Identification and Authentication Failures",
-    tags: ["auth"]
+    tags: ["auth", "session", "credential-stuffing"]
   },
   A08: {
     name: "Software and Data Integrity Failures",
-    tags: ["deserialization", "api"]
+    tags: ["deserialization", "supply-chain"]
   },
   A09: {
     name: "Security Logging and Monitoring Failures",
-    tags: ["logging"]
+    tags: ["logging-failure", "audit-gap"]
   },
   A10: {
     name: "Server-Side Request Forgery",
@@ -75,7 +86,8 @@ function extractFindingTags(finding = {}) {
 
   if (/csp|hsts|x-content-type-options|security header/.test(combined)) {
     tags.add("header-hardening");
-    tags.add("web");
+    tags.add("headers");
+    tags.add("csp");
     tags.add("misconfiguration");
   }
   if (/idor/.test(combined)) tags.add("idor");
@@ -91,6 +103,8 @@ function extractFindingTags(finding = {}) {
   const metadataTags = Array.isArray(finding?.metadata?.tags)
     ? finding.metadata.tags
     : [];
+  const directTags = Array.isArray(finding?.tags) ? finding.tags : [];
+  directTags.forEach((tag) => tags.add(normalizeText(tag)));
   metadataTags.forEach((tag) => tags.add(normalizeText(tag)));
 
   return [...tags].filter(Boolean);
@@ -98,15 +112,24 @@ function extractFindingTags(finding = {}) {
 
 function mapFindingsToOwasp(findings = []) {
   const owaspMap = {};
+  const dedupedFindings = deduplicateFindings(findings);
 
-  for (const finding of findings) {
+  for (const finding of dedupedFindings) {
     const findingTags = extractFindingTags(finding);
+    const title = normalizeText(finding.title);
     const description = normalizeText(finding.description);
 
     for (const [code, owasp] of Object.entries(OWASP_TOP_10_2021)) {
-      const matched = owasp.tags.some(
-        (tag) => findingTags.includes(tag) || description.includes(tag)
-      );
+      const matched = owasp.tags.some((tag) => {
+        const normalizedTag = normalizeText(tag);
+        if (findingTags.includes(normalizedTag)) {
+          return true;
+        }
+        if (normalizedTag.length <= 4) {
+          return false;
+        }
+        return title.includes(normalizedTag) || description.includes(normalizedTag);
+      });
       if (!matched) {
         continue;
       }
@@ -127,11 +150,12 @@ function mapFindingsToOwasp(findings = []) {
 }
 
 function computeOverallCvssScore(findings = []) {
-  if (!Array.isArray(findings) || findings.length === 0) {
+  const dedupedFindings = deduplicateFindings(findings);
+  if (!Array.isArray(dedupedFindings) || dedupedFindings.length === 0) {
     return 0;
   }
 
-  const scores = findings
+  const scores = dedupedFindings
     .map((finding) => {
       if (typeof finding.cvssScore === "number") {
         return finding.cvssScore;
@@ -148,10 +172,8 @@ function computeOverallCvssScore(findings = []) {
   }
 
   const maxScore = Math.max(...scores);
-  const avgScore =
-    scores.reduce((acc, value) => acc + value, 0) / Math.max(scores.length, 1);
-  const blended = maxScore * 0.7 + avgScore * 0.3;
-  return Number(Math.min(10, blended).toFixed(2));
+  const modifier = maxScore >= 7 ? 1.05 : 1.0;
+  return Number(Math.min(10, maxScore * modifier).toFixed(1));
 }
 
 function scoreToSeverity(score) {
@@ -205,4 +227,3 @@ module.exports = {
   generateComplianceSummary,
   extractFindingTags
 };
-

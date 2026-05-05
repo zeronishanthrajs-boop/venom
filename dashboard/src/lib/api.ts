@@ -92,6 +92,7 @@ export type ChainExecutionResult = {
   findings: number;
   jobId: string;
   durationMs: number;
+  errorMessage?: string;
 };
 
 export type ChainRunResponse = {
@@ -104,7 +105,16 @@ export type ChainRunResponse = {
   haltedAt?: {
     step: number;
     reason: string;
+    haltCode?: string;
+    haltReason?: string;
   } | null;
+  chainStatus?: {
+    executedSteps: number;
+    totalSteps: number;
+    haltedAtStep: number | null;
+    haltReason: string | null;
+    haltCode: string | null;
+  };
   chainResults: ChainExecutionResult[];
 };
 
@@ -219,6 +229,7 @@ export type AlertItem = {
   severity: "critical" | "high" | "medium" | "low";
   title: string;
   message: string;
+  count?: number;
 };
 
 export type AlertsResponse = {
@@ -377,7 +388,7 @@ export type ResearchSourceResult = {
   error?: string;
 };
 
-export type ResearchRunResponse = {
+export type ResearchRunResult = {
   runId: string;
   trigger: "manual" | "cron" | "startup";
   sourcesChecked: number;
@@ -388,6 +399,13 @@ export type ResearchRunResponse = {
   sourceResults: ResearchSourceResult[];
   errors: string[];
 };
+
+export type ResearchRunTriggered = {
+  status: "triggered";
+  message: string;
+};
+
+export type ResearchRunResponse = ResearchRunResult | ResearchRunTriggered;
 
 export type ResearchLogEntry = {
   _id: string;

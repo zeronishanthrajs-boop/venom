@@ -2,6 +2,7 @@ const express = require("express");
 const Engagement = require("../models/Engagement");
 const ExecutionJob = require("../models/ExecutionJob");
 const requireDb = require("../middleware/requireDb");
+const { deduplicateFindings } = require("../utils/deduplicateFindings");
 const {
   generateComplianceSummary
 } = require("../services/complianceMapper");
@@ -35,7 +36,7 @@ router.get("/:engagementId", requireDb, async (req, res, next) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    const findings = flattenFindingsFromJobs(jobs);
+    const findings = deduplicateFindings(flattenFindingsFromJobs(jobs));
     const summary = generateComplianceSummary(findings);
 
     return res.status(200).json({
@@ -56,4 +57,3 @@ router.get("/:engagementId", requireDb, async (req, res, next) => {
 });
 
 module.exports = router;
-

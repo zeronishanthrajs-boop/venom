@@ -1683,3 +1683,82 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 ### Remaining strategy note
 - Kill switch and decision layers are production-capable now.
 - For scale hardening, next increment is shared-state revocation + kill switch cache invalidation across multi-instance deployments.
+
+---
+
+## [2026-05-05 02:12:20 +05:30] - Audit Fix Prompt Execution (Critical + High + Quick)
+
+**Status:** Completed with full validation pass
+
+### Fix coverage
+1. Finding deduplication (critical):
+- Added `backend/utils/deduplicateFindings.js`.
+- Applied dedup in:
+  - `backend/services/reportGenerator.js`
+  - `backend/services/metricsEngine.js`
+  - `backend/routes/compliance.js`
+- Outcome: duplicate CSP/header findings are now collapsed with repeat `count`.
+
+2. Auto decision brief after probe:
+- Added automatic non-blocking trigger in `backend/services/executionService.js` after job completion.
+- Updated `backend/services/decisionEngine.js` to upsert per engagement (no duplicate brief rows).
+
+3. Auto snapshot after individual probe:
+- Added automatic non-blocking `createSnapshot(..., "post-probe")` in `backend/services/executionService.js`.
+- Updated snapshot enum in `backend/models/SecurityBaseline.js` to include `post-probe` and `post-deploy`.
+
+4. Engagement status transition:
+- Added automatic transition on probe execution path:
+  - `draft -> running` in `backend/services/executionService.js`.
+- Note: model status enum uses `running` (not `active`), so this is the schema-safe equivalent.
+
+5. Chain halt reason surfaced:
+- Added halt code + human-readable halt reason mapping in `backend/services/chainEngine.js`.
+- Persisted chain status into `ExecutionJob.output.chainStatus`.
+- Dashboard now renders readable halt text instead of raw internal token.
+
+6. Research cycle trigger reliability:
+- Updated `backend/routes/research.js`:
+  - supports async background trigger (`202 triggered`)
+  - optional sync mode via `waitForCompletion=true`.
+- Dashboard handler updated to support both response shapes and auto-refresh.
+
+7. Prompt evolution wiring hardening:
+- Added alias route `backend/routes/evolve.js` and mounted in `backend/server.js` as `/api/evolve`.
+- Added baseline prompt bootstrap in `backend/services/promptEvolver.js` so active prompt list no longer stays empty when DB has no prompt rows.
+
+8. OWASP mapping correction:
+- Tightened mapping rules in `backend/services/complianceMapper.js`.
+- Removed over-broad A03/A04 matching; CSP/header issues now map to A05 signals.
+- Added dedup usage inside mapper for stable category counts.
+
+9. Nikto typo:
+- Verified dashboard label is `Run Nikto` (no `Run Mikto` remains).
+
+10. Duplicate alert grouping in UI:
+- Added grouped alerts aggregation in `dashboard/src/app/dashboard/page.tsx`.
+- Added display count badge (`xN`) for repeated identical alerts.
+
+11. CVSS deflation for low-signal findings:
+- Updated `computeOverallCvssScore()` in `backend/services/complianceMapper.js`:
+  - no inflation for low/medium-only cases
+  - environmental multiplier only applies when max CVSS >= 7.0.
+
+12. Technical view cleanup:
+- Removed raw JSON dumps from forensic panel in `dashboard/src/app/dashboard/page.tsx`.
+- Replaced with structured plan/probe/header/DNS/TLS summaries and bounded response preview.
+
+### Verification executed
+- `cd backend && npm test` -> **PASS** (`49/49`)
+- `cd dashboard && npm run lint` -> **PASS**
+- `cd dashboard && npm run build` -> **PASS**
+- Runtime smoke:
+  - `GET http://localhost:5000/health` -> `200`, DB connected (`source: external-uri`).
+
+### Additional audit notes
+- `backend/routes/evolve.js` added as compatibility route (`/api/evolve/prompts` + `/api/evolve/prompts/history`) while existing `/api/prompts/*` remains intact.
+- Alerts and compliance now operate on deduplicated findings to prevent inflation cascades.
+
+### Open item (not changed in this patch)
+- PDF generation stack remains `PDFKit` in `backend/services/reportGenerator.js`.
+- If required, next patch can migrate report rendering to HTML template + Puppeteer/Playwright with identical report schema.

@@ -67,6 +67,10 @@ const emptyForm: CreateEngagementInput = {
   targetType: "website"
 };
 
+type GroupedAlert = AlertItem & {
+  count: number;
+};
+
 function formatDate(value?: string) {
   if (!value) {
     return "Unknown";
@@ -144,6 +148,24 @@ function getAlertTone(severity: AlertItem["severity"]) {
     default:
       return "border-cyan-500/45 bg-cyan-500/10";
   }
+}
+
+function buildAlertKey(alert: AlertItem) {
+  const title = String(alert.title || "").trim().toLowerCase();
+  const message = String(alert.message || "").trim().toLowerCase();
+  return `${title}::${message}`;
+}
+
+function formatChainHaltMessage(
+  chainSummary: ChainRunResponse | null | undefined
+) {
+  if (!chainSummary?.haltedAt) {
+    return "";
+  }
+  const haltReason =
+    (chainSummary.haltedAt as { haltReason?: string })?.haltReason ||
+    chainSummary.haltedAt.reason;
+  return haltReason || "";
 }
 
 function triggerBlobDownload(blob: Blob, fileName: string) {
@@ -420,11 +442,19 @@ export default function DashboardPage() {
     setMessage("");
     try {
       const result = await triggerResearchCycle(session);
-      setMessage(
-        `Research cycle complete: ${result.newPatternsCreated} new pattern(s), ${result.updatedPatterns} updated.`
-      );
-      await loadWeek12Ops(session);
-      await loadWeek11ControlPlane(session);
+      if ("message" in result) {
+        setMessage(`Research cycle: ${result.message}`);
+        setTimeout(() => {
+          void loadWeek12Ops(session);
+          void loadWeek11ControlPlane(session);
+        }, 6000);
+      } else {
+        setMessage(
+          `Research cycle complete: ${result.newPatternsCreated} new pattern(s), ${result.updatedPatterns} updated.`
+        );
+        await loadWeek12Ops(session);
+        await loadWeek11ControlPlane(session);
+      }
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -580,12 +610,48 @@ export default function DashboardPage() {
   const alertSeverityCounts = useMemo(() => {
     return alerts.reduce(
       (acc, alert) => {
-        acc.total += 1;
-        acc[alert.severity] += 1;
+        const increment = Math.max(1, Number((alert as AlertItem & { count?: number }).count || 1));
+        acc.total += increment;
+        acc[alert.severity] += increment;
         return acc;
       },
       { total: 0, critical: 0, high: 0, medium: 0, low: 0 }
     );
+  }, [alerts]);
+  const groupedAlerts = useMemo<GroupedAlert[]>(() => {
+    const grouped = alerts.reduce((acc, alert) => {
+      const key = buildAlertKey(alert);
+      const existing = acc.get(key);
+      const baseCount = Math.max(
+        1,
+        Number((alert as AlertItem & { count?: number }).count || 1)
+      );
+      if (!existing) {
+        acc.set(key, {
+          ...alert,
+          count: baseCount
+        });
+      } else {
+        existing.count += baseCount;
+        acc.set(key, existing);
+      }
+      return acc;
+    }, new Map<string, GroupedAlert>());
+
+    return [...grouped.values()].sort((left, right) => {
+      const severityWeight: Record<string, number> = {
+        critical: 4,
+        high: 3,
+        medium: 2,
+        low: 1
+      };
+      const sevDelta =
+        (severityWeight[right.severity] || 0) - (severityWeight[left.severity] || 0);
+      if (sevDelta !== 0) {
+        return sevDelta;
+      }
+      return right.count - left.count;
+    });
   }, [alerts]);
   const socketState = useVenomSocket(session, activeRealtimeEngagementId, {
     realtime_connected: () => {
@@ -1481,19 +1547,26 @@ export default function DashboardPage() {
               <p className="text-base font-semibold text-amber-200">{alertSeverityCounts.medium}</p>
             </article>
           </div>
-          {alerts.length === 0 ? (
+          {groupedAlerts.length === 0 ? (
             <p className="text-sm text-slate-400">No active alerts.</p>
           ) : (
             <div className="max-h-[460px] space-y-2 overflow-y-auto pr-1">
-              {alerts.map((alert) => {
+              {groupedAlerts.map((alert) => {
                 return (
                   <article
                     key={alert.id}
                     className={`rounded-xl border px-3 py-2 ${getAlertTone(alert.severity)}`}
                   >
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">
-                      {alert.severity}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">
+                        {alert.severity}
+                      </p>
+                      {alert.count > 1 ? (
+                        <span className="rounded-full bg-slate-700 px-2 py-0.5 text-[11px] text-slate-300">
+                          x{alert.count}
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="font-medium text-slate-100">{alert.title}</p>
                     <p className="text-sm text-slate-300">{alert.message}</p>
                   </article>
@@ -1552,18 +1625,12 @@ export default function DashboardPage() {
                   report?.executionJobs?.find(
                     (job) => job.toolId === "tls_metadata_probe"
                   ) || null;
-                const nmapJob =
-                  report?.executionJobs?.find((job) => job.toolId === "nmap_tcp_scan") ||
-                  null;
-                const nucleiJob =
-                  report?.executionJobs?.find((job) => job.toolId === "nuclei_scan") ||
-                  null;
-                const niktoJob =
-                  report?.executionJobs?.find((job) => job.toolId === "nikto_scan") ||
-                  null;
-                const sqlmapJob =
-                  report?.executionJobs?.find((job) => job.toolId === "sqlmap_detect") ||
-                  null;
+                const headersOutput = (headersProbeJob?.output || {}) as Record<
+                  string,
+                  unknown
+                >;
+                const dnsOutput = (dnsProbeJob?.output || {}) as Record<string, unknown>;
+                const tlsOutput = (tlsProbeJob?.output || {}) as Record<string, unknown>;
                 const compliance =
                   complianceByEngagement[engagement._id] || null;
                 const chainSummary = chainSummaryByEngagement[engagement._id] || null;
@@ -1871,13 +1938,25 @@ export default function DashboardPage() {
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
                               Week 10 Chain Status
                             </p>
-                            <p className="mt-1 text-slate-200">
-                              Source {chainSummary.source} | Executed{" "}
-                              {chainSummary.stepsExecuted}/{chainSummary.stepsPlanned}
-                              {chainSummary.haltedAt
-                                ? ` | Halted at step ${chainSummary.haltedAt.step} (${chainSummary.haltedAt.reason})`
-                                : ""}
-                            </p>
+                            <div className="mt-1 text-sm">
+                              <span className="text-emerald-300">
+                                Executed {chainSummary.stepsExecuted}/
+                                {chainSummary.stepsPlanned}
+                              </span>
+                              {chainSummary.haltedAt ? (
+                                <span className="ml-2 text-amber-300">
+                                  Step {chainSummary.haltedAt.step} halted
+                                </span>
+                              ) : null}
+                              <span className="ml-2 text-slate-300">
+                                Source {chainSummary.source}
+                              </span>
+                            </div>
+                            {formatChainHaltMessage(chainSummary) ? (
+                              <p className="mt-1 text-xs text-slate-400">
+                                {formatChainHaltMessage(chainSummary)}
+                              </p>
+                            ) : null}
                           </div>
                         ) : (
                           <p className="text-slate-400">
@@ -1904,14 +1983,57 @@ export default function DashboardPage() {
                           </p>
                         )}
 
+                        {latestPlan ? (
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                              Latest Plan
+                            </p>
+                            <p className="mt-1 text-xs text-slate-200">
+                              Source: {latestPlan.plannerSource || "template"} | Prompt:{" "}
+                              {latestPlan.promptVersion || "v1"}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-300">
+                              {latestPlan.summary || "No plan summary available."}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="text-slate-400">No plan metadata available yet.</p>
+                        )}
+
                         {latestExecution ? (
                           <div>
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
-                              Latest Execution Metadata
+                              Latest Probe Output
                             </p>
-                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
-                              {JSON.stringify(latestExecution, null, 2)}
-                            </pre>
+                            <p className="mt-1 text-xs text-slate-200">
+                              Tool: {latestExecution.toolId} | Status: {latestExecution.status} |
+                              Duration: {Math.round((latestExecution.durationMs || 0) / 1000)}s
+                            </p>
+                            <p className="mt-1 text-xs text-slate-300">
+                              Finished: {formatDate(latestExecution.finishedAt)}
+                            </p>
+                            {latestExecution.output?.technologyFingerprint ? (
+                              <p className="mt-1 text-xs text-slate-300">
+                                Stack: {String(latestExecution.output.technologyFingerprint)}
+                              </p>
+                            ) : null}
+                            {Array.isArray(latestExecution.findings) &&
+                            latestExecution.findings.length > 0 ? (
+                              <div className="mt-2 space-y-1">
+                                {latestExecution.findings.slice(0, 3).map((finding, index) => (
+                                  <p key={`${finding.title}-${index}`} className="text-xs text-slate-300">
+                                    [{String(finding.severity || "info").toUpperCase()}]{" "}
+                                    {finding.title || "Untitled finding"}
+                                  </p>
+                                ))}
+                              </div>
+                            ) : null}
+                            {typeof latestExecution.output?.responseBodyPreview === "string" &&
+                            latestExecution.output.responseBodyPreview ? (
+                              <pre className="mt-2 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2 text-[11px] text-emerald-300">
+                                {latestExecution.output.responseBodyPreview.slice(0, 500)}
+                              </pre>
+                            ) : null}
                           </div>
                         ) : (
                           <p className="text-slate-400">
@@ -1922,92 +2044,62 @@ export default function DashboardPage() {
                         {headersProbeJob?.output ? (
                           <div>
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
-                              HTTP Response Body + Header Forensics
+                              HTTP Header Summary
                             </p>
-                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
-                              {JSON.stringify(headersProbeJob.output, null, 2)}
-                            </pre>
+                            <p className="mt-1 text-xs text-slate-300">
+                              Status {String(headersOutput.httpStatus || "n/a")} | Missing
+                              Headers:{" "}
+                              {Array.isArray(headersOutput.missingRecommendedHeaders)
+                                ? headersOutput.missingRecommendedHeaders
+                                    .map((item) => String(item))
+                                    .join(", ") || "none"
+                                : "none"}
+                            </p>
                           </div>
                         ) : null}
 
                         {dnsProbeJob?.output ? (
                           <div>
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
-                              DNS Record Forensics
+                              DNS Summary
                             </p>
-                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
-                              {JSON.stringify(dnsProbeJob.output, null, 2)}
-                            </pre>
+                            <p className="mt-1 text-xs text-slate-300">
+                              Host: {String(dnsOutput.targetHost || "n/a")} | A Records:{" "}
+                              {Array.isArray(dnsOutput.resolve4)
+                                ? dnsOutput.resolve4.length
+                                : 0}{" "}
+                              | AAAA Records:{" "}
+                              {Array.isArray(dnsOutput.resolve6)
+                                ? dnsOutput.resolve6.length
+                                : 0}
+                            </p>
                           </div>
                         ) : null}
 
                         {tlsProbeJob?.output ? (
                           <div>
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
-                              SSL/TLS Certificate Chain Forensics
+                              TLS Summary
                             </p>
-                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
-                              {JSON.stringify(tlsProbeJob.output, null, 2)}
-                            </pre>
+                            <p className="mt-1 text-xs text-slate-300">
+                              Protocol: {String(tlsOutput.protocol || "n/a")} | Cipher:{" "}
+                              {String(
+                                ((tlsOutput.cipher || {}) as { name?: string }).name ||
+                                  "n/a"
+                              )}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-300">
+                              Cert issuer:{" "}
+                              {String(
+                                (((tlsOutput.certificate || {}) as { issuer?: { O?: string; CN?: string } }).issuer
+                                  ?.O ||
+                                  ((tlsOutput.certificate || {}) as { issuer?: { O?: string; CN?: string } }).issuer
+                                    ?.CN ||
+                                  "n/a")
+                              )}
+                            </p>
                           </div>
                         ) : null}
-
-                        {nmapJob?.output ? (
-                          <div>
-                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
-                              Nmap TCP Scan Output
-                            </p>
-                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
-                              {JSON.stringify(nmapJob.output, null, 2)}
-                            </pre>
-                          </div>
-                        ) : null}
-
-                        {nucleiJob?.output ? (
-                          <div>
-                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
-                              Nuclei Scan Output
-                            </p>
-                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
-                              {JSON.stringify(nucleiJob.output, null, 2)}
-                            </pre>
-                          </div>
-                        ) : null}
-
-                        {niktoJob?.output ? (
-                          <div>
-                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
-                              Nikto Scan Output
-                            </p>
-                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
-                              {JSON.stringify(niktoJob.output, null, 2)}
-                            </pre>
-                          </div>
-                        ) : null}
-
-                        {sqlmapJob?.output ? (
-                          <div>
-                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
-                              SQLMap Detection Output
-                            </p>
-                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
-                              {JSON.stringify(sqlmapJob.output, null, 2)}
-                            </pre>
-                          </div>
-                        ) : null}
-
-                        {latestPlan ? (
-                          <div>
-                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
-                              Latest Plan Metadata
-                            </p>
-                            <pre className="mt-1 max-h-56 w-full max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-900 p-2">
-                              {JSON.stringify(latestPlan, null, 2)}
-                            </pre>
-                          </div>
-                        ) : (
-                          <p className="text-slate-400">No plan metadata available yet.</p>
-                        )}
 
                         <DecisionBriefPanel
                           session={session}
@@ -2096,6 +2188,12 @@ export default function DashboardPage() {
                               {chainSummary.stepsExecuted}/{chainSummary.stepsPlanned} via{" "}
                               {chainSummary.source}
                             </span>
+                            {formatChainHaltMessage(chainSummary) ? (
+                              <span className="font-medium text-amber-300">
+                                {" "}
+                                | {formatChainHaltMessage(chainSummary)}
+                              </span>
+                            ) : null}
                           </p>
                         ) : null}
                         {evidenceStatus ? (

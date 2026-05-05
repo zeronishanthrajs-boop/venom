@@ -15,6 +15,18 @@ const SAFE_CHAIN_TOOL_IDS = [
   "sqlmap_detect"
 ];
 
+const HALT_REASON_MAP = {
+  scope_violation:
+    "Blocked - target URL is outside the authorized domain scope.",
+  docker_disabled:
+    "Blocked - this tool requires Docker, which is not enabled on this server.",
+  timeout: "Blocked - tool execution exceeded the timeout limit.",
+  auth_expired: "Blocked - engagement authorization window has expired.",
+  tool_not_found: "Blocked - requested tool is not registered in the tool registry.",
+  step_failed_or_timed_out: "Blocked - a required step failed or timed out.",
+  default: "Blocked - runtime error during execution. Check server logs for detail."
+};
+
 function createHttpError(statusCode, message) {
   const error = new Error(message);
   error.httpStatus = statusCode;
@@ -125,6 +137,56 @@ function flattenHistoricalFindings(jobs) {
   return jobs.flatMap((job) =>
     Array.isArray(job.findings) ? job.findings : Array.isArray(job.output?.findings) ? job.output.findings : []
   );
+}
+
+function inferHaltCode(jobResult) {
+  const status = String(jobResult?.status || "").toLowerCase();
+  const errorMessage = String(jobResult?.errorMessage || "").toLowerCase();
+
+  if (status === "timeout") {
+    return "timeout";
+  }
+  if (/outside the authorized|alloweddomains|restricted by/.test(errorMessage)) {
+    return "scope_violation";
+  }
+  if (/docker/.test(errorMessage)) {
+    return "docker_disabled";
+  }
+  if (/expired authorization/.test(errorMessage)) {
+    return "auth_expired";
+  }
+  if (/unknown toolid|unsupported tool|no executor registered/.test(errorMessage)) {
+    return "tool_not_found";
+  }
+  if (status === "failed" || status === "blocked") {
+    return "step_failed_or_timed_out";
+  }
+  return "default";
+}
+
+function describeHaltReason(code) {
+  return HALT_REASON_MAP[code] || HALT_REASON_MAP.default;
+}
+
+function inferHaltCodeFromError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  if (error?.httpStatus === 403 && /authorization/.test(message)) {
+    return "auth_expired";
+  }
+  if (
+    error?.httpStatus === 403 &&
+    (/outside the authorized|alloweddomains|restricted by/.test(message) ||
+      /scope/.test(message))
+  ) {
+    return "scope_violation";
+  }
+  if (/docker/.test(message)) {
+    return "docker_disabled";
+  }
+  if (/unknown toolid|unsupported tool|no executor registered/.test(message)) {
+    return "tool_not_found";
+  }
+  return "default";
 }
 
 async function tryClaudeChainPlan(engagement, findings) {
@@ -252,12 +314,36 @@ async function runExploitationChain({
   let haltedAt = null;
 
   for (const step of steps) {
-    const result = await executeEngagementTool({
-      engagementId: String(engagement._id),
-      toolId: step.toolId,
-      requestedTargetUrl: engagement.targetUrl,
-      userId: createdBy
-    });
+    let result;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      result = await executeEngagementTool({
+        engagementId: String(engagement._id),
+        toolId: step.toolId,
+        requestedTargetUrl: engagement.targetUrl,
+        userId: createdBy
+      });
+    } catch (error) {
+      const haltCode = inferHaltCodeFromError(error);
+      haltedAt = {
+        step: step.step,
+        reason: haltCode,
+        haltCode,
+        haltReason: describeHaltReason(haltCode)
+      };
+      chainResults.push({
+        step: step.step,
+        toolId: step.toolId,
+        name: step.name,
+        rationale: step.rationale,
+        status: "blocked",
+        findings: 0,
+        jobId: "",
+        durationMs: 0,
+        errorMessage: error?.message || "Chain step failed before execution."
+      });
+      break;
+    }
 
     chainResults.push({
       step: step.step,
@@ -267,13 +353,17 @@ async function runExploitationChain({
       status: result.job.status,
       findings: Array.isArray(result.job.findings) ? result.job.findings.length : 0,
       jobId: result.job._id,
-      durationMs: result.job.durationMs || 0
+      durationMs: result.job.durationMs || 0,
+      errorMessage: result.job.errorMessage || ""
     });
 
     if (result.job.status === "blocked") {
+      const haltCode = inferHaltCode(result.job);
       haltedAt = {
         step: step.step,
-        reason: "blocked_by_constraints_or_runtime"
+        reason: haltCode,
+        haltCode,
+        haltReason: describeHaltReason(haltCode)
       };
       break;
     }
@@ -282,12 +372,42 @@ async function runExploitationChain({
       (result.job.status === "failed" || result.job.status === "timeout") &&
       !step.continueOnFailure
     ) {
+      const haltCode = inferHaltCode(result.job);
       haltedAt = {
         step: step.step,
-        reason: "step_failed_or_timed_out"
+        reason: haltCode,
+        haltCode,
+        haltReason: describeHaltReason(haltCode)
       };
       break;
     }
+  }
+
+  const chainStatus = {
+    executedSteps: chainResults.length,
+    totalSteps: steps.length,
+    haltedAtStep: haltedAt?.step || null,
+    haltReason: haltedAt?.haltReason || null,
+    haltCode: haltedAt?.haltCode || null
+  };
+
+  const persistedJobIds = chainResults
+    .map((item) => item.jobId)
+    .filter((id) => Boolean(id));
+
+  if (persistedJobIds.length > 0) {
+    await ExecutionJob.updateMany(
+      {
+        _id: {
+          $in: persistedJobIds
+        }
+      },
+      {
+        $set: {
+          "output.chainStatus": chainStatus
+        }
+      }
+    );
   }
 
   return {
@@ -297,7 +417,8 @@ async function runExploitationChain({
     stepsPlanned: steps.length,
     stepsExecuted: chainResults.length,
     haltedAt,
-    chainResults
+    chainResults,
+    chainStatus
   };
 }
 

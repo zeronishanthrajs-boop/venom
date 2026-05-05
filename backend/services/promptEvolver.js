@@ -322,7 +322,57 @@ async function getPromptHistory({ promptType, limit = 50 } = {}) {
     .lean();
 }
 
+async function ensureActivePromptBaselines() {
+  const existingActiveCount = await PromptVersion.countDocuments({
+    isActive: true,
+    promptType: { $in: SUPPORTED_PROMPT_TYPES }
+  });
+  if (existingActiveCount > 0) {
+    return;
+  }
+
+  const createdAtToken = timestampToken();
+  for (const promptType of SUPPORTED_PROMPT_TYPES) {
+    // eslint-disable-next-line no-await-in-loop
+    const resolved = await resolvePromptContent(promptType);
+    const content = String(resolved?.content || "").trim();
+    if (!content) {
+      continue;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    await PromptVersion.findOneAndUpdate(
+      {
+        promptType,
+        version: `${promptType}_baseline_${createdAtToken}`
+      },
+      {
+        $set: {
+          content,
+          parentVersion: "base",
+          evolutionReason: "Baseline prompt imported from file source.",
+          performanceMetrics: {
+            avgFindingsPerEngagement: 0,
+            avgPlanQualityScore: 0,
+            totalEngagementsUsed: 0,
+            successRate: 0
+          },
+          isActive: true,
+          createdByAI: false,
+          createdBy: "venom-bootstrap"
+        }
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true
+      }
+    );
+  }
+}
+
 async function getActivePrompts() {
+  await ensureActivePromptBaselines();
   return PromptVersion.find({ isActive: true })
     .sort({ promptType: 1, createdAt: -1 })
     .lean();

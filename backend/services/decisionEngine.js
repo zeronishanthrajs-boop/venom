@@ -336,21 +336,31 @@ async function generateDecisionBrief(engagementId) {
 
   const findings = flattenFindingsFromJobs(jobs);
   if (findings.length === 0) {
-    const emptyBrief = await DecisionBrief.create({
-      engagementId,
-      topRisks: [],
-      ignoreList: [],
-      overallRiskSentence: "No findings yet. Run scans first.",
-      riskLevel: "clean",
-      shouldPageOnCall: false,
-      riskScore: 0,
-      totalFindings: 0,
-      actionableFindings: 0,
-      ignoredFindings: 0,
-      source: "heuristic",
-      generatedAt: new Date()
-    });
-    return emptyBrief.toObject();
+    const generatedAt = new Date();
+    const emptyBrief = await DecisionBrief.findOneAndUpdate(
+      { engagementId },
+      {
+        $set: {
+          topRisks: [],
+          ignoreList: [],
+          overallRiskSentence: "No findings yet. Run scans first.",
+          riskLevel: "clean",
+          shouldPageOnCall: false,
+          riskScore: 0,
+          totalFindings: 0,
+          actionableFindings: 0,
+          ignoredFindings: 0,
+          source: "heuristic",
+          generatedAt
+        }
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true
+      }
+    ).lean();
+    return emptyBrief;
   }
 
   const scored = findings
@@ -383,22 +393,32 @@ async function generateDecisionBrief(engagementId) {
     String(claude?.overallRiskSentence || "").trim() ||
     heuristic.overallRiskSentence;
 
-  const brief = await DecisionBrief.create({
-    engagementId,
-    topRisks,
-    ignoreList,
-    overallRiskSentence,
-    riskLevel,
-    shouldPageOnCall: Boolean(claude?.shouldPageOnCall ?? heuristic.shouldPageOnCall),
-    riskScore: heuristic.riskScore,
-    totalFindings: findings.length,
-    actionableFindings: heuristic.actionableCount,
-    ignoredFindings: heuristic.ignoredCount,
-    source: claude ? "claude" : "heuristic",
-    generatedAt: new Date()
-  });
+  const generatedAt = new Date();
+  const brief = await DecisionBrief.findOneAndUpdate(
+    { engagementId },
+    {
+      $set: {
+        topRisks,
+        ignoreList,
+        overallRiskSentence,
+        riskLevel,
+        shouldPageOnCall: Boolean(claude?.shouldPageOnCall ?? heuristic.shouldPageOnCall),
+        riskScore: heuristic.riskScore,
+        totalFindings: findings.length,
+        actionableFindings: heuristic.actionableCount,
+        ignoredFindings: heuristic.ignoredCount,
+        source: claude ? "claude" : "heuristic",
+        generatedAt
+      }
+    },
+    {
+      upsert: true,
+      new: true,
+      setDefaultsOnInsert: true
+    }
+  ).lean();
 
-  return brief.toObject();
+  return brief;
 }
 
 async function getLatestDecisionBrief(engagementId) {
@@ -422,4 +442,3 @@ module.exports = {
     flattenFindingsFromJobs
   }
 };
-
