@@ -38,6 +38,7 @@ router.post("/", requireDb, async (req, res, next) => {
       promptVersion: result.promptVersion,
       plannerSource: result.source,
       model: result.model,
+      fallbackReason: result.fallbackReason || "",
       summary: result.plan.summary,
       phases: result.plan.phases,
       riskNotes: result.plan.riskNotes,

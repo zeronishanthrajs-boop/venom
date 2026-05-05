@@ -2022,3 +2022,53 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - Research cycles now persist logs even on error paths.
 - OWASP/CVSS behavior aligns with latest audit requirements.
 - PDF report pipeline upgraded to template-driven Puppeteer output.
+
+---
+
+## [2026-05-05 15:16:38 +05:30] - Targeted Fix v4.0 (PDF + Probe Quality + Planner Diagnostics)
+
+**Status:** Implemented and validated locally
+
+### Scope completed
+1. PDF pipeline hardened for cloud runtimes.
+2. HTTP headers probe findings enriched (tags + CVSS + exploitation context).
+3. Translation sync hardened for both `findings` and `output.findings`.
+4. Planner diagnostics added with explicit fallback reason propagation.
+5. Dashboard report download flow now auto-falls back to Markdown when PDF fails.
+6. Dashboard now surfaces planner source and fallback reason in engagement cards.
+
+### Files modified
+- `backend/services/reportGenerator.js`
+- `backend/routes/reports.js`
+- `backend/tooling/vulnerabilityFeed.js`
+- `backend/services/executionService.js`
+- `backend/services/planner.js`
+- `backend/models/Plan.js`
+- `backend/routes/plan.js`
+- `dashboard/src/lib/api.ts`
+- `dashboard/src/app/dashboard/page.tsx`
+- `backend/package.json`
+- `backend/package-lock.json`
+
+### Package changes
+- Removed: `puppeteer`
+- Added: `puppeteer-core`, `@sparticuz/chromium`
+
+### Verification results
+- Backend tests: `npm test` -> **PASS** (`50/50`)
+- Dashboard lint: `npm run lint` -> **PASS**
+- Dashboard build: `npm run build` -> **PASS**
+
+### Runtime smoke snapshot (local)
+- `http_headers_probe` finding now includes:
+  - `tags`: `["csp","headers","misconfiguration"]`
+  - `cvssScore`: `5.4`
+- Translation persistence:
+  - `findings[0].translations.founder` populated
+  - `output.findings[0].translations.founder` populated
+- Planner output now carries explicit fallback metadata when Claude key is unavailable:
+  - `plannerSource: "template"`
+  - `fallbackReason: "CLAUDE_API_KEY is not configured"`
+- Report endpoints:
+  - `GET /api/reports/:id/md` -> `200` (working fallback)
+  - `GET /api/reports/:id/pdf` -> local Windows test returned `500` due Chromium runtime mismatch; cloud-targeted Chromium path now in place for Render deployment.

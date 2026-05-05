@@ -150,18 +150,18 @@ async function executeEngagementTool({
     const output = toCamelCaseDeep(await runTool(toolId, targetUrl));
     job.status = "success";
     job.output = output;
-    job.findings = Array.isArray(output?.findings) ? output.findings : [];
+    const rawFindings = Array.isArray(output?.findings) ? output.findings : [];
+    job.findings = rawFindings;
     if (
       process.env.TRANSLATE_FINDINGS_ON_COMPLETE !== "false" &&
       job.findings.length > 0
     ) {
-      const translatedFindings = await translateAllFindings(job.findings).catch(
-        () => job.findings
-      );
+      const translatedFindings = await translateAllFindings(rawFindings).catch(() => rawFindings);
       job.findings = translatedFindings;
-      if (job.output && typeof job.output === "object") {
-        job.output.findings = translatedFindings;
+      if (!job.output || typeof job.output !== "object") {
+        job.output = {};
       }
+      job.output.findings = translatedFindings;
     }
     if (typeof output?.stdout === "string") {
       job.rawOutput = output.stdout;

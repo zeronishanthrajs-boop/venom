@@ -26,6 +26,7 @@ export type Plan = {
   promptVersion: string;
   plannerSource: "claude" | "claude-api" | "template";
   model: string;
+  fallbackReason?: string;
   summary: string;
   phases: Array<{
     name: string;
@@ -1037,6 +1038,28 @@ export async function downloadBackendPdfReport(
   }
 
   return response.blob();
+}
+
+export async function downloadBackendMarkdownReport(
+  session: VenomSession,
+  engagementId: string
+): Promise<string> {
+  const response = await apiFetch(
+    `/api/reports/${encodeURIComponent(engagementId)}/md`,
+    {
+      method: "GET",
+      headers: buildHeaders(session),
+      cache: "no-store"
+    },
+    45000
+  );
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throwApiError(response, payload);
+  }
+
+  return response.text();
 }
 
 export async function fetchPromptActive(

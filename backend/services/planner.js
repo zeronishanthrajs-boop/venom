@@ -281,7 +281,7 @@ async function callClaudePlanner(engagement, plannerContextInput) {
     return null;
   }
 
-  const model = process.env.CLAUDE_MODEL || "claude-3-5-sonnet-latest";
+  const model = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
   const [systemPromptSource, plannerContext] = await Promise.all([
     loadSystemPrompt(),
     plannerContextInput ? Promise.resolve(plannerContextInput) : loadPlannerContext(engagement)
@@ -394,19 +394,53 @@ Safety constraints:
 }
 
 async function generatePlanForEngagement(engagement) {
-  const hasClaudeKey = Boolean(process.env.CLAUDE_API_KEY);
+  const apiKeyRaw = process.env.CLAUDE_API_KEY || "";
+  const hasClaudeKey = Boolean(apiKeyRaw);
+  const keyPreview = hasClaudeKey
+    ? `${String(apiKeyRaw).slice(0, 10)}...`
+    : "NOT SET";
+  const plannerModel = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
   const strictPlanner = process.env.CLAUDE_PLANNER_STRICT === "true";
+  console.log("[Planner] Attempting plan generation:", {
+    hasApiKey: hasClaudeKey,
+    keyPreview,
+    model: plannerModel,
+    engagementId: String(engagement?._id || "")
+  });
+
   const plannerContext = await loadPlannerContext(engagement);
+  if (!hasClaudeKey) {
+    console.warn("[Planner] No CLAUDE_API_KEY - using template fallback.");
+    return {
+      source: "template",
+      model: "template-planner-v1",
+      promptVersion: PROMPT_VERSION,
+      fallbackReason: "CLAUDE_API_KEY is not configured",
+      plan: appendCveContextToTemplatePlan(
+        normalizePlan(templatePlan(engagement)),
+        plannerContext.recentCves
+      ),
+      rawModelOutput: ""
+    };
+  }
 
   const claudeResult = await callClaudePlanner(engagement, plannerContext).catch((error) => {
     if (hasClaudeKey && strictPlanner) {
       throw error;
     }
-    console.warn("Claude planner unavailable, using template:", error.message);
+    console.error("[Planner] Claude API FAILED:", error?.message || "Unknown error");
+    console.error("[Planner] Error type:", error?.constructor?.name || "Unknown");
+    console.error(
+      "[Planner] Status:",
+      error?.status || error?.statusCode || error?.code || "N/A"
+    );
+    console.error("[Planner] Full error:", JSON.stringify(error, null, 2));
+    console.warn("Claude planner unavailable, using template fallback.");
     return null;
   });
 
   if (claudeResult) {
+    console.log("[Planner] Claude API call succeeded.");
     return {
       ...claudeResult,
       promptVersion: claudeResult.promptVersion || PROMPT_VERSION
@@ -417,6 +451,7 @@ async function generatePlanForEngagement(engagement) {
     source: "template",
     model: "template-planner-v1",
     promptVersion: PROMPT_VERSION,
+    fallbackReason: "Claude API request failed; template fallback applied",
     plan: appendCveContextToTemplatePlan(
       normalizePlan(templatePlan(engagement)),
       plannerContext.recentCves

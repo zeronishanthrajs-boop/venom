@@ -13,6 +13,7 @@ import {
   fetchResearchLogs,
   orchestrateSingleEngagement,
   downloadBackendPdfReport,
+  downloadBackendMarkdownReport,
   deleteEngagement,
   emailBackendReport,
   fetchAlerts,
@@ -1123,7 +1124,6 @@ export default function DashboardPage() {
     setMessage("");
 
     try {
-      const blob = await downloadBackendPdfReport(session, engagementId);
       const engagementName =
         engagements.find((item) => item._id === engagementId)?.name ||
         "venom-engagement-report";
@@ -1132,14 +1132,30 @@ export default function DashboardPage() {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "");
-      triggerBlobDownload(blob, `${safeName || "venom-engagement"}-${engagementId}.pdf`);
-      setMessage("Backend PDF report downloaded successfully.");
+
+      try {
+        const blob = await downloadBackendPdfReport(session, engagementId);
+        triggerBlobDownload(
+          blob,
+          `${safeName || "venom-engagement"}-${engagementId}.pdf`
+        );
+        setMessage("Backend PDF report downloaded successfully.");
+      } catch (pdfError) {
+        console.warn("[Report] PDF failed. Falling back to markdown.", pdfError);
+        const markdown = await downloadBackendMarkdownReport(session, engagementId);
+        const mdBlob = new Blob([markdown], { type: "text/markdown" });
+        triggerBlobDownload(
+          mdBlob,
+          `${safeName || "venom-engagement"}-${engagementId}.md`
+        );
+        setMessage("PDF unavailable. Downloaded markdown fallback report.");
+      }
     } catch (requestError) {
-      setError(
+      const message =
         requestError instanceof Error
           ? requestError.message
-          : "Failed to download backend PDF report."
-      );
+          : "Failed to download report.";
+      setError(message);
     } finally {
       setDownloadingBackendPdfById((prev) => ({ ...prev, [engagementId]: false }));
     }
@@ -2186,7 +2202,23 @@ export default function DashboardPage() {
                             <p className="mt-1 text-xs text-slate-200">
                               Source: {latestPlan.plannerSource || "template"} | Prompt:{" "}
                               {latestPlan.promptVersion || "v1"}
+                              <span
+                                className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                  latestPlan.plannerSource === "claude-api"
+                                    ? "bg-emerald-900/70 text-emerald-300"
+                                    : "bg-rose-900/70 text-rose-200"
+                                }`}
+                              >
+                                {latestPlan.plannerSource === "claude-api"
+                                  ? "Claude API"
+                                  : "Template"}
+                              </span>
                             </p>
+                            {latestPlan.fallbackReason ? (
+                              <p className="mt-1 text-[11px] text-rose-300">
+                                Fallback reason: {latestPlan.fallbackReason}
+                              </p>
+                            ) : null}
                             <p className="mt-1 text-xs text-slate-300">
                               {latestPlan.summary || "No plan summary available."}
                             </p>
@@ -2336,6 +2368,22 @@ export default function DashboardPage() {
                           <p className="mt-2 text-xs text-slate-300">
                             Latest plan:{" "}
                             <span className="font-medium">{latestPlan.summary}</span>
+                            <span
+                              className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                latestPlan.plannerSource === "claude-api"
+                                  ? "bg-emerald-900/70 text-emerald-300"
+                                  : "bg-rose-900/70 text-rose-200"
+                              }`}
+                            >
+                              {latestPlan.plannerSource === "claude-api"
+                                ? "Claude API"
+                                : "Template"}
+                            </span>
+                            {latestPlan.fallbackReason ? (
+                              <span className="ml-2 text-rose-300">
+                                Fallback: {latestPlan.fallbackReason}
+                              </span>
+                            ) : null}
                           </p>
                         ) : null}
                         {latestExecution ? (

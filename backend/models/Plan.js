@@ -43,6 +43,10 @@ const planSchema = new mongoose.Schema(
       type: String,
       required: true
     },
+    fallbackReason: {
+      type: String,
+      default: ""
+    },
     summary: {
       type: String,
       default: ""

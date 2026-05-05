@@ -1,7 +1,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const puppeteer = require("puppeteer");
+const puppeteer = require("puppeteer-core");
+const chromium = require("@sparticuz/chromium");
 const handlebars = require("handlebars");
 const nodemailer = require("nodemailer");
 
@@ -32,11 +33,23 @@ const RISK_BANNER_COLOR = {
 
 function flattenFindings(jobs = []) {
   return jobs.flatMap((job) => {
-    if (Array.isArray(job.findings) && job.findings.length > 0) {
-      return job.findings;
+    const outputFindings = Array.isArray(job.output?.findings)
+      ? job.output.findings
+      : [];
+    const topFindings = Array.isArray(job.findings) ? job.findings : [];
+    if (outputFindings.length > 0) {
+      const outputHasTranslations = outputFindings.some(
+        (finding) =>
+          Boolean(finding?.translations?.founder) ||
+          Boolean(finding?.translations?.engineer) ||
+          Boolean(finding?.translations?.brief)
+      );
+      if (outputHasTranslations || topFindings.length === 0) {
+        return outputFindings;
+      }
     }
-    if (Array.isArray(job.output?.findings) && job.output.findings.length > 0) {
-      return job.output.findings;
+    if (topFindings.length > 0) {
+      return topFindings;
     }
     return [];
   });
@@ -262,22 +275,48 @@ async function renderPdfFromTemplate(templateData) {
   const template = handlebars.compile(templateHtml);
   const html = template(templateData);
 
-  const browser = await puppeteer.launch({
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-    headless: true
+  const PDF_TIMEOUT_MS = 45000;
+  const pdfPromise = (async () => {
+    let browser;
+    try {
+      const chromiumPath =
+        process.env.CHROMIUM_PATH || (await chromium.executablePath());
+      browser = await puppeteer.launch({
+        args: [
+          ...chromium.args,
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--single-process"
+        ],
+        defaultViewport: chromium.defaultViewport,
+        executablePath: chromiumPath,
+        headless: chromium.headless ?? true
+      });
+
+      const page = await browser.newPage();
+      await page.setContent(html, { waitUntil: "domcontentloaded" });
+      return await page.pdf({
+        format: "A4",
+        printBackground: true,
+        margin: { top: "0", right: "0", bottom: "0", left: "0" }
+      });
+    } finally {
+      if (browser) {
+        await browser.close().catch(() => {});
+      }
+    }
+  })();
+
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(
+      () => reject(new Error("PDF generation timed out after 45s")),
+      PDF_TIMEOUT_MS
+    );
   });
 
-  try {
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0" });
-    return await page.pdf({
-      format: "A4",
-      printBackground: true,
-      margin: { top: "0", right: "0", bottom: "0", left: "0" }
-    });
-  } finally {
-    await browser.close();
-  }
+  return Promise.race([pdfPromise, timeoutPromise]);
 }
 
 async function generatePdfReport(engagementId) {
