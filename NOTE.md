@@ -1933,3 +1933,27 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - `backend npm test` -> PASS (`50/50`)
 - `dashboard npm run lint` -> PASS
 - `dashboard npm run build` -> PASS
+
+---
+
+## [2026-05-05 11:32:02 +05:30] - Production Repair Calls Executed (Render)
+
+**Status:** Live backend repaired and confirmed
+
+### Deployment
+- Pushed commits to `main` and Render picked the new backend code.
+
+### Production admin fixes run
+- `POST /api/admin/fix-tool-whitelists` -> `updated: 4`
+  - Legacy engagements were upgraded from partial 4-tool whitelist to full 7-tool whitelist.
+- `POST /api/admin/fix-draft-statuses` -> `updated: 0`
+  - Verification shows no draft engagement in top 200 list; affected `zeroops` records are not draft.
+- `POST /api/admin/fix-orphaned-jobs` -> `cleaned: 0`
+  - Verification shows no orphaned `running`/`queued` jobs in top 200 engagements.
+
+### Live verification snapshot
+- `www.zeroops.in startup baseline` engagement records now have:
+  - `constraints.toolWhitelist` count = `7`
+  - includes: `http_headers_probe`, `tls_metadata_probe`, `dns_lookup_probe`, `nuclei_scan`, `nikto_scan`, `nmap_tcp_scan`, `sqlmap_detect`
+- Progress telemetry consistency:
+  - No active orphaned `running` jobs found in current dataset.
