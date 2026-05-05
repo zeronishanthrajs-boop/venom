@@ -77,7 +77,9 @@ async function markEngagementRunningIfDraft(engagementId) {
       status: "draft"
     },
     {
-      status: "running"
+      $set: {
+        status: "running"
+      }
     }
   );
 }

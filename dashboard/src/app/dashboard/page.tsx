@@ -163,16 +163,37 @@ function formatChainHaltMessage(
     haltCode?: string | null;
   } | null
 ) {
+  const HALT_REASON_TEXT: Record<string, string> = {
+    scope_violation: "Blocked - target URL is outside authorized scope.",
+    docker_disabled: "Blocked - Docker tools are disabled on this server.",
+    timeout: "Blocked - execution exceeded timeout budget.",
+    auth_expired: "Blocked - engagement authorization is expired.",
+    tool_not_found: "Blocked - required tool is unavailable.",
+    step_failed_or_timed_out: "Blocked - a prerequisite step failed or timed out."
+  };
   const haltReasonFromSummary =
     chainSummary?.haltedAt &&
     ((chainSummary.haltedAt as { haltReason?: string })?.haltReason ||
       chainSummary.haltedAt.reason);
-  const haltReason =
+  const rawHaltReason =
     haltReasonFromSummary ||
     executionChainStatus?.haltReason ||
     executionChainStatus?.haltCode ||
     "";
-  return haltReason || "";
+  const normalized = String(rawHaltReason || "").trim().toLowerCase();
+  return HALT_REASON_TEXT[normalized] || rawHaltReason || "";
+}
+
+function parseLegacyChainStatus(chainStatusText: string) {
+  const execMatch = chainStatusText.match(/Executed\s+(\d+)\/(\d+)/i);
+  const haltMatch =
+    chainStatusText.match(/Step\s+(\d+)\s+halted/i) ||
+    chainStatusText.match(/Halted at step\s+(\d+)/i);
+  return {
+    executedSteps: execMatch ? Number(execMatch[1]) : null,
+    totalSteps: execMatch ? Number(execMatch[2]) : null,
+    haltedAtStep: haltMatch ? Number(haltMatch[1]) : null
+  };
 }
 
 function triggerBlobDownload(blob: Blob, fileName: string) {
@@ -1641,18 +1662,27 @@ export default function DashboardPage() {
                 const compliance =
                   complianceByEngagement[engagement._id] || null;
                 const chainSummary = chainSummaryByEngagement[engagement._id] || null;
-                const executionChainStatus =
+                const executionChainStatusRaw =
                   latestExecution &&
                   latestExecution.output &&
                   typeof latestExecution.output === "object" &&
                   "chainStatus" in latestExecution.output
-                    ? (latestExecution.output.chainStatus as {
+                    ? (latestExecution.output.chainStatus as unknown)
+                    : null;
+                const executionChainStatus =
+                  executionChainStatusRaw &&
+                  typeof executionChainStatusRaw === "object"
+                    ? (executionChainStatusRaw as {
                         executedSteps?: number;
                         totalSteps?: number;
                         haltedAtStep?: number | null;
                         haltReason?: string | null;
                         haltCode?: string | null;
                       })
+                    : null;
+                const executionChainStatusText =
+                  typeof executionChainStatusRaw === "string"
+                    ? executionChainStatusRaw
                     : null;
                 const evidenceStatus = evidenceStatusByEngagement[engagement._id] || null;
 
@@ -1955,47 +1985,97 @@ export default function DashboardPage() {
                           </p>
                         )}
 
-                        {chainSummary || executionChainStatus ? (
+                        {chainSummary || executionChainStatusRaw ? (
                           <div>
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
                               Week 10 Chain Status
                             </p>
-                            <div className="mt-1 text-sm">
-                              <span className="text-emerald-300">
-                                Executed{" "}
-                                {chainSummary?.stepsExecuted ??
-                                  executionChainStatus?.executedSteps ??
-                                  0}
-                                /
-                                {chainSummary?.stepsPlanned ??
-                                  executionChainStatus?.totalSteps ??
-                                  0}
-                              </span>
-                              {(chainSummary?.haltedAt ||
-                                executionChainStatus?.haltedAtStep) ? (
-                                <span className="ml-2 text-amber-300">
-                                  Step{" "}
-                                  {chainSummary?.haltedAt?.step ??
-                                    executionChainStatus?.haltedAtStep ??
-                                    "n/a"}{" "}
-                                  halted
-                                </span>
-                              ) : null}
-                              <span className="ml-2 text-slate-300">
-                                Source {chainSummary?.source || "heuristic"}
-                              </span>
-                            </div>
-                            {formatChainHaltMessage(
-                              chainSummary,
-                              executionChainStatus
-                            ) ? (
-                              <p className="mt-1 text-xs text-slate-400">
-                                {formatChainHaltMessage(
+                            {(() => {
+                              if (chainSummary) {
+                                const haltReason = formatChainHaltMessage(
                                   chainSummary,
                                   executionChainStatus
-                                )}
-                              </p>
-                            ) : null}
+                                );
+                                return (
+                                  <div className="mt-1 text-sm">
+                                    <span className="text-emerald-300">
+                                      Executed {chainSummary.stepsExecuted}/
+                                      {chainSummary.stepsPlanned}
+                                    </span>
+                                    {chainSummary.haltedAt ? (
+                                      <span className="ml-2 text-amber-300">
+                                        Step {chainSummary.haltedAt.step} halted
+                                      </span>
+                                    ) : null}
+                                    {haltReason ? (
+                                      <p className="mt-1 text-xs text-slate-400">
+                                        {haltReason}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                );
+                              }
+
+                              const cs = executionChainStatusRaw;
+                              if (!cs) {
+                                return (
+                                  <span className="text-slate-500">No chain data</span>
+                                );
+                              }
+
+                              if (typeof cs === "object") {
+                                const typed = cs as {
+                                  executedSteps?: number;
+                                  totalSteps?: number;
+                                  haltedAtStep?: number | null;
+                                  haltReason?: string | null;
+                                };
+                                return (
+                                  <div className="mt-1 text-sm">
+                                    <span className="text-emerald-300">
+                                      Executed {typed.executedSteps ?? 0}/
+                                      {typed.totalSteps ?? 0}
+                                    </span>
+                                    {typed.haltedAtStep ? (
+                                      <span className="ml-2 text-amber-300">
+                                        Step {typed.haltedAtStep} halted
+                                      </span>
+                                    ) : null}
+                                    {typed.haltReason ? (
+                                      <div className="mt-1 text-xs text-slate-400">
+                                        {typed.haltReason}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                );
+                              }
+
+                              if (typeof cs === "string") {
+                                const parsed = parseLegacyChainStatus(cs);
+                                return (
+                                  <div className="mt-1 text-sm">
+                                    {parsed.executedSteps !== null &&
+                                    parsed.totalSteps !== null ? (
+                                      <span className="text-emerald-300">
+                                        Executed {parsed.executedSteps}/
+                                        {parsed.totalSteps}
+                                      </span>
+                                    ) : null}
+                                    {parsed.haltedAtStep ? (
+                                      <div className="mt-1 text-amber-300">
+                                        Step {parsed.haltedAtStep} halted -
+                                        check if Docker tools are enabled on Render
+                                        (`ENABLE_DOCKER_TOOLS=true`)
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <span className="text-slate-500">{String(cs)}</span>
+                              );
+                            })()}
                           </div>
                         ) : (
                           <p className="text-slate-400">
@@ -2220,18 +2300,23 @@ export default function DashboardPage() {
                             </span>
                           </p>
                         ) : null}
-                        {chainSummary || executionChainStatus ? (
+                        {chainSummary || executionChainStatusRaw ? (
                           <p className="mt-1 text-xs text-slate-300">
                             Week 10 chain:{" "}
                             <span className="font-medium">
                               {chainSummary?.stepsExecuted ??
                                 executionChainStatus?.executedSteps ??
+                                parseLegacyChainStatus(
+                                  executionChainStatusText || ""
+                                ).executedSteps ??
                                 0}
                               /
                               {chainSummary?.stepsPlanned ??
                                 executionChainStatus?.totalSteps ??
-                                0}{" "}
-                              via {chainSummary?.source || "heuristic"}
+                                parseLegacyChainStatus(
+                                  executionChainStatusText || ""
+                                ).totalSteps ??
+                                0}
                             </span>
                             {formatChainHaltMessage(
                               chainSummary,
@@ -2244,6 +2329,19 @@ export default function DashboardPage() {
                                   chainSummary,
                                   executionChainStatus
                                 )}
+                              </span>
+                            ) : parseLegacyChainStatus(
+                                executionChainStatusText || ""
+                              ).haltedAtStep ? (
+                              <span className="font-medium text-amber-300">
+                                {" "}
+                                | Step{" "}
+                                {
+                                  parseLegacyChainStatus(
+                                    executionChainStatusText || ""
+                                  ).haltedAtStep
+                                }{" "}
+                                halted - check Docker tools on Render
                               </span>
                             ) : null}
                           </p>

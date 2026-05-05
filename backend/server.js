@@ -24,6 +24,7 @@ const realtimeRouter = require("./routes/realtime");
 const decisionsRouter = require("./routes/decisions");
 const controlRouter = require("./routes/control");
 const monitoringRouter = require("./routes/monitoring");
+const adminRouter = require("./routes/admin");
 const { startCveSyncJob, stopCveSyncJob } = require("./jobs/cveJob");
 const {
   startPromptEvolutionJob,
@@ -117,6 +118,7 @@ app.use("/api/realtime", authMiddleware, activityLogger, realtimeRouter);
 app.use("/api/decisions", authMiddleware, activityLogger, decisionsRouter);
 app.use("/api/control", authMiddleware, activityLogger, controlRouter);
 app.use("/api/monitoring", authMiddleware, activityLogger, monitoringRouter);
+app.use("/api/admin", authMiddleware, activityLogger, adminRouter);
 
 app.use((error, _req, res, _next) => {
   const isJsonParseError =

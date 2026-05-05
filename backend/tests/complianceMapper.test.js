@@ -68,7 +68,7 @@ test("computeOverallCvssScore blends max and average severity", () => {
   assert.ok(score >= 7.5 && score <= 9.5);
 });
 
-test("computeOverallCvssScore does not inflate medium-only header findings", () => {
+test("computeOverallCvssScore defaults medium-only header findings to 5.0", () => {
   const score = computeOverallCvssScore([
     {
       severity: "medium",
@@ -77,7 +77,7 @@ test("computeOverallCvssScore does not inflate medium-only header findings", () 
       description: "CSP not present"
     }
   ]);
-  assert.ok(score < 5.5);
+  assert.equal(score, 5.0);
 });
 
 test("generateComplianceSummary returns cvss + owasp breakdown", () => {

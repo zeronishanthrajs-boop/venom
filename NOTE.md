@@ -1816,3 +1816,64 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
   - `hasA05`: `true`
   - `researchSummary`: `"Research cycle completed: sources=3, newPatterns=95, updatedPatterns=0, errors=0."`
   - `researchLogsCount`: `1`
+
+---
+
+## [2026-05-05 10:43:10 +05:30] - Round 2 Audit Fixes (A-E) Applied
+
+**Status:** Completed + Verified locally
+
+### Fix A - Engagement draft -> active transition reliability
+- Confirmed canonical field is `status` in `backend/models/Engagement.js` (no `engagementStatus` field).
+- Hardened update operation in `backend/services/executionService.js`:
+  - `markEngagementRunningIfDraft()` now uses explicit `$set`.
+- Added one-time remediation endpoint:
+  - `POST /api/admin/fix-draft-statuses`
+  - File: `backend/routes/admin.js`
+  - Mounted in `backend/server.js` as `/api/admin`.
+  - Behavior: upgrades engagements with jobs from `draft` -> `running` (schema-safe equivalent of UI "active").
+
+### Fix B - Research cycle silent failure handling
+- Updated `backend/routes/research.js`:
+  - Added explicit fatal error capture around trigger execution paths.
+  - Added guaranteed fallback `ResearchLog` write on trigger failure (`writeFailureResearchLog`).
+  - Background mode now logs fatal errors with stack context and persists failure records.
+  - Sync mode also writes fallback log before propagating error.
+
+### Fix C - Remove A03 mapping leakage for CSP/header findings
+- Updated `backend/services/complianceMapper.js`:
+  - Header/CSP findings now explicitly gate to `A05` only.
+  - Removed description-body keyword matching for OWASP tag inference; title/tag matching only for long tags.
+  - Prevents natural-language phrase collisions (e.g., "script injection classes") from mapping CSP findings to A03.
+
+### Fix D - Chain halt reason plain-English rendering in dashboard
+- Updated `dashboard/src/app/dashboard/page.tsx`:
+  - Added support for both modern object and legacy string `chainStatus`.
+  - Added parser for legacy string format (`parseLegacyChainStatus`).
+  - Reworked Week 10 chain status rendering to avoid raw internal text like `Source heuristic`.
+  - Added humanized halt-reason mapping in `formatChainHaltMessage`.
+
+### Fix E - CVSS default scoring for missing numeric scores
+- Updated `backend/services/complianceMapper.js`:
+  - Removed medium fallback `5.5`.
+  - Added severity defaults:
+    - `CRITICAL: 9.0`, `HIGH: 7.5`, `MEDIUM: 5.0`, `LOW: 2.5`, `INFO: 0.5`
+  - `computeOverallCvssScore()` now applies severity defaults when `cvssScore` is missing.
+  - Header-only medium finding now computes to `5.0`.
+
+### Test and build verification
+- `cd backend && npm test` -> **PASS** (`50/50`)
+- `cd dashboard && npm run lint` -> **PASS**
+- `cd dashboard && npm run build` -> **PASS**
+
+### Targeted runtime verification snapshot
+- `GET /health` -> `200`, DB ready.
+- Created fresh engagement, ran `http_headers_probe`, then verified:
+  - engagement status became `running`.
+- `POST /api/admin/fix-draft-statuses` reachable and operational.
+- `POST /api/research/trigger` followed by `GET /api/research/log?limit=1`:
+  - log persisted (`count >= 1`).
+- `GET /api/compliance/:engagementId` after header probe:
+  - `cvssOverallScore = 5.0`
+  - OWASP breakdown contains `A05`
+  - OWASP breakdown does **not** contain `A03`.

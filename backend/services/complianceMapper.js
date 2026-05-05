@@ -56,21 +56,17 @@ function normalizeText(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+const SEVERITY_DEFAULT_CVSS = {
+  CRITICAL: 9.0,
+  HIGH: 7.5,
+  MEDIUM: 5.0,
+  LOW: 2.5,
+  INFO: 0.5
+};
+
 function severityToCvssDefault(severity) {
-  const normalized = normalizeText(severity);
-  if (normalized === "critical") {
-    return 9.4;
-  }
-  if (normalized === "high") {
-    return 8.0;
-  }
-  if (normalized === "medium") {
-    return 5.5;
-  }
-  if (normalized === "low") {
-    return 3.1;
-  }
-  return 0;
+  const normalized = String(severity || "INFO").trim().toUpperCase();
+  return SEVERITY_DEFAULT_CVSS[normalized] || 0;
 }
 
 function extractFindingTags(finding = {}) {
@@ -121,18 +117,6 @@ function inferCvssScore(finding = {}) {
     return metadataCvss;
   }
 
-  const category = normalizeText(finding.category);
-  const title = normalizeText(finding.title);
-  const description = normalizeText(finding.description);
-  const text = `${category} ${title} ${description}`;
-
-  if (/missing content-security-policy|missing strict-transport-security|header-hardening/.test(text)) {
-    return 4.1;
-  }
-  if (/x-content-type-options|tech-disclosure|information-disclosure/.test(text)) {
-    return 3.1;
-  }
-
   return severityToCvssDefault(finding.severity);
 }
 
@@ -142,10 +126,17 @@ function mapFindingsToOwasp(findings = []) {
 
   for (const finding of dedupedFindings) {
     const findingTags = extractFindingTags(finding);
-    const title = normalizeText(finding.title);
-    const description = normalizeText(finding.description);
+    const titleLower = normalizeText(finding.title);
+    const categoryLower = normalizeText(finding.category);
+    const isHeaderFinding =
+      /content-security-policy|strict-transport-security|security header|\bcsp\b|\bhsts\b/.test(
+        `${titleLower} ${categoryLower}`
+      );
 
     for (const [code, owasp] of Object.entries(OWASP_TOP_10_2021)) {
+      if (isHeaderFinding && code !== "A05") {
+        continue;
+      }
       const matched = owasp.tags.some((tag) => {
         const normalizedTag = normalizeText(tag);
         if (findingTags.includes(normalizedTag)) {
@@ -154,7 +145,7 @@ function mapFindingsToOwasp(findings = []) {
         if (normalizedTag.length <= 4) {
           return false;
         }
-        return title.includes(normalizedTag) || description.includes(normalizedTag);
+        return titleLower.includes(normalizedTag);
       });
       if (!matched) {
         continue;
@@ -182,15 +173,27 @@ function computeOverallCvssScore(findings = []) {
   }
 
   const scores = dedupedFindings
-    .map((finding) => inferCvssScore(finding))
-    .filter((value) => value > 0);
+    .map((finding) => {
+      const direct = Number(finding?.cvssScore);
+      if (Number.isFinite(direct) && direct > 0) {
+        return direct;
+      }
+
+      const metadataCvss = Number(finding?.metadata?.cvssScore);
+      if (Number.isFinite(metadataCvss) && metadataCvss > 0) {
+        return metadataCvss;
+      }
+
+      return severityToCvssDefault(finding?.severity);
+    })
+    .filter((value) => Number.isFinite(value) && value > 0);
 
   if (scores.length === 0) {
     return 0;
   }
 
   const maxScore = Math.max(...scores);
-  const modifier = maxScore >= 7 ? 1.05 : 1.0;
+  const modifier = maxScore >= 7.0 ? 1.05 : 1.0;
   return Number(Math.min(10, maxScore * modifier).toFixed(1));
 }
 
