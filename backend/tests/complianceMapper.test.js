@@ -44,6 +44,21 @@ test("mapFindingsToOwasp maps findings to expected categories", () => {
   assert.equal(Boolean(mapped.A04), false);
 });
 
+test("CSP wording with 'injection classes' does not map to A03", () => {
+  const mapped = mapFindingsToOwasp([
+    {
+      severity: "medium",
+      category: "header-hardening",
+      title: "Missing Content-Security-Policy Header",
+      description:
+        "CSP is not present, reducing browser-side mitigation for script injection classes."
+    }
+  ]);
+
+  assert.ok(mapped.A05);
+  assert.equal(Boolean(mapped.A03), false);
+});
+
 test("computeOverallCvssScore blends max and average severity", () => {
   const score = computeOverallCvssScore([
     { severity: "high", cvssScore: 8.8 },
@@ -62,7 +77,7 @@ test("computeOverallCvssScore does not inflate medium-only header findings", () 
       description: "CSP not present"
     }
   ]);
-  assert.ok(score <= 5.5);
+  assert.ok(score < 5.5);
 });
 
 test("generateComplianceSummary returns cvss + owasp breakdown", () => {

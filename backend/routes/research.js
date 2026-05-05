@@ -43,32 +43,32 @@ router.post("/trigger", requireDb, async (req, res, next) => {
       ? req.body.sourceFilter.map((item) => String(item))
       : [];
     const createdBy = req.user?.id || "unknown";
-    const waitForCompletion = req.body?.waitForCompletion === true;
-    if (waitForCompletion) {
-      const result = await runResearchCycle({
-        trigger: "manual",
-        createdBy,
-        sourceFilter
+    const runInBackground = req.body?.background === true;
+    if (runInBackground) {
+      setImmediate(async () => {
+        try {
+          await runResearchCycle({
+            trigger: "manual",
+            createdBy,
+            sourceFilter
+          });
+        } catch (error) {
+          console.error("[Research] Manual trigger failed:", error.message);
+        }
       });
-      return res.status(200).json(result);
+
+      return res.status(202).json({
+        status: "triggered",
+        message: "Research cycle started in background."
+      });
     }
 
-    setImmediate(async () => {
-      try {
-        await runResearchCycle({
-          trigger: "manual",
-          createdBy,
-          sourceFilter
-        });
-      } catch (error) {
-        console.error("[Research] Manual trigger failed:", error.message);
-      }
+    const result = await runResearchCycle({
+      trigger: "manual",
+      createdBy,
+      sourceFilter
     });
-
-    return res.status(202).json({
-      status: "triggered",
-      message: "Research cycle started in background."
-    });
+    return res.status(200).json(result);
   } catch (error) {
     return next(error);
   }

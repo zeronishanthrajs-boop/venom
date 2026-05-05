@@ -157,14 +157,21 @@ function buildAlertKey(alert: AlertItem) {
 }
 
 function formatChainHaltMessage(
-  chainSummary: ChainRunResponse | null | undefined
+  chainSummary: ChainRunResponse | null | undefined,
+  executionChainStatus?: {
+    haltReason?: string | null;
+    haltCode?: string | null;
+  } | null
 ) {
-  if (!chainSummary?.haltedAt) {
-    return "";
-  }
+  const haltReasonFromSummary =
+    chainSummary?.haltedAt &&
+    ((chainSummary.haltedAt as { haltReason?: string })?.haltReason ||
+      chainSummary.haltedAt.reason);
   const haltReason =
-    (chainSummary.haltedAt as { haltReason?: string })?.haltReason ||
-    chainSummary.haltedAt.reason;
+    haltReasonFromSummary ||
+    executionChainStatus?.haltReason ||
+    executionChainStatus?.haltCode ||
+    "";
   return haltReason || "";
 }
 
@@ -1634,6 +1641,19 @@ export default function DashboardPage() {
                 const compliance =
                   complianceByEngagement[engagement._id] || null;
                 const chainSummary = chainSummaryByEngagement[engagement._id] || null;
+                const executionChainStatus =
+                  latestExecution &&
+                  latestExecution.output &&
+                  typeof latestExecution.output === "object" &&
+                  "chainStatus" in latestExecution.output
+                    ? (latestExecution.output.chainStatus as {
+                        executedSteps?: number;
+                        totalSteps?: number;
+                        haltedAtStep?: number | null;
+                        haltReason?: string | null;
+                        haltCode?: string | null;
+                      })
+                    : null;
                 const evidenceStatus = evidenceStatusByEngagement[engagement._id] || null;
 
                 return (
@@ -1658,7 +1678,9 @@ export default function DashboardPage() {
                           engagement.status
                         )}`}
                       >
-                        {engagement.status}
+                        {engagement.status === "running"
+                          ? "active"
+                          : engagement.status}
                       </span>
                     </div>
 
@@ -1933,28 +1955,45 @@ export default function DashboardPage() {
                           </p>
                         )}
 
-                        {chainSummary ? (
+                        {chainSummary || executionChainStatus ? (
                           <div>
                             <p className="text-[11px] uppercase tracking-wide text-slate-400">
                               Week 10 Chain Status
                             </p>
                             <div className="mt-1 text-sm">
                               <span className="text-emerald-300">
-                                Executed {chainSummary.stepsExecuted}/
-                                {chainSummary.stepsPlanned}
+                                Executed{" "}
+                                {chainSummary?.stepsExecuted ??
+                                  executionChainStatus?.executedSteps ??
+                                  0}
+                                /
+                                {chainSummary?.stepsPlanned ??
+                                  executionChainStatus?.totalSteps ??
+                                  0}
                               </span>
-                              {chainSummary.haltedAt ? (
+                              {(chainSummary?.haltedAt ||
+                                executionChainStatus?.haltedAtStep) ? (
                                 <span className="ml-2 text-amber-300">
-                                  Step {chainSummary.haltedAt.step} halted
+                                  Step{" "}
+                                  {chainSummary?.haltedAt?.step ??
+                                    executionChainStatus?.haltedAtStep ??
+                                    "n/a"}{" "}
+                                  halted
                                 </span>
                               ) : null}
                               <span className="ml-2 text-slate-300">
-                                Source {chainSummary.source}
+                                Source {chainSummary?.source || "heuristic"}
                               </span>
                             </div>
-                            {formatChainHaltMessage(chainSummary) ? (
+                            {formatChainHaltMessage(
+                              chainSummary,
+                              executionChainStatus
+                            ) ? (
                               <p className="mt-1 text-xs text-slate-400">
-                                {formatChainHaltMessage(chainSummary)}
+                                {formatChainHaltMessage(
+                                  chainSummary,
+                                  executionChainStatus
+                                )}
                               </p>
                             ) : null}
                           </div>
@@ -2181,17 +2220,30 @@ export default function DashboardPage() {
                             </span>
                           </p>
                         ) : null}
-                        {chainSummary ? (
+                        {chainSummary || executionChainStatus ? (
                           <p className="mt-1 text-xs text-slate-300">
                             Week 10 chain:{" "}
                             <span className="font-medium">
-                              {chainSummary.stepsExecuted}/{chainSummary.stepsPlanned} via{" "}
-                              {chainSummary.source}
+                              {chainSummary?.stepsExecuted ??
+                                executionChainStatus?.executedSteps ??
+                                0}
+                              /
+                              {chainSummary?.stepsPlanned ??
+                                executionChainStatus?.totalSteps ??
+                                0}{" "}
+                              via {chainSummary?.source || "heuristic"}
                             </span>
-                            {formatChainHaltMessage(chainSummary) ? (
+                            {formatChainHaltMessage(
+                              chainSummary,
+                              executionChainStatus
+                            ) ? (
                               <span className="font-medium text-amber-300">
                                 {" "}
-                                | {formatChainHaltMessage(chainSummary)}
+                                |{" "}
+                                {formatChainHaltMessage(
+                                  chainSummary,
+                                  executionChainStatus
+                                )}
                               </span>
                             ) : null}
                           </p>

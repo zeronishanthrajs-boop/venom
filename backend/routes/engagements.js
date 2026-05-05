@@ -47,6 +47,43 @@ function shouldApplyStartupProfile(body) {
 
 const router = express.Router();
 
+async function reconcileDraftStatuses(engagements = []) {
+  const draftIds = engagements
+    .filter((item) => item?.status === "draft")
+    .map((item) => item._id);
+  if (draftIds.length === 0) {
+    return engagements;
+  }
+
+  const activeJobIds = await ExecutionJob.distinct("engagementId", {
+    engagementId: { $in: draftIds },
+    status: { $in: ["queued", "running", "success", "failed", "blocked", "timeout"] }
+  });
+  if (activeJobIds.length === 0) {
+    return engagements;
+  }
+
+  await Engagement.updateMany(
+    {
+      _id: { $in: activeJobIds },
+      status: "draft"
+    },
+    {
+      $set: { status: "running" }
+    }
+  );
+
+  const activeIdSet = new Set(activeJobIds.map((id) => String(id)));
+  return engagements.map((item) =>
+    activeIdSet.has(String(item._id))
+      ? {
+          ...item,
+          status: "running"
+        }
+      : item
+  );
+}
+
 function toEngagementPayload(body, userId) {
   const applyStartup = shouldApplyStartupProfile(body);
   const startupConcern = String(body?.startupConcern || "").trim();
@@ -388,8 +425,9 @@ router.get("/", requireDb, async (req, res, next) => {
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
+    const reconciled = await reconcileDraftStatuses(engagements);
 
-    return res.status(200).json(engagements);
+    return res.status(200).json(reconciled);
   } catch (error) {
     return next(error);
   }
@@ -402,6 +440,18 @@ router.get("/:id", requireDb, async (req, res, next) => {
       return res.status(404).json({
         error: "Engagement not found"
       });
+    }
+
+    const hasAnyJobs = await ExecutionJob.exists({
+      engagementId: engagement._id,
+      status: { $in: ["queued", "running", "success", "failed", "blocked", "timeout"] }
+    });
+    if (engagement.status === "draft" && hasAnyJobs) {
+      await Engagement.updateOne(
+        { _id: engagement._id, status: "draft" },
+        { $set: { status: "running" } }
+      );
+      engagement.status = "running";
     }
 
     return res.status(200).json(engagement);

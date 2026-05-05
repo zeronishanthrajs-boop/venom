@@ -92,7 +92,8 @@ function extractFindingTags(finding = {}) {
   }
   if (/idor/.test(combined)) tags.add("idor");
   if (/auth|token|credential|session|password/.test(combined)) tags.add("auth");
-  if (/sql|sqli|injection/.test(combined)) tags.add("sqli");
+  if (/\bsqli?\b|sql[-_\s]*injection/.test(combined)) tags.add("sqli");
+  if (/\bcommand\s+injection\b/.test(combined)) tags.add("command-injection");
   if (/xss|cross-site scripting/.test(combined)) tags.add("xss");
   if (/ssrf/.test(combined)) tags.add("ssrf");
   if (/tls|ssl|certificate|cipher/.test(combined)) tags.add("tls");
@@ -108,6 +109,31 @@ function extractFindingTags(finding = {}) {
   metadataTags.forEach((tag) => tags.add(normalizeText(tag)));
 
   return [...tags].filter(Boolean);
+}
+
+function inferCvssScore(finding = {}) {
+  const direct = Number(finding.cvssScore);
+  if (Number.isFinite(direct) && direct > 0) {
+    return direct;
+  }
+  const metadataCvss = Number(finding?.metadata?.cvssScore);
+  if (Number.isFinite(metadataCvss) && metadataCvss > 0) {
+    return metadataCvss;
+  }
+
+  const category = normalizeText(finding.category);
+  const title = normalizeText(finding.title);
+  const description = normalizeText(finding.description);
+  const text = `${category} ${title} ${description}`;
+
+  if (/missing content-security-policy|missing strict-transport-security|header-hardening/.test(text)) {
+    return 4.1;
+  }
+  if (/x-content-type-options|tech-disclosure|information-disclosure/.test(text)) {
+    return 3.1;
+  }
+
+  return severityToCvssDefault(finding.severity);
 }
 
 function mapFindingsToOwasp(findings = []) {
@@ -156,15 +182,7 @@ function computeOverallCvssScore(findings = []) {
   }
 
   const scores = dedupedFindings
-    .map((finding) => {
-      if (typeof finding.cvssScore === "number") {
-        return finding.cvssScore;
-      }
-      if (typeof finding?.metadata?.cvssScore === "number") {
-        return finding.metadata.cvssScore;
-      }
-      return severityToCvssDefault(finding.severity);
-    })
+    .map((finding) => inferCvssScore(finding))
     .filter((value) => value > 0);
 
   if (scores.length === 0) {
@@ -197,12 +215,7 @@ function generateComplianceSummary(findings = []) {
   const remediationPriority = findings
     .map((finding) => ({
       ...finding,
-      _derivedCvssScore:
-        typeof finding.cvssScore === "number"
-          ? finding.cvssScore
-          : typeof finding?.metadata?.cvssScore === "number"
-          ? finding.metadata.cvssScore
-          : severityToCvssDefault(finding.severity)
+      _derivedCvssScore: inferCvssScore(finding)
     }))
     .sort((left, right) => right._derivedCvssScore - left._derivedCvssScore)
     .slice(0, 5)

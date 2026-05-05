@@ -1762,3 +1762,57 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 ### Open item (not changed in this patch)
 - PDF generation stack remains `PDFKit` in `backend/services/reportGenerator.js`.
 - If required, next patch can migrate report rendering to HTML template + Puppeteer/Playwright with identical report schema.
+
+---
+
+## [2026-05-05 09:58:24 +05:30] - Residual 5-Issue Remediation Pass
+
+**Status:** All 5 reported regressions fixed and re-verified
+
+### 1) Engagement stuck in DRAFT
+- Added status reconciliation in engagement APIs:
+  - `backend/routes/engagements.js`
+  - `GET /api/engagements` now auto-upgrades legacy `draft` engagements that already have jobs to `running`.
+  - `GET /api/engagements/:id` also reconciles `draft -> running` when jobs exist.
+- Existing execution transition remains active in `backend/services/executionService.js`.
+
+### 2) Research cycle not running / no logs
+- Updated `backend/routes/research.js` trigger behavior:
+  - default path now runs synchronously and returns full result payload.
+  - optional async mode remains available via `{ background: true }`.
+- Prevents silent background-only failures from hiding outcomes in UI.
+
+### 3) A03 still mapped for CSP finding
+- Tightened injection tag inference and OWASP mapping in `backend/services/complianceMapper.js`:
+  - removed generic `injection` -> `sqli` tagging.
+  - added explicit SQL-only detection (`sqli`, `sql injection`) and command-injection tag.
+- Added regression test:
+  - `backend/tests/complianceMapper.test.js`
+  - verifies CSP wording containing “script injection classes” does **not** map to A03.
+
+### 4) Chain halt reason still technical
+- Dashboard chain rendering now falls back to persisted job `output.chainStatus` when in-memory chain summary is absent:
+  - `dashboard/src/app/dashboard/page.tsx`
+- Displays human-readable halt reason and halt code-derived message consistently.
+
+### 5) CVSS still not deflated for low-signal header findings
+- Added finding-aware CVSS inference in `backend/services/complianceMapper.js`:
+  - missing CSP/HSTS/header-hardening now deflates to low-medium (e.g., 4.1 baseline) unless explicit higher CVSS exists.
+  - retains high/critical behavior where explicit CVSS or high-severity signals exist.
+- Added test assertion to ensure medium-only header finding score is below 5.5.
+
+### Verification results
+- `backend npm test` -> **50/50 pass**
+- `dashboard npm run lint` -> **pass**
+- `dashboard npm run build` -> **pass**
+
+### Targeted smoke proof for all 5 fixes
+- Created smoke engagement + ran probe/chain/research/compliance checks:
+  - `engagementStatus`: `running` (no longer stuck in draft)
+  - `chainHaltReason`: `"Blocked - this tool requires Docker, which is not enabled on this server."`
+  - `chainHaltCode`: `docker_disabled`
+  - `complianceCvss`: `4.1`
+  - `hasA03`: `false`
+  - `hasA05`: `true`
+  - `researchSummary`: `"Research cycle completed: sources=3, newPatterns=95, updatedPatterns=0, errors=0."`
+  - `researchLogsCount`: `1`
