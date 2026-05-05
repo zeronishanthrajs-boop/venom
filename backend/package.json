@@ -13,14 +13,18 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.93.0",
+    "axios": "^1.16.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "handlebars": "^4.7.9",
     "mongodb-memory-server": "^11.1.0",
     "mongoose": "^9.6.1",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.7",
     "pdfkit": "^0.18.0",
+    "puppeteer": "^24.42.0",
     "ws": "^8.20.0"
   },
   "devDependencies": {

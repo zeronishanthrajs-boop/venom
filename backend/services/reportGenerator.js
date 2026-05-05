@@ -1,17 +1,41 @@
-const PDFDocument = require("pdfkit");
+const fs = require("node:fs");
+const path = require("node:path");
+const crypto = require("node:crypto");
+const puppeteer = require("puppeteer");
+const handlebars = require("handlebars");
 const nodemailer = require("nodemailer");
+
 const Engagement = require("../models/Engagement");
 const ExecutionJob = require("../models/ExecutionJob");
 const Plan = require("../models/Plan");
 const { generateComplianceSummary } = require("./complianceMapper");
 const { deduplicateFindings } = require("../utils/deduplicateFindings");
 
+const TEMPLATE_PATH = path.join(__dirname, "../templates/report.html");
+
+const SEVERITY_CLASS = {
+  CRITICAL: "critical",
+  HIGH: "high",
+  MEDIUM: "medium",
+  LOW: "low",
+  INFO: "info"
+};
+
+const RISK_BANNER_COLOR = {
+  critical: "#dc2626",
+  high: "#ea580c",
+  medium: "#d97706",
+  low: "#65a30d",
+  clean: "#16a34a",
+  unknown: "#64748b"
+};
+
 function flattenFindings(jobs = []) {
   return jobs.flatMap((job) => {
     if (Array.isArray(job.findings) && job.findings.length > 0) {
       return job.findings;
     }
-    if (Array.isArray(job.output?.findings)) {
+    if (Array.isArray(job.output?.findings) && job.output.findings.length > 0) {
       return job.output.findings;
     }
     return [];
@@ -30,6 +54,14 @@ function computeSeverityBreakdown(findings = []) {
   };
 }
 
+function sanitizeFileName(value) {
+  return String(value || "engagement")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "engagement";
+}
+
 function formatDate(value) {
   if (!value) {
     return "n/a";
@@ -41,33 +73,33 @@ function formatDate(value) {
   return parsed.toISOString();
 }
 
-function sanitizeFileName(value) {
-  return String(value || "engagement")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "engagement";
-}
-
 function buildExecutionSummary(jobs = []) {
   const totalJobs = jobs.length;
-  const successfulJobs = jobs.filter((job) => job.status === "success").length;
-  const failedJobs = jobs.filter((job) => job.status === "failed").length;
-  const blockedJobs = jobs.filter((job) => job.status === "blocked").length;
-  const timeoutJobs = jobs.filter((job) => job.status === "timeout").length;
-  const terminalJobs = successfulJobs + failedJobs + blockedJobs + timeoutJobs;
+  const completedJobs = jobs.filter((job) =>
+    ["completed", "success"].includes(String(job.status || "").toLowerCase())
+  );
+  const failedJobs = jobs.filter((job) =>
+    ["failed", "blocked", "timeout", "killed"].includes(
+      String(job.status || "").toLowerCase()
+    )
+  );
+  const terminalJobs = completedJobs.length + failedJobs.length;
   const successRate =
-    terminalJobs > 0
-      ? Number((successfulJobs / terminalJobs).toFixed(4))
+    terminalJobs > 0 ? Math.round((completedJobs.length / terminalJobs) * 100) : 0;
+  const avgDurationMs =
+    completedJobs.length > 0
+      ? Math.round(
+          completedJobs.reduce((sum, job) => sum + Number(job.durationMs || 0), 0) /
+            completedJobs.length
+        )
       : 0;
 
   return {
     totalJobs,
-    successfulJobs,
-    failedJobs,
-    blockedJobs,
-    timeoutJobs,
-    successRate
+    completedJobs: completedJobs.length,
+    failedJobs: failedJobs.length,
+    successRate,
+    avgDurationMs
   };
 }
 
@@ -86,7 +118,7 @@ async function loadReportContext(engagementId) {
 
   const findings = deduplicateFindings(flattenFindings(jobs));
   const severity = computeSeverityBreakdown(findings);
-  const executionSummary = buildExecutionSummary(jobs);
+  const execution = buildExecutionSummary(jobs);
   const compliance = generateComplianceSummary(findings);
 
   return {
@@ -95,7 +127,7 @@ async function loadReportContext(engagementId) {
     jobs,
     findings,
     severity,
-    executionSummary,
+    execution,
     compliance
   };
 }
@@ -104,45 +136,25 @@ function buildMarkdownReport(context) {
   const lines = [];
   lines.push("# VENOM Security Assessment Report");
   lines.push("");
-  lines.push("## Startup Security Scanner Framing");
-  lines.push("");
-  lines.push(
-    "This report is designed for startup founders and engineers to quickly prioritize security fixes, share investor-ready evidence, and re-check posture after remediation."
-  );
-  lines.push("");
-  lines.push("What to do now:");
-  lines.push("1. Fix the top three highest-severity issues first.");
-  lines.push("2. Share this executive summary with stakeholders/investors.");
-  lines.push("3. Re-run VENOM after remediation to validate closure.");
-  lines.push("");
   lines.push(`Generated At: ${new Date().toISOString()}`);
   lines.push(`Engagement: ${context.engagement.name}`);
   lines.push(`Target URL: ${context.engagement.targetUrl}`);
   lines.push(`Target Type: ${context.engagement.targetType}`);
-  lines.push(
-    `Authorization: ${context.engagement.authorization?.authorizedBy || "n/a"}`
-  );
-  lines.push(
-    `Valid Window: ${formatDate(context.engagement.authorization?.validFrom)} -> ${formatDate(context.engagement.authorization?.validUntil)}`
-  );
+  lines.push(`Status: ${context.engagement.status}`);
   lines.push("");
   lines.push("## Executive Summary");
-  lines.push("");
-  lines.push(`- Total findings: ${context.findings.length}`);
+  lines.push(`- Findings: ${context.findings.length}`);
   lines.push(`- Critical: ${context.severity.critical}`);
   lines.push(`- High: ${context.severity.high}`);
   lines.push(`- Medium: ${context.severity.medium}`);
   lines.push(`- Low: ${context.severity.low}`);
-  lines.push(`- Info: ${context.severity.info}`);
-  lines.push(
-    `- Jobs: ${context.executionSummary.totalJobs} (success rate ${(context.executionSummary.successRate * 100).toFixed(1)}%)`
-  );
+  lines.push(`- Success rate: ${context.execution.successRate}%`);
   lines.push(
     `- Compliance: CVSS ${context.compliance.cvssOverallScore} (${context.compliance.cvssSeverity}), OWASP categories ${context.compliance.owaspCoverage}`
   );
   lines.push("");
+
   lines.push("## Findings");
-  lines.push("");
   if (context.findings.length === 0) {
     lines.push("- No findings captured.");
   } else {
@@ -152,9 +164,6 @@ function buildMarkdownReport(context) {
           finding.title || "Untitled finding"
         }`
       );
-      if (Number(finding.count || 1) > 1) {
-        lines.push(`   - Repeated Signals: ${finding.count}`);
-      }
       lines.push(`   - Category: ${finding.category || "n/a"}`);
       lines.push(`   - Description: ${finding.description || "n/a"}`);
       lines.push(`   - Recommendation: ${finding.recommendation || "n/a"}`);
@@ -164,145 +173,132 @@ function buildMarkdownReport(context) {
       if (finding.cve) {
         lines.push(`   - CVE: ${finding.cve}`);
       }
+      if (Number(finding.count || 1) > 1) {
+        lines.push(`   - Repeated Signals: ${finding.count}`);
+      }
     });
   }
+
   lines.push("");
-  lines.push("## Plan Summary");
-  lines.push("");
-  if (context.plans.length === 0) {
-    lines.push("- No plans generated.");
+  lines.push("## OWASP Coverage");
+  const owaspItems = Object.values(context.compliance.owaspBreakdown || {});
+  if (owaspItems.length === 0) {
+    lines.push("- No OWASP mappings available.");
   } else {
-    context.plans.forEach((plan, idx) => {
-      lines.push(`${idx + 1}. ${plan.summary || "No summary"} (${plan.promptVersion})`);
-    });
+    for (const item of owaspItems) {
+      lines.push(`- ${item.code}: ${item.name} (${item.findings.length} finding(s))`);
+    }
   }
   lines.push("");
-  lines.push("## Compliance Breakdown");
-  lines.push("");
-  lines.push(
-    `- CVSS Overall: ${context.compliance.cvssOverallScore} (${context.compliance.cvssSeverity})`
-  );
-  lines.push(`- OWASP Coverage: ${context.compliance.owaspCoverage}`);
-  Object.values(context.compliance.owaspBreakdown || {}).forEach((entry) => {
-    lines.push(`  - ${entry.code}: ${entry.name} (${entry.findings.length} finding(s))`);
-  });
-  lines.push("");
-  lines.push("> This report is generated for authorized security validation use only.");
+  lines.push("> Authorized security validation use only.");
+
   return lines.join("\n");
 }
 
-function buildPdfReportBuffer(context) {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({
-      size: "A4",
-      margin: 42
-    });
-    const chunks = [];
-
-    doc.on("data", (chunk) => chunks.push(chunk));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    doc.fontSize(19).text("VENOM Security Assessment Report", { underline: true });
-    doc.moveDown(0.8);
-    doc.fontSize(10);
-    doc.text("VENOM - Security Scanner for Startups");
-    doc.text(
-      "Use this report to prioritize fixes, communicate risk clearly, and provide investor-ready posture evidence."
-    );
-    doc.moveDown(0.6);
-    doc.text(`Generated: ${new Date().toISOString()}`);
-    doc.text(`Engagement: ${context.engagement.name}`);
-    doc.text(`Target: ${context.engagement.targetUrl}`);
-    doc.text(`Target Type: ${context.engagement.targetType}`);
-    doc.text(
-      `Authorization: ${context.engagement.authorization?.authorizedBy || "n/a"}`
-    );
-    doc.moveDown(0.8);
-
-    doc.fontSize(13).text("Executive Summary");
-    doc.fontSize(10);
-    doc.text(`Total Findings: ${context.findings.length}`);
-    doc.text(
-      `Severity: C=${context.severity.critical} H=${context.severity.high} M=${context.severity.medium} L=${context.severity.low} I=${context.severity.info}`
-    );
-    doc.text(
-      `Jobs: ${context.executionSummary.totalJobs} | Success Rate: ${(context.executionSummary.successRate * 100).toFixed(1)}%`
-    );
-    doc.text(
-      `Compliance: CVSS ${context.compliance.cvssOverallScore} (${context.compliance.cvssSeverity}), OWASP ${context.compliance.owaspCoverage}`
-    );
-    doc.moveDown(0.8);
-
-    doc.fontSize(13).text("Top Findings");
-    doc.fontSize(10);
-    if (context.findings.length === 0) {
-      doc.text("No findings captured.");
-    } else {
-      context.findings.slice(0, 25).forEach((finding, index) => {
-        doc.text(
-          `${index + 1}. [${String(finding.severity || "info").toUpperCase()}] ${
-            finding.title || "Untitled finding"
-          }`
-        );
-        if (Number(finding.count || 1) > 1) {
-          doc.text(`   Repeated Signals: ${finding.count}`);
-        }
-        if (finding.description) {
-          doc.text(`   ${finding.description}`);
-        }
-        if (finding.recommendation) {
-          doc.text(`   Recommendation: ${finding.recommendation}`);
-        }
-        if (finding.cve) {
-          doc.text(`   CVE: ${finding.cve}`);
-        }
-      });
-    }
-
-    doc.moveDown(0.8);
-    doc.fontSize(13).text("OWASP Top 10 Coverage");
-    doc.fontSize(10);
-    const owaspEntries = Object.values(context.compliance.owaspBreakdown || {});
-    if (owaspEntries.length === 0) {
-      doc.text("No OWASP category mapping available from current findings.");
-    } else {
-      owaspEntries.forEach((entry) => {
-        doc.text(`${entry.code} - ${entry.name}: ${entry.findings.length} finding(s)`);
-      });
-    }
-
-    doc.moveDown(1);
-    doc.fontSize(8);
-    doc.text(
-      "Generated by VENOM startup security scanner pipeline. Authorized distribution only.",
-      {
-        align: "left"
-      }
-    );
-
-    doc.end();
+function toTemplateData(context) {
+  const generatedAt = new Date().toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata"
   });
+  const riskLevel = String(context.compliance.cvssSeverity || "LOW").toLowerCase();
+  const riskScore = Math.round(Number(context.compliance.cvssOverallScore || 0) * 10);
+  const owaspItems = Object.entries(context.compliance.owaspBreakdown || {}).map(
+    ([code, item]) => ({
+      code,
+      name: item.name,
+      findingCount: Array.isArray(item.findings) ? item.findings.length : 0
+    })
+  );
+  const latestPlan = context.plans[0] || null;
+  const planPhases = Array.isArray(latestPlan?.phases)
+    ? latestPlan.phases.slice(0, 4).map((phase) => ({
+        name: phase?.name || "Phase",
+        description: phase?.goal || "No objective provided."
+      }))
+    : [];
+
+  return {
+    engagementName: context.engagement.name || "Unnamed",
+    targetUrl: context.engagement.targetUrl || "n/a",
+    targetType: context.engagement.targetType || "website",
+    authorizedBy: context.engagement.authorization?.authorizedBy || "Authorized User",
+    validFrom: formatDate(context.engagement.authorization?.validFrom),
+    validUntil: formatDate(context.engagement.authorization?.validUntil),
+    generatedAt,
+    reportId: crypto.randomBytes(4).toString("hex").toUpperCase(),
+
+    overallRiskSentence: `${context.findings.length} finding(s) detected. CVSS ${context.compliance.cvssOverallScore} (${context.compliance.cvssSeverity}).`,
+    riskLevel: context.compliance.cvssSeverity || "LOW",
+    riskScore,
+    riskBannerColor: RISK_BANNER_COLOR[riskLevel] || RISK_BANNER_COLOR.low,
+    cvssScore: context.compliance.cvssOverallScore,
+    owaspCount: owaspItems.length,
+
+    totalFindings: context.findings.length,
+    criticalCount: context.severity.critical,
+    highCount: context.severity.high,
+    mediumCount: context.severity.medium,
+    successRate: context.execution.successRate,
+    totalJobs: context.execution.totalJobs,
+    avgDurationMs: context.execution.avgDurationMs,
+
+    findings: context.findings.map((finding) => ({
+      ...finding,
+      severity: String(finding.severity || "info").toUpperCase(),
+      severityClass:
+        SEVERITY_CLASS[String(finding.severity || "INFO").toUpperCase()] || "info",
+      tagsStr: Array.isArray(finding.tags) ? finding.tags.join(", ") : "",
+      tool: finding.tool || finding._toolId || "",
+      recommendation: finding.recommendation || finding.remediation || "",
+      count: Number(finding.count || 0) > 1 ? Number(finding.count) : null
+    })),
+    owaspItems,
+    planSummary: latestPlan?.summary || "",
+    planPhases
+  };
 }
 
-function assertSmtpConfigured() {
-  const required = ["SMTP_HOST", "SMTP_USER", "SMTP_PASS"];
-  const missing = required.filter((name) => !process.env[name]);
-  if (missing.length > 0) {
-    const error = new Error(`SMTP is not configured. Missing: ${missing.join(", ")}`);
-    error.code = "SMTP_NOT_CONFIGURED";
-    throw error;
+async function renderPdfFromTemplate(templateData) {
+  const templateHtml = fs.readFileSync(TEMPLATE_PATH, "utf-8");
+  const template = handlebars.compile(templateHtml);
+  const html = template(templateData);
+
+  const browser = await puppeteer.launch({
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    headless: true
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "networkidle0" });
+    return await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: { top: "0", right: "0", bottom: "0", left: "0" }
+    });
+  } finally {
+    await browser.close();
   }
 }
 
 async function generatePdfReport(engagementId) {
   const context = await loadReportContext(engagementId);
-  return buildPdfReportBuffer(context);
+  const templateData = toTemplateData(context);
+  return await renderPdfFromTemplate(templateData);
 }
 
 async function generateMarkdownReport(engagementId) {
   const context = await loadReportContext(engagementId);
   return buildMarkdownReport(context);
+}
+
+function assertSmtpConfigured() {
+  const required = ["SMTP_HOST", "SMTP_USER", "SMTP_PASS"];
+  const missing = required.filter((key) => !process.env[key]);
+  if (missing.length > 0) {
+    const error = new Error(`SMTP is not configured. Missing: ${missing.join(", ")}`);
+    error.code = "SMTP_NOT_CONFIGURED";
+    throw error;
+  }
 }
 
 async function emailReport(engagementId, recipientEmail) {
@@ -314,7 +310,8 @@ async function emailReport(engagementId, recipientEmail) {
   }
 
   const context = await loadReportContext(engagementId);
-  const pdfBuffer = await buildPdfReportBuffer(context);
+  const templateData = toTemplateData(context);
+  const pdfBuffer = await renderPdfFromTemplate(templateData);
 
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,

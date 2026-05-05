@@ -1,131 +1,257 @@
-const express = require("express");
+const router = require("express").Router();
 const mongoose = require("mongoose");
-const Engagement = require("../models/Engagement");
-const ExecutionJob = require("../models/ExecutionJob");
-const Plan = require("../models/Plan");
 const requireDb = require("../middleware/requireDb");
 const { STARTUP_SCAN_PROFILE } = require("../profiles/startupScan");
 
-const router = express.Router();
+const Engagement = mongoose.model("Engagement");
+const ExecutionJob = mongoose.model("ExecutionJob");
+const Plan = mongoose.model("Plan");
 
-function normalizeEngagementIds(values = []) {
-  const unique = new Set();
-  const ids = [];
+const TERMINAL_JOB_STATUSES = [
+  "completed",
+  "success",
+  "failed",
+  "blocked",
+  "timeout",
+  "killed"
+];
+
+const FULL_TOOL_WHITELIST = [
+  "http_headers_probe",
+  "tls_metadata_probe",
+  "dns_lookup_probe",
+  "nuclei_scan",
+  "nikto_scan",
+  "nmap_tcp_scan",
+  "sqlmap_detect"
+];
+
+function normalizeObjectIds(values = []) {
+  const out = [];
+  const seen = new Set();
   for (const value of values) {
-    const asString = String(value || "").trim();
-    if (!mongoose.Types.ObjectId.isValid(asString)) {
+    const id = String(value || "").trim();
+    if (!mongoose.Types.ObjectId.isValid(id) || seen.has(id)) {
       continue;
     }
-    if (unique.has(asString)) {
-      continue;
-    }
-    unique.add(asString);
-    ids.push(new mongoose.Types.ObjectId(asString));
+    seen.add(id);
+    out.push(new mongoose.Types.ObjectId(id));
   }
-  return ids;
+  return out;
 }
 
-router.post("/fix-draft-statuses", requireDb, async (_req, res, next) => {
-  try {
-    const [rawJobEngagementIds, rawPlanEngagementIds] = await Promise.all([
-      ExecutionJob.distinct("engagementId"),
-      Plan.distinct("engagementId")
-    ]);
-    const engagementIds = normalizeEngagementIds([
-      ...rawJobEngagementIds,
-      ...rawPlanEngagementIds
-    ]);
-
-    if (engagementIds.length === 0) {
-      return res.status(200).json({
-        updated: 0,
-        scannedEngagementsWithArtifacts: 0
-      });
+function normalizeWhitelist(values = []) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  const normalized = [];
+  const seen = new Set();
+  for (const value of values) {
+    const v = String(value || "").trim();
+    if (!v || seen.has(v)) {
+      continue;
     }
+    normalized.push(v);
+    seen.add(v);
+  }
+  return normalized;
+}
 
-    const result = await Engagement.updateMany(
-      {
-        _id: { $in: engagementIds },
-        status: {
-          $in: ["draft", "DRAFT", "Draft"]
-        }
-      },
-      {
-        $set: { status: "running" }
+async function runFixOrphanedJobs() {
+  const cutoff = new Date(Date.now() - 10 * 60 * 1000);
+  const result = await ExecutionJob.updateMany(
+    {
+      status: "running",
+      startedAt: { $lt: cutoff }
+    },
+    {
+      $set: {
+        status: "failed",
+        errorMessage: "Orphaned job - auto-resolved by admin cleanup.",
+        finishedAt: new Date()
       }
+    }
+  );
+  return {
+    jobsCleaned: result.modifiedCount || 0,
+    cutoff: cutoff.toISOString()
+  };
+}
+
+async function runFixToolWhitelists() {
+  const startupWhitelist = normalizeWhitelist(STARTUP_SCAN_PROFILE.toolWhitelist);
+  const targetWhitelist =
+    startupWhitelist.length > 0 ? startupWhitelist : FULL_TOOL_WHITELIST;
+
+  const engagements = await Engagement.find({})
+    .select("_id constraints.toolWhitelist toolWhitelist")
+    .lean();
+
+  let updated = 0;
+  for (const engagement of engagements) {
+    const nested = normalizeWhitelist(engagement?.constraints?.toolWhitelist);
+    const legacy = normalizeWhitelist(engagement?.toolWhitelist);
+    const mergedCurrent = normalizeWhitelist([...nested, ...legacy]);
+    const hasAllRequired = targetWhitelist.every((tool) =>
+      mergedCurrent.includes(tool)
     );
 
-    return res.status(200).json({
-      updated: result.modifiedCount || 0,
-      scannedEngagementsWithArtifacts: engagementIds.length
+    if (hasAllRequired) {
+      continue;
+    }
+
+    const merged = normalizeWhitelist([...mergedCurrent, ...targetWhitelist]);
+    // eslint-disable-next-line no-await-in-loop
+    await Engagement.updateOne(
+      { _id: engagement._id },
+      { $set: { "constraints.toolWhitelist": merged } }
+    );
+    updated += 1;
+  }
+
+  return {
+    engagementsFixed: updated,
+    whitelist: targetWhitelist
+  };
+}
+
+async function runFixDraftStatuses() {
+  const [jobEngagementIdsRaw, planEngagementIdsRaw] = await Promise.all([
+    ExecutionJob.distinct("engagementId", {
+      status: { $in: TERMINAL_JOB_STATUSES }
+    }),
+    Plan.distinct("engagementId")
+  ]);
+
+  const activeEngagementIds = normalizeObjectIds([
+    ...jobEngagementIdsRaw,
+    ...planEngagementIdsRaw
+  ]);
+
+  if (activeEngagementIds.length === 0) {
+    return {
+      engagementsFixed: 0,
+      lookedIn: 0,
+      statusWritten: "running"
+    };
+  }
+
+  const result = await Engagement.updateMany(
+    {
+      _id: { $in: activeEngagementIds },
+      status: { $in: ["draft", "DRAFT"] }
+    },
+    {
+      // Schema-safe "active equivalent"
+      $set: { status: "running" }
+    }
+  );
+
+  return {
+    engagementsFixed: result.modifiedCount || 0,
+    lookedIn: activeEngagementIds.length,
+    statusWritten: "running"
+  };
+}
+
+router.post("/fix-draft-statuses", requireDb, async (_req, res) => {
+  try {
+    const result = await runFixDraftStatuses();
+    return res.json({
+      success: true,
+      ...result
     });
-  } catch (error) {
-    return next(error);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
-router.post("/fix-tool-whitelists", requireDb, async (_req, res, next) => {
+router.post("/fix-tool-whitelists", requireDb, async (_req, res) => {
   try {
-    const whitelist = Array.isArray(STARTUP_SCAN_PROFILE.toolWhitelist)
-      ? STARTUP_SCAN_PROFILE.toolWhitelist
-      : [];
-    const engagements = await Engagement.find({})
-      .select("_id targetType constraints.toolWhitelist")
-      .lean();
+    const result = await runFixToolWhitelists();
+    return res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 
-    let updated = 0;
+router.post("/fix-orphaned-jobs", requireDb, async (_req, res) => {
+  try {
+    const result = await runFixOrphanedJobs();
+    return res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/fix-all", requireDb, async (_req, res) => {
+  const results = {};
+  try {
+    const orphaned = await runFixOrphanedJobs();
+    results.orphanedJobsCleaned = orphaned.jobsCleaned;
+
+    const whitelist = await runFixToolWhitelists();
+    results.whitelistsFixed = whitelist.engagementsFixed;
+    results.whitelist = whitelist.whitelist;
+
+    const drafts = await runFixDraftStatuses();
+    results.draftsFixed = drafts.engagementsFixed;
+    results.draftStatusWritten = drafts.statusWritten;
+
+    return res.json({
+      success: true,
+      results
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message, partialResults: results });
+  }
+});
+
+router.get("/health", requireDb, async (_req, res) => {
+  try {
+    const [draftCount, runningCount, activeCount, orphanedJobs, engagements] =
+      await Promise.all([
+        Engagement.countDocuments({ status: { $in: ["draft", "DRAFT"] } }),
+        Engagement.countDocuments({ status: "running" }),
+        // Legacy/manual values that may exist even if enum changed over time.
+        Engagement.countDocuments({ status: "active" }).catch(() => 0),
+        ExecutionJob.countDocuments({
+          status: "running",
+          startedAt: { $lt: new Date(Date.now() - 10 * 60 * 1000) }
+        }),
+        Engagement.find({})
+          .select("constraints.toolWhitelist toolWhitelist")
+          .lean()
+      ]);
+
+    let emptyWhitelists = 0;
     for (const engagement of engagements) {
-      const currentWhitelist = Array.isArray(engagement?.constraints?.toolWhitelist)
-        ? engagement.constraints.toolWhitelist
-        : [];
-      const normalizedCurrent = currentWhitelist.map((item) => String(item).trim());
-      const hasAllRequired = whitelist.every((requiredTool) =>
-        normalizedCurrent.includes(requiredTool)
-      );
-      if (hasAllRequired) {
-        continue;
+      const nested = normalizeWhitelist(engagement?.constraints?.toolWhitelist);
+      const legacy = normalizeWhitelist(engagement?.toolWhitelist);
+      if (nested.length === 0 && legacy.length === 0) {
+        emptyWhitelists += 1;
       }
-
-      const merged = [...new Set([...normalizedCurrent, ...whitelist])];
-      // eslint-disable-next-line no-await-in-loop
-      await Engagement.updateOne(
-        { _id: engagement._id },
-        { $set: { "constraints.toolWhitelist": merged } }
-      );
-      updated += 1;
     }
-    return res.status(200).json({
-      updated,
-      whitelistApplied: whitelist
-    });
-  } catch (error) {
-    return next(error);
-  }
-});
 
-router.post("/fix-orphaned-jobs", requireDb, async (_req, res, next) => {
-  try {
-    const cutoff = new Date(Date.now() - 10 * 60 * 1000);
-    const result = await ExecutionJob.updateMany(
-      {
-        status: "running",
-        startedAt: { $lt: cutoff }
+    return res.json({
+      engagements: {
+        draft: draftCount,
+        running: runningCount,
+        active: activeCount,
+        activeEquivalent: runningCount + activeCount
       },
-      {
-        $set: {
-          status: "failed",
-          errorMessage: "Job timed out - marked failed by cleanup.",
-          finishedAt: new Date()
-        }
-      }
-    );
-
-    return res.status(200).json({
-      cleaned: result.modifiedCount || 0,
-      cutoff: cutoff.toISOString()
+      orphanedJobs,
+      emptyWhitelists,
+      healthy: draftCount === 0 && orphanedJobs === 0 && emptyWhitelists === 0
     });
-  } catch (error) {
-    return next(error);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 

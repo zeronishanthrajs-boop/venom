@@ -1957,3 +1957,68 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
   - includes: `http_headers_probe`, `tls_metadata_probe`, `dns_lookup_probe`, `nuclei_scan`, `nikto_scan`, `nmap_tcp_scan`, `sqlmap_detect`
 - Progress telemetry consistency:
   - No active orphaned `running` jobs found in current dataset.
+
+---
+
+## [2026-05-05 12:02:59 +05:30] - VENOM v3.0 Full Autonomous Fix Run (Completed)
+
+**Status:** Completed locally with full verification pass
+
+### Files created
+- `backend/templates/report.html` (new styled HTML template for report rendering)
+
+### Files updated
+- `backend/routes/admin.js`
+  - added/validated: `POST /api/admin/fix-draft-statuses`
+  - added/validated: `POST /api/admin/fix-tool-whitelists`
+  - added/validated: `POST /api/admin/fix-orphaned-jobs`
+  - added/validated: `POST /api/admin/fix-all`
+  - added/validated: `GET /api/admin/health`
+  - schema-safe status normalization uses `running` as active-equivalent
+- `backend/routes/research.js`
+  - trigger now resilient with guaranteed fallback logging on crash path
+  - `GET /api/research/log` returns count/logs + `totalResearchPatterns`
+- `backend/services/researchEngine.js`
+  - rebuilt with safe per-source fetch/analyze flow
+  - non-fatal source error isolation
+  - heuristic fallback when Claude parse/API fails
+  - structured research report + persisted log write path
+- `backend/services/complianceMapper.js`
+  - strict OWASP mapping/exclusion logic
+  - CSP/header findings pinned to A05 behavior (A03 leakage removed)
+  - severity-default CVSS fallback (`MEDIUM -> 5.0`, no 5.5 hardcode)
+- `backend/services/reportGenerator.js`
+  - replaced PDFKit flow with Puppeteer + Handlebars HTML template rendering
+  - retains markdown/email report support
+- `dashboard/src/lib/api.ts`
+  - added `triggerAdminFixAll()`
+  - added `AdminFixAllResponse` type
+  - startup engagement payload now includes full startup tool whitelist
+- `dashboard/src/app/dashboard/page.tsx`
+  - owner-only **Run Data Migrations** button wired to `/api/admin/fix-all`
+  - progress display now avoids stale frozen percentages when no jobs are running
+
+### Packages added
+- `axios`
+- `@anthropic-ai/sdk`
+- `puppeteer`
+- `handlebars`
+
+### Validation results
+- Backend tests: `npm test` -> **PASS** (`50/50`)
+- Dashboard lint: `npm run lint` -> **PASS**
+- Dashboard build: `npm run build` -> **PASS**
+
+### Local smoke verification
+- `GET /health` -> `200`, DB connected (`source: external-uri`)
+- `POST /api/admin/fix-all` -> `success: true`
+- `GET /api/admin/health` -> `healthy: true`, `draft: 0`, `orphanedJobs: 0`, `emptyWhitelists: 0`
+- `POST /api/research/trigger` then `GET /api/research/log?limit=1` -> log entry present (`count >= 1`)
+- `GET /api/compliance/:engagementId` -> `cvssOverallScore: 5.0`, `A03: false`, `A05: true`
+- `GET /api/reports/:engagementId/pdf` -> generated PDF size `83702` bytes (styled template confirmed)
+
+### Current state after this run
+- Draft/whitelist/orphaned-job migrations available and callable from UI (owner) and API.
+- Research cycles now persist logs even on error paths.
+- OWASP/CVSS behavior aligns with latest audit requirements.
+- PDF report pipeline upgraded to template-driven Puppeteer output.

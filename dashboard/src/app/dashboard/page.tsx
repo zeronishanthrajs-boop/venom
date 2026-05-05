@@ -30,6 +30,7 @@ import {
   runExecutionJob,
   syncCves,
   triggerResearchCycle,
+  triggerAdminFixAll,
   verifyEvidenceChain,
   type AlertItem,
   type ChainRunResponse,
@@ -287,6 +288,7 @@ export default function DashboardPage() {
     useState<RealtimeStatusResponse | null>(null);
   const [researchLogs, setResearchLogs] = useState<ResearchLogEntry[]>([]);
   const [researchRunning, setResearchRunning] = useState(false);
+  const [runningMigrations, setRunningMigrations] = useState(false);
   const [socketEventCounter, setSocketEventCounter] = useState(0);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -491,6 +493,40 @@ export default function DashboardPage() {
       );
     } finally {
       setResearchRunning(false);
+    }
+  }
+
+  async function handleRunDataMigrations() {
+    if (!session || session.role !== "owner") {
+      return;
+    }
+
+    setRunningMigrations(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const result = await triggerAdminFixAll(session);
+      const details = result?.results || {
+        orphanedJobsCleaned: 0,
+        whitelistsFixed: 0,
+        draftsFixed: 0
+      };
+      setMessage(
+        `Data migrations complete: orphaned jobs ${details.orphanedJobsCleaned}, whitelists ${details.whitelistsFixed}, draft statuses ${details.draftsFixed}.`
+      );
+      await loadEngagementData(session, false);
+      await loadWeek7Telemetry(session);
+      await loadWeek11ControlPlane(session);
+      await loadWeek12Ops(session);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to run data migrations."
+      );
+    } finally {
+      setRunningMigrations(false);
     }
   }
 
@@ -1263,6 +1299,16 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="flex gap-2">
+            {session.role === "owner" ? (
+              <button
+                type="button"
+                onClick={() => void handleRunDataMigrations()}
+                disabled={runningMigrations}
+                className="rounded-xl border border-violet-500/45 bg-violet-500/10 px-3 py-2 text-sm font-medium text-violet-200 shadow-sm transition hover:-translate-y-px hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {runningMigrations ? "Running Migrations..." : "Run Data Migrations"}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => router.push("/onboard")}
@@ -1685,6 +1731,36 @@ export default function DashboardPage() {
                     ? executionChainStatusRaw
                     : null;
                 const evidenceStatus = evidenceStatusByEngagement[engagement._id] || null;
+                const progressSnapshot = progressByEngagement[engagement._id] || null;
+                const reportSummary = report?.summary || null;
+                const reportTotalJobs = reportSummary?.totalExecutionJobs || 0;
+                const reportTerminalJobs =
+                  (reportSummary?.successfulJobs || 0) +
+                  (reportSummary?.failedJobs || 0) +
+                  (reportSummary?.blockedJobs || 0) +
+                  (reportSummary?.timeoutJobs || 0);
+                const reportRunningJobs = reportSummary?.runningJobs || 0;
+                const fallbackProgressFromReport =
+                  reportTotalJobs > 0
+                    ? Math.round((reportTerminalJobs / reportTotalJobs) * 100)
+                    : null;
+                const hasCompletedWithoutRunning =
+                  reportTotalJobs > 0 && reportRunningJobs === 0;
+                const computedProgressPercent = hasCompletedWithoutRunning
+                  ? 100
+                  : progressSnapshot?.progressPercent ??
+                    fallbackProgressFromReport ??
+                    0;
+                const progressPercent = Math.max(
+                  0,
+                  Math.min(100, computedProgressPercent)
+                );
+                const progressLabel = hasCompletedWithoutRunning
+                  ? "execution-complete"
+                  : progressSnapshot?.currentPhase ||
+                    (reportTotalJobs > 0 ? "execution-running" : "idle");
+                const showProgress =
+                  Boolean(progressSnapshot) || reportTotalJobs > 0;
 
                 return (
                   <article
@@ -2359,22 +2435,19 @@ export default function DashboardPage() {
                       </>
                     )}
 
-                    {progressByEngagement[engagement._id] ? (
+                    {showProgress ? (
                       <div className="mt-2">
                         <div className="mb-1 flex items-center justify-between text-xs text-slate-300">
                           <span>
-                            Progress:{" "}
-                            {progressByEngagement[engagement._id].currentPhase}
+                            Progress: {progressLabel}
                           </span>
-                          <span>
-                            {progressByEngagement[engagement._id].progressPercent}%
-                          </span>
+                          <span>{progressPercent}%</span>
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-slate-800">
                           <div
                             className="h-full rounded-full bg-accent transition-all"
                             style={{
-                              width: `${progressByEngagement[engagement._id].progressPercent}%`
+                              width: `${progressPercent}%`
                             }}
                           />
                         </div>

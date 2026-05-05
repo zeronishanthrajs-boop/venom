@@ -428,6 +428,17 @@ export type ResearchLogsResponse = {
   logs: ResearchLogEntry[];
 };
 
+export type AdminFixAllResponse = {
+  success: boolean;
+  results: {
+    orphanedJobsCleaned: number;
+    whitelistsFixed: number;
+    draftsFixed: number;
+    draftStatusWritten?: string;
+    whitelist?: string[];
+  };
+};
+
 export type RealtimeTokenResponse = {
   token: string;
   engagementId?: string | null;
@@ -607,6 +618,15 @@ function buildHeaders(session: VenomSession) {
 }
 
 const API_TIMEOUT_MS = 15000;
+const STARTUP_TOOL_WHITELIST = [
+  "http_headers_probe",
+  "tls_metadata_probe",
+  "dns_lookup_probe",
+  "nuclei_scan",
+  "nikto_scan",
+  "nmap_tcp_scan",
+  "sqlmap_detect"
+];
 
 async function apiFetch(
   path: string,
@@ -771,7 +791,7 @@ export async function createEngagement(
         scopeOfWork: "Week 3 dashboard test engagement"
       },
       constraints: {
-        toolWhitelist: [],
+        toolWhitelist: STARTUP_TOOL_WHITELIST,
         noDestructiveOps: true,
         quietMode: false,
         maxConcurrentOps: 1,
@@ -1161,6 +1181,17 @@ export async function triggerResearchCycle(
   }, 120000);
 
   return parseResponse<ResearchRunResponse>(response);
+}
+
+export async function triggerAdminFixAll(
+  session: VenomSession
+): Promise<AdminFixAllResponse> {
+  const response = await apiFetch("/api/admin/fix-all", {
+    method: "POST",
+    headers: buildHeaders(session)
+  }, 120000);
+
+  return parseResponse<AdminFixAllResponse>(response);
 }
 
 export async function fetchDecisionBrief(
