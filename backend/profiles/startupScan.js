@@ -3,7 +3,10 @@ const STARTUP_SCAN_PROFILE = {
     "http_headers_probe",
     "tls_metadata_probe",
     "dns_lookup_probe",
-    "nuclei_scan"
+    "nuclei_scan",
+    "nikto_scan",
+    "nmap_tcp_scan",
+    "sqlmap_detect"
   ],
   noDestructiveOps: true,
   quietMode: false,
@@ -21,4 +24,3 @@ const STARTUP_SCAN_PROFILE = {
 module.exports = {
   STARTUP_SCAN_PROFILE
 };
-

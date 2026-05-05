@@ -1877,3 +1877,36 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
   - `cvssOverallScore = 5.0`
   - OWASP breakdown contains `A05`
   - OWASP breakdown does **not** contain `A03`.
+
+---
+
+## [2026-05-05 11:21:18 +05:30] - Round 3 Live Stabilization (Draft/Whitelist/Progress)
+
+**Status:** Implemented in code + local verification complete
+
+### Issue 1 - Legacy engagement stuck in `draft`
+- Hardened admin migration route in [admin.js](/mnt/c/Users/nisha/Music/VENOM/backend/routes/admin.js):
+  - `POST /api/admin/fix-draft-statuses` now reconciles from both `ExecutionJob` and `Plan` artifacts.
+  - Case-insensitive draft handling (`draft`, `DRAFT`, `Draft`) before normalization to schema-safe `running`.
+  - Returns `scannedEngagementsWithArtifacts` for better observability.
+
+### Issue 2 - Tool whitelist blocks (`nuclei`/`nikto`/`nmap`/`sqlmap`)
+- Expanded startup profile whitelist in [startupScan.js](/mnt/c/Users/nisha/Music/VENOM/backend/profiles/startupScan.js):
+  - Added `nikto_scan`, `nmap_tcp_scan`, `sqlmap_detect`.
+- Added migration endpoint in [admin.js](/mnt/c/Users/nisha/Music/VENOM/backend/routes/admin.js):
+  - `POST /api/admin/fix-tool-whitelists`
+  - Updates `constraints.toolWhitelist` (correct nested schema path) when missing/empty.
+
+### Issue 3 - Progress bar frozen from orphaned `running` jobs
+- Added cleanup endpoint in [admin.js](/mnt/c/Users/nisha/Music/VENOM/backend/routes/admin.js):
+  - `POST /api/admin/fix-orphaned-jobs`
+  - Marks `running` jobs older than 10 minutes as `failed`, sets `finishedAt`, and writes timeout message.
+
+### Local verification snapshot
+- `POST /api/admin/fix-draft-statuses` -> endpoint reachable and returns structured result.
+- `POST /api/admin/fix-tool-whitelists` -> endpoint reachable and returns applied whitelist.
+- `POST /api/admin/fix-orphaned-jobs` -> endpoint reachable and returns cleanup count.
+- Build pipeline:
+  - `backend npm test` -> PASS (`50/50`)
+  - `dashboard npm run lint` -> PASS
+  - `dashboard npm run build` -> PASS
