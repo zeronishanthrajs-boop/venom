@@ -2287,3 +2287,46 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 ### Conclusion
 - The previously listed critical remediation blockers (PDF failure, missing RBAC on sensitive routes, CORS denial semantics, login throttling gap, header hardening gaps, and logging hygiene gaps) are resolved in code and validated locally.
 
+## [2026-05-06 22:56:24 +05:30] - CHECK: Saved-Page Issue Remediation Plan + Execution
+
+### Implementation Plan (Solve + Triple-Check + Push + Deploy)
+1. Add a secure export path that does not depend on browser “Save page as”:
+   - backend route for sanitized standalone HTML report export.
+2. Reduce sensitive data exposure in dashboard-rendered snapshots:
+   - mask operator email in UI header.
+3. Keep report exports resilient:
+   - retain PDF + Markdown paths and add sanitized HTML option.
+4. Extend auth test coverage for new export route.
+5. Triple-check gates:
+   - `backend npm test`
+   - `backend npm run test:integration`
+   - `dashboard npm run lint`
+   - `dashboard npm run build`
+6. Push to GitHub and deploy to Vercel + Render.
+7. Verify live endpoints after deploy.
+
+### Implemented Changes
+- Backend:
+  - Added sanitized HTML generator in `backend/services/reportGenerator.js`
+    - `generateHtmlReport(engagementId, { redacted })`
+    - email masking + target URL redaction helpers for sanitized export.
+  - Added route `GET /api/reports/:engagementId/html` in `backend/routes/reports.js`.
+- Dashboard:
+  - Added API helper `downloadBackendHtmlSnapshot` in `dashboard/src/lib/api.ts`.
+  - Added new advanced action button: `Download Sanitized HTML`.
+  - Masked top-bar session email display (no full email exposure).
+- Tests:
+  - Added auth coverage for `/api/reports/:id/html` in
+    `backend/tests/integration/routeAuthCoverage.test.js`.
+
+### Triple-Check Results
+- `backend npm test` -> PASS (`123/123`)
+- `backend npm run test:integration` -> PASS (`73/73`)
+- `dashboard npm run lint` -> PASS
+- `dashboard npm run build` -> PASS
+
+### Deployment & Verification
+- Pushed to `main` and deployed.
+- Vercel build completed and production alias updated.
+- Render health endpoint reachable and updated headers confirmed.
+

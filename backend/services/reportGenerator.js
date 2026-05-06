@@ -31,6 +31,29 @@ const RISK_BANNER_COLOR = {
   unknown: "#64748b"
 };
 
+function maskEmail(value) {
+  const text = String(value || "").trim().toLowerCase();
+  const atIndex = text.indexOf("@");
+  if (atIndex <= 1) {
+    return text || "unknown";
+  }
+  const local = text.slice(0, atIndex);
+  const domain = text.slice(atIndex + 1);
+  return `${local[0]}***${local[local.length - 1]}@${domain}`;
+}
+
+function redactTargetUrl(value) {
+  if (!value) {
+    return "n/a";
+  }
+  try {
+    const parsed = new URL(String(value));
+    return `${parsed.protocol}//${parsed.host}/[redacted]`;
+  } catch {
+    return String(value);
+  }
+}
+
 function resolveLocalChromiumPath() {
   const candidates = [
     process.env.CHROMIUM_PATH,
@@ -226,7 +249,8 @@ function buildMarkdownReport(context) {
   return lines.join("\n");
 }
 
-function toTemplateData(context) {
+function toTemplateData(context, options = {}) {
+  const redacted = Boolean(options.redacted);
   const generatedAt = new Date().toLocaleString("en-IN", {
     timeZone: "Asia/Kolkata"
   });
@@ -249,9 +273,13 @@ function toTemplateData(context) {
 
   return {
     engagementName: context.engagement.name || "Unnamed",
-    targetUrl: context.engagement.targetUrl || "n/a",
+    targetUrl: redacted
+      ? redactTargetUrl(context.engagement.targetUrl)
+      : context.engagement.targetUrl || "n/a",
     targetType: context.engagement.targetType || "website",
-    authorizedBy: context.engagement.authorization?.authorizedBy || "Authorized User",
+    authorizedBy: redacted
+      ? maskEmail(context.engagement.authorization?.authorizedBy || "Authorized User")
+      : context.engagement.authorization?.authorizedBy || "Authorized User",
     validFrom: formatDate(context.engagement.authorization?.validFrom),
     validUntil: formatDate(context.engagement.authorization?.validUntil),
     generatedAt,
@@ -288,10 +316,14 @@ function toTemplateData(context) {
   };
 }
 
-async function renderPdfFromTemplate(templateData) {
+function renderHtmlFromTemplate(templateData) {
   const templateHtml = fs.readFileSync(TEMPLATE_PATH, "utf-8");
   const template = handlebars.compile(templateHtml);
-  const html = template(templateData);
+  return template(templateData);
+}
+
+async function renderPdfFromTemplate(templateData) {
+  const html = renderHtmlFromTemplate(templateData);
 
   const PDF_TIMEOUT_MS = 45000;
   const pdfPromise = (async () => {
@@ -360,13 +392,21 @@ async function renderPdfFromTemplate(templateData) {
 
 async function generatePdfReport(engagementId) {
   const context = await loadReportContext(engagementId);
-  const templateData = toTemplateData(context);
+  const templateData = toTemplateData(context, { redacted: false });
   return await renderPdfFromTemplate(templateData);
 }
 
 async function generateMarkdownReport(engagementId) {
   const context = await loadReportContext(engagementId);
   return buildMarkdownReport(context);
+}
+
+async function generateHtmlReport(engagementId, options = {}) {
+  const context = await loadReportContext(engagementId);
+  const templateData = toTemplateData(context, {
+    redacted: options.redacted !== false
+  });
+  return renderHtmlFromTemplate(templateData);
 }
 
 function assertSmtpConfigured() {
@@ -429,6 +469,7 @@ module.exports = {
   flattenFindings,
   computeSeverityBreakdown,
   generatePdfReport,
+  generateHtmlReport,
   generateMarkdownReport,
   emailReport
 };

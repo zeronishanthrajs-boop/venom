@@ -44,6 +44,7 @@ const endpoints = [
   ["get", "/api/cves/stats"],
   ["get", "/api/cves/summary"],
   ["get", `/api/reports/${validId}/pdf`],
+  ["get", `/api/reports/${validId}/html`],
   ["get", `/api/reports/${validId}/markdown`],
   ["get", `/api/reports/${validId}/md`],
   ["post", `/api/reports/${validId}/email`],

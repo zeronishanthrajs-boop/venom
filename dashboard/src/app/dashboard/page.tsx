@@ -12,6 +12,7 @@ import {
   fetchRealtimeStatus,
   fetchResearchLogs,
   orchestrateSingleEngagement,
+  downloadBackendHtmlSnapshot,
   downloadBackendPdfReport,
   downloadBackendMarkdownReport,
   deleteEngagement,
@@ -82,6 +83,17 @@ function formatDate(value?: string) {
     return "Unknown";
   }
   return date.toLocaleString();
+}
+
+function maskEmailForDisplay(value: string) {
+  const text = String(value || "").trim().toLowerCase();
+  const atIndex = text.indexOf("@");
+  if (atIndex <= 1) {
+    return text || "unknown";
+  }
+  const local = text.slice(0, atIndex);
+  const domain = text.slice(atIndex + 1);
+  return `${local[0]}***${local[local.length - 1]}@${domain}`;
 }
 
 function DownloadIcon() {
@@ -1164,6 +1176,42 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleDownloadSanitizedSnapshot(engagementId: string) {
+    if (!session) {
+      return;
+    }
+
+    setDownloadingById((prev) => ({ ...prev, [engagementId]: true }));
+    setError("");
+    setMessage("");
+
+    try {
+      const engagementName =
+        engagements.find((item) => item._id === engagementId)?.name ||
+        "venom-engagement-report";
+      const safeName = engagementName
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      const html = await downloadBackendHtmlSnapshot(session, engagementId);
+      const blob = new Blob([html], { type: "text/html" });
+      triggerBlobDownload(
+        blob,
+        `${safeName || "venom-engagement"}-${engagementId}-sanitized.html`
+      );
+      setMessage("Sanitized offline HTML snapshot downloaded successfully.");
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to download sanitized snapshot."
+      );
+    } finally {
+      setDownloadingById((prev) => ({ ...prev, [engagementId]: false }));
+    }
+  }
+
   async function handleEmailReport(engagementId: string) {
     if (!session) {
       return;
@@ -1314,7 +1362,7 @@ export default function DashboardPage() {
               Know your security posture. Fix what matters. Ship confidently.
             </p>
             <p className="mt-2 text-sm text-slate-400">
-              Logged in as {session.email} ({session.role})
+              Logged in as {maskEmailForDisplay(session.email)} ({session.role})
             </p>
           </div>
           <div className="flex gap-2">
@@ -1992,6 +2040,21 @@ export default function DashboardPage() {
                             {downloadingById[engagement._id]
                               ? "Downloading..."
                               : "Download Report"}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleDownloadSanitizedSnapshot(engagement._id)
+                          }
+                          disabled={Boolean(downloadingById[engagement._id])}
+                          className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-600 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          <DownloadIcon />
+                          <span>
+                            {downloadingById[engagement._id]
+                              ? "Downloading..."
+                              : "Download Sanitized HTML"}
                           </span>
                         </button>
                         <button

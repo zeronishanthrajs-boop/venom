@@ -1057,6 +1057,28 @@ export async function downloadBackendMarkdownReport(
   return response.text();
 }
 
+export async function downloadBackendHtmlSnapshot(
+  session: VenomSession,
+  engagementId: string
+): Promise<string> {
+  const response = await apiFetch(
+    `/api/reports/${encodeURIComponent(engagementId)}/html`,
+    {
+      method: "GET",
+      headers: buildHeaders(session),
+      cache: "no-store"
+    },
+    45000
+  );
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throwApiError(response, payload);
+  }
+
+  return response.text();
+}
+
 export async function fetchPromptActive(
   session: VenomSession
 ): Promise<PromptActiveResponse> {
