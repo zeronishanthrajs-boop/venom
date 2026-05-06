@@ -670,11 +670,6 @@ function throwApiError(response: Response, payload: unknown): never {
       : "";
 
   if (!response.ok) {
-    console.error("VENOM bridge request failed", {
-      status: response.status,
-      payload
-    });
-
     if (response.status === 401) {
       throw new Error(
         "Unauthorized request. Re-login and verify VENOM_BACKEND_API_KEY matches backend VENOM_API_KEY."

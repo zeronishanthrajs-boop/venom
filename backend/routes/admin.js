@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const mongoose = require("mongoose");
 const requireDb = require("../middleware/requireDb");
+const { requireRole } = require("../middleware/rbac");
 const { STARTUP_SCAN_PROFILE } = require("../profiles/startupScan");
 
 const Engagement = mongoose.model("Engagement");
@@ -154,7 +155,7 @@ async function runFixDraftStatuses() {
   };
 }
 
-router.post("/fix-draft-statuses", requireDb, async (_req, res) => {
+router.post("/fix-draft-statuses", requireRole("admin", "owner"), requireDb, async (_req, res) => {
   try {
     const result = await runFixDraftStatuses();
     return res.json({
@@ -166,7 +167,7 @@ router.post("/fix-draft-statuses", requireDb, async (_req, res) => {
   }
 });
 
-router.post("/fix-tool-whitelists", requireDb, async (_req, res) => {
+router.post("/fix-tool-whitelists", requireRole("admin", "owner"), requireDb, async (_req, res) => {
   try {
     const result = await runFixToolWhitelists();
     return res.json({
@@ -178,7 +179,7 @@ router.post("/fix-tool-whitelists", requireDb, async (_req, res) => {
   }
 });
 
-router.post("/fix-orphaned-jobs", requireDb, async (_req, res) => {
+router.post("/fix-orphaned-jobs", requireRole("admin", "owner"), requireDb, async (_req, res) => {
   try {
     const result = await runFixOrphanedJobs();
     return res.json({
@@ -190,7 +191,7 @@ router.post("/fix-orphaned-jobs", requireDb, async (_req, res) => {
   }
 });
 
-router.post("/fix-all", requireDb, async (_req, res) => {
+router.post("/fix-all", requireRole("admin", "owner"), requireDb, async (_req, res) => {
   const results = {};
   try {
     const orphaned = await runFixOrphanedJobs();
@@ -213,7 +214,7 @@ router.post("/fix-all", requireDb, async (_req, res) => {
   }
 });
 
-router.get("/health", requireDb, async (_req, res) => {
+router.get("/health", requireRole("admin", "owner"), requireDb, async (_req, res) => {
   try {
     const [draftCount, runningCount, activeCount, orphanedJobs, engagements] =
       await Promise.all([

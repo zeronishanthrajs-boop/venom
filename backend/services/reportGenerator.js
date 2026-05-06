@@ -31,6 +31,24 @@ const RISK_BANNER_COLOR = {
   unknown: "#64748b"
 };
 
+function resolveLocalChromiumPath() {
+  const candidates = [
+    process.env.CHROMIUM_PATH,
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 function flattenFindings(jobs = []) {
   return jobs.flatMap((job) => {
     const outputFindings = Array.isArray(job.output?.findings)
@@ -279,20 +297,41 @@ async function renderPdfFromTemplate(templateData) {
   const pdfPromise = (async () => {
     let browser;
     try {
-      const chromiumPath =
-        process.env.CHROMIUM_PATH || (await chromium.executablePath());
+      let chromiumPath = process.env.CHROMIUM_PATH || (await chromium.executablePath());
+      let launchArgs = [
+        ...chromium.args,
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--single-process"
+      ];
+      let headlessMode = chromium.headless ?? true;
+
+      const localPath = resolveLocalChromiumPath();
+      if (process.platform === "win32" && localPath) {
+        chromiumPath = localPath;
+        launchArgs = ["--disable-dev-shm-usage", "--disable-gpu"];
+        headlessMode = true;
+      } else if (!chromiumPath || !fs.existsSync(chromiumPath)) {
+        if (localPath) {
+          chromiumPath = localPath;
+          launchArgs = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"];
+          headlessMode = true;
+        }
+      }
+
+      if (!chromiumPath) {
+        throw new Error(
+          "No Chromium executable found. Set CHROMIUM_PATH for local PDF generation."
+        );
+      }
+
       browser = await puppeteer.launch({
-        args: [
-          ...chromium.args,
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-gpu",
-          "--single-process"
-        ],
+        args: launchArgs,
         defaultViewport: chromium.defaultViewport,
         executablePath: chromiumPath,
-        headless: chromium.headless ?? true
+        headless: headlessMode
       });
 
       const page = await browser.newPage();

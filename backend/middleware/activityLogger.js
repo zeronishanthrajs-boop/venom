@@ -1,5 +1,6 @@
 const ActivityLog = require("../models/ActivityLog");
 const { getDbStatus } = require("../config/db");
+const { logger } = require("../config/logger");
 
 module.exports = function activityLogger(req, res, next) {
   const startedAt = Date.now();
@@ -8,8 +9,16 @@ module.exports = function activityLogger(req, res, next) {
     const durationMs = Date.now() - startedAt;
     const userId = req.user?.id || "anonymous";
     const userRole = req.user?.role || "unknown";
-    console.log(
-      `[${new Date().toISOString()}] ${req.method} ${req.originalUrl} user=${userId} role=${userRole} status=${res.statusCode} duration_ms=${durationMs}`
+    logger.info(
+      {
+        method: req.method,
+        path: req.originalUrl,
+        userId,
+        userRole,
+        statusCode: res.statusCode,
+        durationMs
+      },
+      "HTTP activity"
     );
 
     if (getDbStatus().readyState !== 1) {

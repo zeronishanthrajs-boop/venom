@@ -1,5 +1,6 @@
 const express = require("express");
 const requireDb = require("../middleware/requireDb");
+const { logger } = require("../config/logger");
 const {
   evolvePrompts,
   getPromptHistory
@@ -30,7 +31,10 @@ router.post("/prompts", requireDb, async (req, res, next) => {
           createdBy
         });
       } catch (error) {
-        console.error("[PromptEvolver] Manual trigger failed:", error.message);
+        logger.error(
+          { error: error.message },
+          "Prompt evolver manual trigger failed"
+        );
       }
     });
 

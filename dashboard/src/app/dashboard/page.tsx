@@ -1141,14 +1141,17 @@ export default function DashboardPage() {
         );
         setMessage("Backend PDF report downloaded successfully.");
       } catch (pdfError) {
-        console.warn("[Report] PDF failed. Falling back to markdown.", pdfError);
+        const fallbackReason =
+          pdfError instanceof Error ? pdfError.message : "Unknown PDF error";
         const markdown = await downloadBackendMarkdownReport(session, engagementId);
         const mdBlob = new Blob([markdown], { type: "text/markdown" });
         triggerBlobDownload(
           mdBlob,
           `${safeName || "venom-engagement"}-${engagementId}.md`
         );
-        setMessage("PDF unavailable. Downloaded markdown fallback report.");
+        setMessage(
+          `PDF unavailable (${fallbackReason}). Downloaded markdown fallback report.`
+        );
       }
     } catch (requestError) {
       const message =

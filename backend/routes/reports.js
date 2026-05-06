@@ -1,5 +1,6 @@
 const express = require("express");
 const requireDb = require("../middleware/requireDb");
+const { logger } = require("../config/logger");
 const {
   emailReport,
   generateMarkdownReport,
@@ -20,7 +21,10 @@ router.get("/:engagementId/pdf", requireDb, async (req, res) => {
     res.setHeader("Content-Length", pdf.length);
     return res.status(200).send(pdf);
   } catch (error) {
-    console.error("[PDF Route] Generation failed:", error?.message || error);
+    logger.error(
+      { error: error?.message || String(error) },
+      "PDF generation failed"
+    );
     if (error?.name === "CastError") {
       return res.status(400).json({ error: "Invalid engagement id" });
     }

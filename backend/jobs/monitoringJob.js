@@ -2,6 +2,7 @@ const cron = require("node-cron");
 const Engagement = require("../models/Engagement");
 const { orchestrateSingle } = require("../services/orchestrator");
 const { createSnapshot, detectChanges } = require("../services/changeDetector");
+const { logger } = require("../config/logger");
 
 let task = null;
 
@@ -37,14 +38,22 @@ async function runMonitoringCycle() {
       );
       // eslint-disable-next-line no-await-in-loop
       const delta = await detectChanges(String(engagement._id));
-      console.log(
-        `[MonitoringJob] ${engagement.targetUrl} -> ${
-          delta.changesFound ? "changes_detected" : "no_changes"
-        }`
+      logger.info(
+        {
+          job: "monitoring",
+          targetUrl: engagement.targetUrl,
+          result: delta.changesFound ? "changes_detected" : "no_changes"
+        },
+        "Monitoring cycle processed engagement"
       );
     } catch (error) {
-      console.error(
-        `[MonitoringJob] Failed for ${engagement.targetUrl}: ${error.message}`
+      logger.error(
+        {
+          job: "monitoring",
+          targetUrl: engagement.targetUrl,
+          error: error.message
+        },
+        "Monitoring cycle failed for engagement"
       );
     }
   }
@@ -52,7 +61,10 @@ async function runMonitoringCycle() {
 
 function startMonitoringJob() {
   if (!isEnabled()) {
-    console.log("[MonitoringJob] Disabled (CONTINUOUS_SCAN_ENABLED != true).");
+    logger.info(
+      { job: "monitoring" },
+      "Disabled (CONTINUOUS_SCAN_ENABLED != true)"
+    );
     return;
   }
 
@@ -62,7 +74,7 @@ function startMonitoringJob() {
 
   const schedule = getSchedule();
   if (!cron.validate(schedule)) {
-    console.error(`[MonitoringJob] Invalid cron schedule: ${schedule}`);
+    logger.error({ job: "monitoring", schedule }, "Invalid cron schedule");
     return;
   }
 
@@ -70,17 +82,21 @@ function startMonitoringJob() {
     schedule,
     async () => {
       try {
-        console.log("[MonitoringJob] Starting scheduled monitoring cycle...");
+        logger.info({ job: "monitoring" }, "Starting scheduled monitoring cycle");
         await runMonitoringCycle();
       } catch (error) {
-        console.error("[MonitoringJob] Monitoring cycle failed:", error.message);
+        logger.error(
+          { job: "monitoring", error: error.message },
+          "Monitoring cycle failed"
+        );
       }
     },
     { timezone: getTimezone() }
   );
 
-  console.log(
-    `[MonitoringJob] Scheduled (${schedule}) timezone=${getTimezone()}`
+  logger.info(
+    { job: "monitoring", cron: schedule, timezone: getTimezone() },
+    "Monitoring job scheduled"
   );
 }
 
@@ -98,4 +114,3 @@ module.exports = {
   stopMonitoringJob,
   runMonitoringCycle
 };
-

@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const Engagement = require("../models/Engagement");
 const ActivityLog = require("../models/ActivityLog");
 const requireDb = require("../middleware/requireDb");
+const { requireRole } = require("../middleware/rbac");
 const {
   getScopeDashboard,
   previewEngagementActions,
@@ -13,7 +14,11 @@ const {
 
 const router = express.Router();
 
-router.get("/scope/:engagementId", requireDb, async (req, res, next) => {
+router.get(
+  "/scope/:engagementId",
+  requireRole("admin", "owner", "operator", "viewer"),
+  requireDb,
+  async (req, res, next) => {
   try {
     const engagement = await Engagement.findById(req.params.engagementId).lean();
     if (!engagement) {
@@ -26,9 +31,14 @@ router.get("/scope/:engagementId", requireDb, async (req, res, next) => {
     }
     return next(error);
   }
-});
+  }
+);
 
-router.get("/preview/:engagementId", requireDb, async (req, res, next) => {
+router.get(
+  "/preview/:engagementId",
+  requireRole("admin", "owner", "operator", "viewer"),
+  requireDb,
+  async (req, res, next) => {
   try {
     const engagement = await Engagement.findById(req.params.engagementId).lean();
     if (!engagement) {
@@ -46,9 +56,14 @@ router.get("/preview/:engagementId", requireDb, async (req, res, next) => {
     }
     return next(error);
   }
-});
+  }
+);
 
-router.get("/killswitch", requireDb, async (req, res, next) => {
+router.get(
+  "/killswitch",
+  requireRole("admin", "owner", "operator", "viewer"),
+  requireDb,
+  async (req, res, next) => {
   try {
     const engagementId = req.query.engagementId;
     if (engagementId && !mongoose.isValidObjectId(engagementId)) {
@@ -59,9 +74,14 @@ router.get("/killswitch", requireDb, async (req, res, next) => {
   } catch (error) {
     return next(error);
   }
-});
+  }
+);
 
-router.post("/killswitch/global", requireDb, async (req, res, next) => {
+router.post(
+  "/killswitch/global",
+  requireRole("admin", "owner"),
+  requireDb,
+  async (req, res, next) => {
   try {
     const state = await setGlobalKillSwitch(
       req.body?.active,
@@ -72,9 +92,14 @@ router.post("/killswitch/global", requireDb, async (req, res, next) => {
   } catch (error) {
     return next(error);
   }
-});
+  }
+);
 
-router.post("/killswitch/engagement/:engagementId", requireDb, async (req, res, next) => {
+router.post(
+  "/killswitch/engagement/:engagementId",
+  requireRole("admin", "owner", "operator"),
+  requireDb,
+  async (req, res, next) => {
   try {
     const engagement = await Engagement.findById(req.params.engagementId).lean();
     if (!engagement) {
@@ -94,9 +119,14 @@ router.post("/killswitch/engagement/:engagementId", requireDb, async (req, res, 
     }
     return next(error);
   }
-});
+  }
+);
 
-router.get("/activity/recent", requireDb, async (req, res, next) => {
+router.get(
+  "/activity/recent",
+  requireRole("admin", "owner", "operator", "viewer"),
+  requireDb,
+  async (req, res, next) => {
   try {
     const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 200);
     const logs = await ActivityLog.find()
@@ -110,6 +140,7 @@ router.get("/activity/recent", requireDb, async (req, res, next) => {
   } catch (error) {
     return next(error);
   }
-});
+  }
+);
 
 module.exports = router;

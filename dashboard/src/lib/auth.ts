@@ -10,13 +10,19 @@ export type DashboardAuthSession = {
   expiresAt: string;
 };
 
-const DEFAULT_DEV_SESSION_SECRET = "venom-local-session-secret-change-me";
+let runtimeFallbackSecret = "";
 
 function getSessionSecret() {
-  return (
-    process.env.VENOM_DASHBOARD_SESSION_SECRET?.trim() ||
-    DEFAULT_DEV_SESSION_SECRET
-  );
+  const configured = process.env.VENOM_DASHBOARD_SESSION_SECRET?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  if (!runtimeFallbackSecret) {
+    runtimeFallbackSecret = crypto.randomBytes(32).toString("hex");
+  }
+
+  return runtimeFallbackSecret;
 }
 
 function toBase64Url(value: string) {

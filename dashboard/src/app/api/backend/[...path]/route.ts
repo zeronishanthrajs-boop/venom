@@ -12,11 +12,21 @@ type RouteContext = {
 };
 
 function getBackendBaseUrl() {
-  return (
+  const configured =
     process.env.VENOM_BACKEND_BASE_URL?.trim() ||
-    process.env.NEXT_PUBLIC_VENOM_API_BASE_URL?.trim() ||
-    "http://localhost:5000"
-  );
+    process.env.NEXT_PUBLIC_VENOM_API_BASE_URL?.trim();
+
+  if (configured) {
+    return configured;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "VENOM_BACKEND_BASE_URL is required in production for backend bridge routing."
+    );
+  }
+
+  return "http://localhost:5000";
 }
 
 function getBackendApiKey() {
@@ -86,8 +96,7 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
     if (error instanceof DOMException && error.name === "AbortError") {
       return NextResponse.json(
         {
-          error: `Upstream timeout after ${UPSTREAM_TIMEOUT_MS}ms`,
-          upstreamUrl
+          error: `Upstream timeout after ${UPSTREAM_TIMEOUT_MS}ms`
         },
         { status: 504 }
       );
@@ -97,8 +106,7 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
       error instanceof Error ? error.message : "Unknown upstream fetch error";
     return NextResponse.json(
       {
-        error: `Upstream fetch failed: ${message}`,
-        upstreamUrl
+        error: `Upstream fetch failed: ${message}`
       },
       { status: 502 }
     );
@@ -112,8 +120,6 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
   if (contentType) {
     responseHeaders.set("content-type", contentType);
   }
-  responseHeaders.set("x-venom-upstream-url", upstreamUrl);
-  responseHeaders.set("x-venom-upstream-status", String(upstreamResponse.status));
 
   return new NextResponse(payload, {
     status: upstreamResponse.status,

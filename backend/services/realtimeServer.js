@@ -1,5 +1,6 @@
 const crypto = require("node:crypto");
 const { WebSocketServer } = require("ws");
+const { logger } = require("../config/logger");
 
 const roomMap = new Map();
 const socketMeta = new WeakMap();
@@ -251,7 +252,7 @@ function initWebSocketServer(server) {
     });
   });
 
-  console.log("[Realtime] WebSocket server initialized on /ws");
+  logger.info({ path: "/ws" }, "Realtime WebSocket server initialized");
   return wss;
 }
 
@@ -287,4 +288,3 @@ module.exports = {
     getTokenTtlMs
   }
 };
-

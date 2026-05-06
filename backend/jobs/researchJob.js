@@ -1,5 +1,6 @@
 const cron = require("node-cron");
 const { runResearchCycle } = require("../services/researchEngine");
+const { logger } = require("../config/logger");
 
 let task = null;
 
@@ -17,7 +18,7 @@ function getTimezone() {
 
 function startResearchJob() {
   if (!isEnabled()) {
-    console.log("[ResearchJob] Disabled (ENABLE_RESEARCH_JOB != true).");
+    logger.info({ job: "research" }, "Disabled (ENABLE_RESEARCH_JOB != true)");
     return;
   }
 
@@ -29,13 +30,16 @@ function startResearchJob() {
     getSchedule(),
     async () => {
       try {
-        console.log("[ResearchJob] Starting scheduled research cycle...");
+        logger.info({ job: "research" }, "Starting scheduled research cycle");
         await runResearchCycle({
           trigger: "cron",
           createdBy: "research-job"
         });
       } catch (error) {
-        console.error("[ResearchJob] Failed:", error.message);
+        logger.error(
+          { job: "research", error: error.message },
+          "Scheduled research cycle failed"
+        );
       }
     },
     {
@@ -43,8 +47,9 @@ function startResearchJob() {
     }
   );
 
-  console.log(
-    `[ResearchJob] Scheduled (${getSchedule()}) timezone=${getTimezone()}`
+  logger.info(
+    { job: "research", cron: getSchedule(), timezone: getTimezone() },
+    "Research job scheduled"
   );
 }
 
@@ -60,4 +65,3 @@ module.exports = {
   startResearchJob,
   stopResearchJob
 };
-

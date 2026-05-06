@@ -1,5 +1,6 @@
 const axios = require("axios");
 const Anthropic = require("@anthropic-ai/sdk");
+const { logger } = require("../config/logger");
 
 const Pattern = require("../models/Pattern");
 const ResearchLog = require("../models/ResearchLog");
@@ -230,7 +231,10 @@ async function safeFetch(source) {
 
     return null;
   } catch (err) {
-    console.warn(`[Research] safeFetch failed for ${source.name}: ${err.message}`);
+    logger.warn(
+      { source: source.name, error: err.message },
+      "Research source fetch failed"
+    );
     return null;
   }
 }
@@ -325,7 +329,10 @@ Return JSON:
     }
     return parsed;
   } catch (err) {
-    console.warn(`[Research] Claude analysis failed for ${sourceName}: ${err.message}`);
+    logger.warn(
+      { source: sourceName, error: err.message },
+      "Research Claude analysis failed"
+    );
     return {
       techniques: buildHeuristicTechniques(sourceName, rawData),
       researchSummary: `Analysis failed: ${err.message}`

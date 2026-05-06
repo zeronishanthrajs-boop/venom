@@ -2072,3 +2072,218 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - Report endpoints:
   - `GET /api/reports/:id/md` -> `200` (working fallback)
   - `GET /api/reports/:id/pdf` -> local Windows test returned `500` due Chromium runtime mismatch; cloud-targeted Chromium path now in place for Render deployment.
+
+## [2026-05-06 21:14:35 +05:30] - Full Scrutiny Audit (Local + Render + Vercel + zeroops.in)
+
+**Status:** Completed deep audit sweep
+**Total issues logged:** 136
+**Breakdown:** 25 critical/high/medium/low findings + 61 route-test coverage gaps + 50 production console-log hygiene issues
+
+### A) Confirmed Runtime & Security Findings
+
+1. [CRITICAL] PDF generation fails on local Windows runtime - GET /api/reports/:id/pdf returns 500 with spawn ...\\Temp\\chromium ENOENT; local report workflow breaks without MD fallback.
+2. [CRITICAL] Admin routes lack role-based authorization - valid API key with x-user-role: guest can call GET /api/admin/health and migration endpoints.
+3. [CRITICAL] Control write endpoint lacks role gate - valid API key with guest role can call POST /api/control/killswitch/engagement/:id.
+4. [HIGH] Planner in production is still template fallback - latest plan shows plannerSource: template and fallbackReason: CLAUDE_API_KEY is not configured.
+5. [HIGH] CORS rejection path returns 500 - disallowed preflight origin receives 500 Internal server error instead of explicit denial semantics.
+6. [HIGH] Dashboard auth has no brute-force throttling - 20 invalid login attempts all returned 401 (no 429 or lockout).
+7. [HIGH] Missing CSP on Vercel dashboard pages - /login and /dashboard responses do not send Content-Security-Policy.
+8. [HIGH] Backend missing core security headers - /health lacks HSTS, CSP, COOP/CORP, X-Frame-Options, Referrer-Policy, Permissions-Policy.
+9. [HIGH] Backend still discloses Express fingerprint - X-Powered-By: Express present.
+10. [HIGH] Session secret has insecure default fallback - dashboard/src/lib/auth.ts uses hardcoded venom-local-session-secret-change-me when env missing.
+11. [MEDIUM] Session token payload is signed but not encrypted - user email/role/expiry are base64url-readable in cookie payload.
+12. [MEDIUM] Backend bridge leaks upstream internals - response exposes x-venom-upstream-url and x-venom-upstream-status to client.
+13. [MEDIUM] Dashboard security headers incomplete - missing X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, COOP/CORP.
+14. [MEDIUM] zeroops.in apex response missing multiple hardening headers - CSP, nosniff, frame-guard, referrer-policy, permissions-policy absent on redirect response.
+15. [MEDIUM] www.zeroops.in still missing CSP - strong headers present otherwise, but CSP absent.
+16. [MEDIUM] Technical view toggle has ambiguous behavior - labeled as deep-dive mode but user expectation of active scan start is not met by UI action.
+17. [MEDIUM] Bridge backend base defaults to localhost if env missing - deployment misconfig can silently target wrong backend host.
+18. [MEDIUM] Dashboard bundle has known moderate advisories - npm audit reported 2 moderate vulnerabilities via next/postcss chain.
+19. [MEDIUM] Multiple key dependencies outdated - backend (@anthropic-ai/sdk, puppeteer-core), dashboard (react, react-dom, typescript, eslint, @types/node).
+20. [MEDIUM] Research cycle still records source fetch errors in latest logs - cycle succeeds but with non-zero errors[], indicating partial feed fragility.
+21. [LOW] Unused backend dependency detected - pdfkit still listed though current report path is Chromium/HTML.
+22. [LOW] Unused dashboard dev dependencies detected - @tailwindcss/postcss and tailwindcss flagged by depcheck.
+23. [LOW] Massive component size risk - dashboard/src/app/dashboard/page.tsx is ~2486 lines and high-maintenance monolith.
+24. [LOW] API utility bloat risk - dashboard/src/lib/api.ts is ~1247 lines with broad responsibilities.
+25. [LOW] Temporary audit artifacts currently untracked in git - audit logs/files present and may pollute commits if not cleaned.
+
+### B) Missing Endpoint-Level Integration Coverage (61 issues)
+
+26. [MEDIUM] No dedicated integration test for endpoint POST '/prompts' in backend/routes\evolve.js:10.
+27. [MEDIUM] No dedicated integration test for endpoint GET '/prompts/history' in backend/routes\evolve.js:46.
+28. [MEDIUM] No dedicated integration test for endpoint POST '/' in backend/routes\learn.js:7.
+29. [MEDIUM] No dedicated integration test for endpoint GET '/scope/:engagementId' in backend/routes\control.js:16.
+30. [MEDIUM] No dedicated integration test for endpoint GET '/preview/:engagementId' in backend/routes\control.js:31.
+31. [MEDIUM] No dedicated integration test for endpoint GET '/killswitch' in backend/routes\control.js:51.
+32. [MEDIUM] No dedicated integration test for endpoint POST '/killswitch/global' in backend/routes\control.js:64.
+33. [MEDIUM] No dedicated integration test for endpoint POST '/killswitch/engagement/:engagementId' in backend/routes\control.js:77.
+34. [MEDIUM] No dedicated integration test for endpoint GET '/activity/recent' in backend/routes\control.js:99.
+35. [MEDIUM] No dedicated integration test for endpoint GET '/:engagementId' in backend/routes\evidence.js:7.
+36. [MEDIUM] No dedicated integration test for endpoint GET '/:engagementId/verify' in backend/routes\evidence.js:27.
+37. [MEDIUM] No dedicated integration test for endpoint POST '/:engagementId' in backend/routes\chain.js:7.
+38. [MEDIUM] No dedicated integration test for endpoint GET '/:engagementId' in backend/routes\compliance.js:24.
+39. [MEDIUM] No dedicated integration test for endpoint POST '/trigger' in backend/routes\research.js:48.
+40. [MEDIUM] No dedicated integration test for endpoint GET '/latest' in backend/routes\research.js:108.
+41. [MEDIUM] No dedicated integration test for endpoint GET '/log' in backend/routes\research.js:119.
+42. [MEDIUM] No dedicated integration test for endpoint POST '/' in backend/routes\engagements.js:404.
+43. [MEDIUM] No dedicated integration test for endpoint GET '/' in backend/routes\engagements.js:421.
+44. [MEDIUM] No dedicated integration test for endpoint GET '/:id' in backend/routes\engagements.js:436.
+45. [MEDIUM] No dedicated integration test for endpoint GET '/:id/report' in backend/routes\engagements.js:468.
+46. [MEDIUM] No dedicated integration test for endpoint DELETE '/:id' in backend/routes\engagements.js:530.
+47. [MEDIUM] No dedicated integration test for endpoint POST '/fix-draft-statuses' in backend/routes\admin.js:157.
+48. [MEDIUM] No dedicated integration test for endpoint POST '/fix-tool-whitelists' in backend/routes\admin.js:169.
+49. [MEDIUM] No dedicated integration test for endpoint POST '/fix-orphaned-jobs' in backend/routes\admin.js:181.
+50. [MEDIUM] No dedicated integration test for endpoint POST '/fix-all' in backend/routes\admin.js:193.
+51. [MEDIUM] No dedicated integration test for endpoint GET '/health' in backend/routes\admin.js:216.
+52. [MEDIUM] No dedicated integration test for endpoint POST '/sync' in backend/routes\cves.js:12.
+53. [MEDIUM] No dedicated integration test for endpoint GET '/' in backend/routes\cves.js:31.
+54. [MEDIUM] No dedicated integration test for endpoint GET '/stats' in backend/routes\cves.js:95.
+55. [MEDIUM] No dedicated integration test for endpoint GET '/summary' in backend/routes\cves.js:104.
+56. [MEDIUM] No dedicated integration test for endpoint GET '/:engagementId/pdf' in backend/routes\reports.js:11.
+57. [MEDIUM] No dedicated integration test for endpoint GET '/:engagementId/markdown' in backend/routes\reports.js:62.
+58. [MEDIUM] No dedicated integration test for endpoint GET '/:engagementId/md' in backend/routes\reports.js:63.
+59. [MEDIUM] No dedicated integration test for endpoint POST '/:engagementId/email' in backend/routes\reports.js:65.
+60. [MEDIUM] No dedicated integration test for endpoint POST '/:engagementId/brief' in backend/routes\decisions.js:10.
+61. [MEDIUM] No dedicated integration test for endpoint GET '/:engagementId/brief' in backend/routes\decisions.js:25.
+62. [MEDIUM] No dedicated integration test for endpoint GET '/overview' in backend/routes\metrics.js:17.
+63. [MEDIUM] No dedicated integration test for endpoint GET '/alerts' in backend/routes\metrics.js:100.
+64. [MEDIUM] No dedicated integration test for endpoint GET '/progress/:engagementId' in backend/routes\metrics.js:119.
+65. [MEDIUM] No dedicated integration test for endpoint GET '/progress' in backend/routes\metrics.js:151.
+66. [MEDIUM] No dedicated integration test for endpoint GET '/:engagementId/snapshots' in backend/routes\monitoring.js:8.
+67. [MEDIUM] No dedicated integration test for endpoint POST '/:engagementId/snapshot' in backend/routes\monitoring.js:26.
+68. [MEDIUM] No dedicated integration test for endpoint GET '/:engagementId/changes' in backend/routes\monitoring.js:46.
+69. [MEDIUM] No dedicated integration test for endpoint GET '/token' in backend/routes\realtime.js:6.
+70. [MEDIUM] No dedicated integration test for endpoint GET '/status' in backend/routes\realtime.js:28.
+71. [MEDIUM] No dedicated integration test for endpoint GET '/active' in backend/routes\prompts.js:13.
+72. [MEDIUM] No dedicated integration test for endpoint GET '/history' in backend/routes\prompts.js:25.
+73. [MEDIUM] No dedicated integration test for endpoint POST '/evolve' in backend/routes\prompts.js:39.
+74. [MEDIUM] No dedicated integration test for endpoint POST '/evolve/run' in backend/routes\prompts.js:55.
+75. [MEDIUM] No dedicated integration test for endpoint GET '/status' in backend/routes\orchestrate.js:11.
+76. [MEDIUM] No dedicated integration test for endpoint POST '/' in backend/routes\orchestrate.js:15.
+77. [MEDIUM] No dedicated integration test for endpoint POST '/:engagementId' in backend/routes\orchestrate.js:38.
+78. [MEDIUM] No dedicated integration test for endpoint POST '/' in backend/routes\plan.js:9.
+79. [MEDIUM] No dedicated integration test for endpoint GET '/engagement/:engagementId' in backend/routes\plan.js:83.
+80. [MEDIUM] No dedicated integration test for endpoint GET '/tools' in backend/routes\execute.js:9.
+81. [MEDIUM] No dedicated integration test for endpoint POST '/' in backend/routes\execute.js:13.
+82. [MEDIUM] No dedicated integration test for endpoint GET '/engagement/:engagementId' in backend/routes\execute.js:36.
+83. [MEDIUM] No dedicated integration test for endpoint GET '/:id' in backend/routes\execute.js:55.
+84. [MEDIUM] No dedicated integration test for endpoint POST '/' in backend/routes\patterns.js:12.
+85. [MEDIUM] No dedicated integration test for endpoint GET '/match' in backend/routes\patterns.js:54.
+86. [MEDIUM] No dedicated integration test for endpoint GET '/' in backend/routes\patterns.js:97.
+
+### C) Production Logging Hygiene Issues (50 issues)
+
+87. [LOW] Console logging statement in runtime path at dashboard/src\lib\api.ts:673 -> console.error("VENOM bridge request failed", {. Replace with structured logger + level control.
+88. [LOW] Console logging statement in runtime path at backend\server.js:137 -> console.error("Unhandled API error:", error);. Replace with structured logger + level control.
+89. [LOW] Console logging statement in runtime path at backend\server.js:151 -> console.log(`Server running on port ${port}`);. Replace with structured logger + level control.
+90. [LOW] Console logging statement in runtime path at backend\server.js:167 -> console.error("Error during in-memory DB shutdown:", error.message);. Replace with structured logger + level control.
+91. [LOW] Console logging statement in runtime path at backend\server.js:177 -> console.error("Failed to start backend:", error.message);. Replace with structured logger + level control.
+92. [LOW] Console logging statement in runtime path at backend\jobs\researchJob.js:20 -> console.log("[ResearchJob] Disabled (ENABLE_RESEARCH_JOB != true).");. Replace with structured logger + level control.
+93. [LOW] Console logging statement in runtime path at backend\jobs\researchJob.js:32 -> console.log("[ResearchJob] Starting scheduled research cycle...");. Replace with structured logger + level control.
+94. [LOW] Console logging statement in runtime path at backend\jobs\researchJob.js:38 -> console.error("[ResearchJob] Failed:", error.message);. Replace with structured logger + level control.
+95. [LOW] Console logging statement in runtime path at backend\jobs\researchJob.js:46 -> console.log(. Replace with structured logger + level control.
+96. [LOW] Console logging statement in runtime path at backend\jobs\monitoringJob.js:40 -> console.log(. Replace with structured logger + level control.
+97. [LOW] Console logging statement in runtime path at backend\jobs\monitoringJob.js:46 -> console.error(. Replace with structured logger + level control.
+98. [LOW] Console logging statement in runtime path at backend\jobs\monitoringJob.js:55 -> console.log("[MonitoringJob] Disabled (CONTINUOUS_SCAN_ENABLED != true).");. Replace with structured logger + level control.
+99. [LOW] Console logging statement in runtime path at backend\jobs\monitoringJob.js:65 -> console.error(`[MonitoringJob] Invalid cron schedule: ${schedule}`);. Replace with structured logger + level control.
+100. [LOW] Console logging statement in runtime path at backend\jobs\monitoringJob.js:73 -> console.log("[MonitoringJob] Starting scheduled monitoring cycle...");. Replace with structured logger + level control.
+101. [LOW] Console logging statement in runtime path at backend\jobs\monitoringJob.js:76 -> console.error("[MonitoringJob] Monitoring cycle failed:", error.message);. Replace with structured logger + level control.
+102. [LOW] Console logging statement in runtime path at backend\jobs\monitoringJob.js:82 -> console.log(. Replace with structured logger + level control.
+103. [LOW] Console logging statement in runtime path at backend\jobs\evolutionJob.js:20 -> console.log(. Replace with structured logger + level control.
+104. [LOW] Console logging statement in runtime path at backend\jobs\evolutionJob.js:29 -> console.error(`[evolution-job] ${reason} prompt evolution failed:`, error.message);. Replace with structured logger + level control.
+105. [LOW] Console logging statement in runtime path at backend\jobs\evolutionJob.js:51 -> console.error(`[evolution-job] invalid cron schedule: ${schedule}`);. Replace with structured logger + level control.
+106. [LOW] Console logging statement in runtime path at backend\jobs\evolutionJob.js:63 -> console.log(`[evolution-job] scheduled cron='${schedule}' timezone='${timezone}'`);. Replace with structured logger + level control.
+107. [LOW] Console logging statement in runtime path at dashboard/src\app\dashboard\page.tsx:1144 -> console.warn("[Report] PDF failed. Falling back to markdown.", pdfError);. Replace with structured logger + level control.
+108. [LOW] Console logging statement in runtime path at backend\jobs\cveJob.js:25 -> console.log(. Replace with structured logger + level control.
+109. [LOW] Console logging statement in runtime path at backend\jobs\cveJob.js:34 -> console.error(`[cve-job] ${reason} sync failed:`, error.message);. Replace with structured logger + level control.
+110. [LOW] Console logging statement in runtime path at backend\jobs\cveJob.js:57 -> console.error(`[cve-job] invalid cron schedule: ${schedule}`);. Replace with structured logger + level control.
+111. [LOW] Console logging statement in runtime path at backend\jobs\cveJob.js:71 -> console.log(`[cve-job] scheduled cron='${schedule}' timezone='${timezone}'`);. Replace with structured logger + level control.
+112. [LOW] Console logging statement in runtime path at backend\config\db.js:51 -> console.log("MongoDB connected (external URI)");. Replace with structured logger + level control.
+113. [LOW] Console logging statement in runtime path at backend\config\db.js:56 -> console.warn(. Replace with structured logger + level control.
+114. [LOW] Console logging statement in runtime path at backend\config\db.js:70 -> console.log("MongoDB connected (in-memory fallback)");. Replace with structured logger + level control.
+115. [LOW] Console logging statement in runtime path at backend\routes\research.js:83 -> console.error("[Research] Cycle crashed:", err.message);. Replace with structured logger + level control.
+116. [LOW] Console logging statement in runtime path at backend\routes\research.js:101 -> console.log("[Research] Fallback log written successfully.");. Replace with structured logger + level control.
+117. [LOW] Console logging statement in runtime path at backend\routes\research.js:103 -> console.error("[Research] Log write failed:", logErr.message);. Replace with structured logger + level control.
+118. [LOW] Console logging statement in runtime path at backend\routes\reports.js:23 -> console.error("[PDF Route] Generation failed:", error?.message || error);. Replace with structured logger + level control.
+119. [LOW] Console logging statement in runtime path at backend\routes\evolve.js:33 -> console.error("[PromptEvolver] Manual trigger failed:", error.message);. Replace with structured logger + level control.
+120. [LOW] Console logging statement in runtime path at backend\services\executionService.js:195 -> console.error("[AutoBrief] Failed:", error?.message || "unknown error");. Replace with structured logger + level control.
+121. [LOW] Console logging statement in runtime path at backend\services\executionService.js:210 -> console.error("[AutoSnapshot] Failed:", error?.message || "unknown error");. Replace with structured logger + level control.
+122. [LOW] Console logging statement in runtime path at backend\services\executionService.js:233 -> console.warn("[Realtime] Unable to broadcast tool result:", realtimeError.message);. Replace with structured logger + level control.
+123. [LOW] Console logging statement in runtime path at backend\services\executionService.js:239 -> console.warn(. Replace with structured logger + level control.
+124. [LOW] Console logging statement in runtime path at backend\services\executionService.js:252 -> console.warn("[Notifier] Unable to dispatch alerts:", notifyError.message);. Replace with structured logger + level control.
+125. [LOW] Console logging statement in runtime path at backend\services\planner.js:404 -> console.log("[Planner] Attempting plan generation:", {. Replace with structured logger + level control.
+126. [LOW] Console logging statement in runtime path at backend\services\planner.js:413 -> console.warn("[Planner] No CLAUDE_API_KEY - using template fallback.");. Replace with structured logger + level control.
+127. [LOW] Console logging statement in runtime path at backend\services\planner.js:431 -> console.error("[Planner] Claude API FAILED:", error?.message || "Unknown error");. Replace with structured logger + level control.
+128. [LOW] Console logging statement in runtime path at backend\services\planner.js:432 -> console.error("[Planner] Error type:", error?.constructor?.name || "Unknown");. Replace with structured logger + level control.
+129. [LOW] Console logging statement in runtime path at backend\services\planner.js:433 -> console.error(. Replace with structured logger + level control.
+130. [LOW] Console logging statement in runtime path at backend\services\planner.js:437 -> console.error("[Planner] Full error:", JSON.stringify(error, null, 2));. Replace with structured logger + level control.
+131. [LOW] Console logging statement in runtime path at backend\services\planner.js:438 -> console.warn("Claude planner unavailable, using template fallback.");. Replace with structured logger + level control.
+132. [LOW] Console logging statement in runtime path at backend\services\planner.js:443 -> console.log("[Planner] Claude API call succeeded.");. Replace with structured logger + level control.
+133. [LOW] Console logging statement in runtime path at backend\middleware\activityLogger.js:11 -> console.log(. Replace with structured logger + level control.
+134. [LOW] Console logging statement in runtime path at backend\services\realtimeServer.js:254 -> console.log("[Realtime] WebSocket server initialized on /ws");. Replace with structured logger + level control.
+135. [LOW] Console logging statement in runtime path at backend\services\researchEngine.js:233 -> console.warn(`[Research] safeFetch failed for ${source.name}: ${err.message}`);. Replace with structured logger + level control.
+136. [LOW] Console logging statement in runtime path at backend\services\researchEngine.js:328 -> console.warn(`[Research] Claude analysis failed for ${sourceName}: ${err.message}`);. Replace with structured logger + level control.
+
+### D) Audit Evidence Commands (executed)
+- Render/Vercel live checks: health, auth/session, reports/pdf, reports/md, plan source, research logs
+- CORS negative test: disallowed origin preflight => 500
+- Login pressure test: 20 invalid attempts => 20x401 (no throttling)
+- Header hardening checks: dashboard, backend, zeroops.in, www.zeroops.in
+- Local PDF check: /api/reports/:id/pdf => 500 ENOENT chromium path
+
+## [2026-05-06 22:14:07 +05:30] - CHECK: Audit Remediation Run (136-Issue Baseline)
+
+### Status
+- Remediation implementation completed across security hardening, auth/RBAC, integration coverage, and logging hygiene.
+- Regression verification passed on backend + dashboard after final bridge hardening patch.
+
+### What was fixed
+1. Added hardened backend bootstrap and middleware stack in `backend/app.js`:
+   - strict CORS allowlist behavior with explicit 403 on denied origins
+   - payload limits + content-type validation + NoSQL operator guard
+   - input sanitization
+   - security response headers + `x-powered-by` removal
+2. Reworked auth enforcement in `backend/middleware/auth.js`:
+   - requires `x-api-key`, `x-user-id`, `x-user-role`
+   - validates role and user identifier formats
+   - supports key list and masked unauthorized-attempt logging
+3. Added RBAC middleware and applied role gates on critical control/admin routes:
+   - `backend/middleware/rbac.js`
+   - `backend/routes/admin.js`
+   - `backend/routes/control.js`
+4. Added login throttling in dashboard auth route:
+   - `dashboard/src/app/api/auth/login/route.ts` returns 429 after threshold
+5. Removed insecure static session-secret fallback:
+   - `dashboard/src/lib/auth.ts` now uses runtime-generated fallback if env missing
+6. Closed backend-bridge internal leakage:
+   - `dashboard/src/app/api/backend/[...path]/route.ts` no longer returns upstream internals in response headers/body
+7. Added structured logging and replaced runtime `console.*` paths:
+   - `backend/config/logger.js` + refactors in server/jobs/routes/services
+8. Added/expanded integration tests for endpoint auth coverage + critical RBAC behavior:
+   - `backend/tests/integration/*`
+9. Fixed local PDF generation path for Windows smoke/runtime and retained cloud Chromium path:
+   - `backend/services/reportGenerator.js`
+
+### Verification results (post-fix)
+- `backend npm test` => PASS (`122/122`)
+- `backend npm run test:integration` => PASS (`72/72`)
+- `dashboard npm run lint` => PASS
+- `dashboard npm run build` => PASS
+- `rg "console\\." backend dashboard/src --glob "!**/node_modules/**"` => no matches
+- Local smoke validation (isolated runtime on port 5100):
+  - `/health` => `200`
+  - disallowed CORS preflight => `403`
+  - created engagement id `69fb6f3a76b20b0081a55b82`
+  - `/api/reports/:id/pdf` => `200` (`62437` bytes)
+  - `/api/reports/:id/md` => `200`
+
+### Residual items (not code-broken, but still to close)
+1. Dashboard `npm audit` still reports 2 moderate advisories from `next -> postcss` chain (upstream dependency track).
+2. Planner source in production still falls back to template when `CLAUDE_API_KEY` is not configured in Render environment.
+3. Live cloud deployments are still on older builds until push/redeploy is executed:
+   - `https://venom-backend-x2pj.onrender.com/health` still includes `x-powered-by: Express`
+   - `https://dashboard-sigma-puce-87.vercel.app/login` response headers still do not include new CSP/XFO hardening set
+
+### Conclusion
+- The previously listed critical remediation blockers (PDF failure, missing RBAC on sensitive routes, CORS denial semantics, login throttling gap, header hardening gaps, and logging hygiene gaps) are resolved in code and validated locally.
+

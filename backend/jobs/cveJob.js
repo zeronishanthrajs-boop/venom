@@ -1,5 +1,6 @@
 const cron = require("node-cron");
 const { syncRecentCves } = require("../services/cveIngester");
+const { logger } = require("../config/logger");
 
 let scheduledTask = null;
 let running = false;
@@ -22,8 +23,16 @@ async function runCveSyncCycle(reason = "scheduled", options = {}) {
   try {
     const result = await syncRecentCves(options);
     const durationMs = Date.now() - startedAt;
-    console.log(
-      `[cve-job] ${reason} sync complete fetched=${result.fetched} normalized=${result.normalized} upserted=${result.upsertedCount} duration_ms=${durationMs}`
+    logger.info(
+      {
+        job: "cve-sync",
+        reason,
+        fetched: result.fetched,
+        normalized: result.normalized,
+        upserted: result.upsertedCount,
+        durationMs
+      },
+      "CVE sync cycle complete"
     );
     return {
       ok: true,
@@ -31,7 +40,10 @@ async function runCveSyncCycle(reason = "scheduled", options = {}) {
       ...result
     };
   } catch (error) {
-    console.error(`[cve-job] ${reason} sync failed:`, error.message);
+    logger.error(
+      { job: "cve-sync", reason, error: error.message },
+      "CVE sync cycle failed"
+    );
     return {
       ok: false,
       error: error.message
@@ -54,7 +66,7 @@ function startCveSyncJob() {
   const timezone = process.env.CVE_SYNC_TIMEZONE || "UTC";
 
   if (!cron.validate(schedule)) {
-    console.error(`[cve-job] invalid cron schedule: ${schedule}`);
+    logger.error({ job: "cve-sync", schedule }, "Invalid cron schedule");
     return null;
   }
 
@@ -68,7 +80,10 @@ function startCveSyncJob() {
     }
   );
 
-  console.log(`[cve-job] scheduled cron='${schedule}' timezone='${timezone}'`);
+  logger.info(
+    { job: "cve-sync", cron: schedule, timezone },
+    "CVE sync job scheduled"
+  );
 
   const bootstrapEnabled = process.env.CVE_SYNC_ON_STARTUP !== "false";
   if (bootstrapEnabled && process.env.NODE_ENV === "production") {

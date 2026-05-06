@@ -8,6 +8,7 @@ const { notifyCriticalFindings } = require("./notifier");
 const { broadcastToolResult, broadcastFinding } = require("./realtimeServer");
 const { translateAllFindings } = require("./translator");
 const { assertExecutionAllowed } = require("./trustControl");
+const { logger } = require("../config/logger");
 
 function createHttpError(statusCode, message) {
   const error = new Error(message);
@@ -192,7 +193,10 @@ async function executeEngagementTool({
         await generateDecisionBrief(String(job.engagementId));
       }
     } catch (error) {
-      console.error("[AutoBrief] Failed:", error?.message || "unknown error");
+      logger.error(
+        { error: error?.message || "unknown error" },
+        "Auto decision brief failed"
+      );
     }
   });
 
@@ -207,7 +211,10 @@ async function executeEngagementTool({
         );
       }
     } catch (error) {
-      console.error("[AutoSnapshot] Failed:", error?.message || "unknown error");
+      logger.error(
+        { error: error?.message || "unknown error" },
+        "Auto snapshot failed"
+      );
     }
   });
 
@@ -230,15 +237,18 @@ async function executeEngagementTool({
       });
     }
   } catch (realtimeError) {
-    console.warn("[Realtime] Unable to broadcast tool result:", realtimeError.message);
+    logger.warn(
+      { error: realtimeError.message },
+      "Realtime broadcast of tool result failed"
+    );
   }
 
   try {
     await recordExecutionEvidence(jobObject, userId);
   } catch (evidenceError) {
-    console.warn(
-      "[Evidence] Unable to persist execution evidence:",
-      evidenceError.message
+    logger.warn(
+      { error: evidenceError.message },
+      "Execution evidence persistence failed"
     );
   }
 
@@ -249,7 +259,10 @@ async function executeEngagementTool({
       findings: jobObject.findings
     });
   } catch (notifyError) {
-    console.warn("[Notifier] Unable to dispatch alerts:", notifyError.message);
+    logger.warn(
+      { error: notifyError.message },
+      "Critical findings notification dispatch failed"
+    );
   }
 
   return {

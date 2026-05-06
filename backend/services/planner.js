@@ -394,6 +394,7 @@ Safety constraints:
 }
 
 async function generatePlanForEngagement(engagement) {
+  const { logger, withMaskedSecrets } = require("../config/logger");
   const apiKeyRaw = process.env.CLAUDE_API_KEY || "";
   const hasClaudeKey = Boolean(apiKeyRaw);
   const keyPreview = hasClaudeKey
@@ -401,16 +402,19 @@ async function generatePlanForEngagement(engagement) {
     : "NOT SET";
   const plannerModel = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
   const strictPlanner = process.env.CLAUDE_PLANNER_STRICT === "true";
-  console.log("[Planner] Attempting plan generation:", {
-    hasApiKey: hasClaudeKey,
-    keyPreview,
-    model: plannerModel,
-    engagementId: String(engagement?._id || "")
-  });
+  logger.info(
+    withMaskedSecrets({
+      hasApiKey: hasClaudeKey,
+      keyPreview,
+      model: plannerModel,
+      engagementId: String(engagement?._id || "")
+    }),
+    "Planner generation attempt"
+  );
 
   const plannerContext = await loadPlannerContext(engagement);
   if (!hasClaudeKey) {
-    console.warn("[Planner] No CLAUDE_API_KEY - using template fallback.");
+    logger.warn("No CLAUDE_API_KEY configured, using template fallback");
     return {
       source: "template",
       model: "template-planner-v1",
@@ -428,19 +432,20 @@ async function generatePlanForEngagement(engagement) {
     if (hasClaudeKey && strictPlanner) {
       throw error;
     }
-    console.error("[Planner] Claude API FAILED:", error?.message || "Unknown error");
-    console.error("[Planner] Error type:", error?.constructor?.name || "Unknown");
-    console.error(
-      "[Planner] Status:",
-      error?.status || error?.statusCode || error?.code || "N/A"
+    logger.error(
+      {
+        error: error?.message || "Unknown error",
+        type: error?.constructor?.name || "Unknown",
+        status: error?.status || error?.statusCode || error?.code || "N/A"
+      },
+      "Claude API planner request failed"
     );
-    console.error("[Planner] Full error:", JSON.stringify(error, null, 2));
-    console.warn("Claude planner unavailable, using template fallback.");
+    logger.warn("Claude planner unavailable, using template fallback.");
     return null;
   });
 
   if (claudeResult) {
-    console.log("[Planner] Claude API call succeeded.");
+    logger.info("Claude planner request succeeded");
     return {
       ...claudeResult,
       promptVersion: claudeResult.promptVersion || PROMPT_VERSION

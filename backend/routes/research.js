@@ -2,6 +2,7 @@ const router = require("express").Router();
 const requireDb = require("../middleware/requireDb");
 const Pattern = require("../models/Pattern");
 const ResearchLog = require("../models/ResearchLog");
+const { logger } = require("../config/logger");
 const {
   runResearchCycle,
   getLatestResearchLog,
@@ -80,7 +81,7 @@ router.post("/trigger", requireDb, async (req, res) => {
       result.runAt = startedAt;
     } catch (err) {
       result.errors.push(`FATAL: ${err.message}\n${err.stack || ""}`);
-      console.error("[Research] Cycle crashed:", err.message);
+      logger.error({ error: err.message }, "Research cycle crashed");
     }
 
     if (result?.runId) {
@@ -98,9 +99,9 @@ router.post("/trigger", requireDb, async (req, res) => {
         newPatternsCreated: result.newPatternsCreated || result.newTechniquesFound || 0,
         promptEvolutionTriggered: Boolean(result.promptEvolutionTriggered)
       });
-      console.log("[Research] Fallback log written successfully.");
+      logger.info("Research fallback log written successfully");
     } catch (logErr) {
-      console.error("[Research] Log write failed:", logErr.message);
+      logger.error({ error: logErr.message }, "Research log write failed");
     }
   });
 });

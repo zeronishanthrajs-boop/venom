@@ -18,6 +18,21 @@ type LoginPayload = {
   password?: string;
 };
 
+type LoginAttemptEntry = {
+  count: number;
+  resetAt: number;
+};
+
+const LOGIN_WINDOW_MS = Number.parseInt(
+  process.env.DASHBOARD_LOGIN_RATE_WINDOW_MS || "900000",
+  10
+);
+const LOGIN_MAX_ATTEMPTS = Number.parseInt(
+  process.env.DASHBOARD_LOGIN_RATE_MAX || "5",
+  10
+);
+const loginAttempts = new Map<string, LoginAttemptEntry>();
+
 function getConfiguredCredentials() {
   const email = process.env.VENOM_DASHBOARD_LOGIN_EMAIL?.trim();
   const password = process.env.VENOM_DASHBOARD_LOGIN_PASSWORD;
@@ -32,7 +47,74 @@ function getConfiguredCredentials() {
   };
 }
 
+function getClientKey(request: Request) {
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  const forwarded = forwardedFor ? forwardedFor.split(",")[0].trim() : "";
+  const ua = request.headers.get("user-agent") || "unknown-agent";
+  return `${forwarded || "unknown-ip"}|${ua}`;
+}
+
+function checkLoginRateLimit(clientKey: string) {
+  const now = Date.now();
+  const existing = loginAttempts.get(clientKey);
+  if (!existing || now > existing.resetAt) {
+    loginAttempts.set(clientKey, {
+      count: 0,
+      resetAt: now + LOGIN_WINDOW_MS
+    });
+    return {
+      allowed: true,
+      remaining: LOGIN_MAX_ATTEMPTS
+    };
+  }
+
+  if (existing.count >= LOGIN_MAX_ATTEMPTS) {
+    return {
+      allowed: false,
+      remaining: 0,
+      retryAfterSec: Math.ceil((existing.resetAt - now) / 1000)
+    };
+  }
+
+  return {
+    allowed: true,
+    remaining: Math.max(LOGIN_MAX_ATTEMPTS - existing.count, 0)
+  };
+}
+
+function registerFailedAttempt(clientKey: string) {
+  const now = Date.now();
+  const existing = loginAttempts.get(clientKey);
+  if (!existing || now > existing.resetAt) {
+    loginAttempts.set(clientKey, {
+      count: 1,
+      resetAt: now + LOGIN_WINDOW_MS
+    });
+    return;
+  }
+  existing.count += 1;
+  loginAttempts.set(clientKey, existing);
+}
+
+function clearAttempts(clientKey: string) {
+  loginAttempts.delete(clientKey);
+}
+
 export async function POST(request: Request) {
+  const clientKey = getClientKey(request);
+  const rateCheck = checkLoginRateLimit(clientKey);
+  if (!rateCheck.allowed) {
+    return NextResponse.json(
+      { error: "Too many login attempts, try again later." },
+      {
+        status: 429,
+        headers: {
+          "retry-after": String(rateCheck.retryAfterSec || 60)
+        }
+      }
+    );
+  }
+
   const configured = getConfiguredCredentials();
 
   if (!configured) {
@@ -60,6 +142,7 @@ export async function POST(request: Request) {
   const passwordMatches = safeCredentialCompare(providedPassword, configured.password);
 
   if (!emailMatches || !passwordMatches) {
+    registerFailedAttempt(clientKey);
     return NextResponse.json({ error: "Invalid email or password." }, { status: 401 });
   }
 
@@ -69,6 +152,8 @@ export async function POST(request: Request) {
   if (!session) {
     return NextResponse.json({ error: "Failed to initialize session." }, { status: 500 });
   }
+
+  clearAttempts(clientKey);
 
   const response = NextResponse.json({
     ok: true,

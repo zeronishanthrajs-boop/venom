@@ -1,5 +1,6 @@
 const cron = require("node-cron");
 const { evolvePrompts } = require("../services/promptEvolver");
+const { logger } = require("../config/logger");
 
 let scheduledTask = null;
 let running = false;
@@ -17,8 +18,15 @@ async function runEvolutionCycle(reason = "scheduled", options = {}) {
   try {
     const result = await evolvePrompts(options);
     const durationMs = Date.now() - startedAt;
-    console.log(
-      `[evolution-job] ${reason} prompt evolution complete evolved=${result.evolvedCount} skipped=${result.skippedCount} duration_ms=${durationMs}`
+    logger.info(
+      {
+        job: "evolution",
+        reason,
+        evolvedCount: result.evolvedCount,
+        skippedCount: result.skippedCount,
+        durationMs
+      },
+      "Prompt evolution cycle complete"
     );
     return {
       ok: true,
@@ -26,7 +34,10 @@ async function runEvolutionCycle(reason = "scheduled", options = {}) {
       ...result
     };
   } catch (error) {
-    console.error(`[evolution-job] ${reason} prompt evolution failed:`, error.message);
+    logger.error(
+      { job: "evolution", reason, error: error.message },
+      "Prompt evolution cycle failed"
+    );
     return {
       ok: false,
       error: error.message
@@ -48,7 +59,7 @@ function startPromptEvolutionJob() {
   const schedule = process.env.PROMPT_EVOLUTION_CRON || "0 3 * * 0";
   const timezone = process.env.PROMPT_EVOLUTION_TIMEZONE || "UTC";
   if (!cron.validate(schedule)) {
-    console.error(`[evolution-job] invalid cron schedule: ${schedule}`);
+    logger.error({ job: "evolution", schedule }, "Invalid cron schedule");
     return null;
   }
 
@@ -60,7 +71,10 @@ function startPromptEvolutionJob() {
     { timezone }
   );
 
-  console.log(`[evolution-job] scheduled cron='${schedule}' timezone='${timezone}'`);
+  logger.info(
+    { job: "evolution", cron: schedule, timezone },
+    "Evolution job scheduled"
+  );
   return scheduledTask;
 }
 

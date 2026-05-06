@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const { MongoMemoryServer } = require("mongodb-memory-server");
+const { logger } = require("./logger");
 
 let memoryServer = null;
 let connectionSource = "none";
@@ -48,12 +49,12 @@ async function connectDB() {
   if (uri) {
     await mongoose.connect(uri);
     connectionSource = "external-uri";
-    console.log("MongoDB connected (external URI)");
+    logger.info({ source: "external-uri" }, "MongoDB connected");
     return;
   }
 
   if (!enableInMemoryDb) {
-    console.warn(
+    logger.warn(
       "MONGODB_URI not set and ENABLE_INMEMORY_DB is disabled. Starting without database connection."
     );
     return;
@@ -67,7 +68,7 @@ async function connectDB() {
   const memoryUri = memoryServer.getUri();
   await mongoose.connect(memoryUri);
   connectionSource = "in-memory";
-  console.log("MongoDB connected (in-memory fallback)");
+  logger.info({ source: "in-memory" }, "MongoDB connected");
 }
 
 module.exports = {
