@@ -2330,3 +2330,17 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - Vercel build completed and production alias updated.
 - Render health endpoint reachable and updated headers confirmed.
 
+## [2026-05-06 23:01:06 +05:30] - CHECK: Push + Deploy Proof (Sanitized Export Patch)
+
+- Git commit: `9158052` (`feat(export): add sanitized HTML report export and dashboard privacy-safe download flow`)
+- Git push: `main` -> `origin/main` success.
+- Vercel production deployment: `dpl_J8akam2gNWTzbSrAn3pFkMvzRu6i`
+  - Alias active: `https://dashboard-sigma-puce-87.vercel.app`
+- Render backend deployment validated:
+  - `GET /health` => `200`
+  - `GET /api/reports/:id/html` (auth) => `200` and attachment response.
+- Triple-check remained green after patch:
+  - backend tests pass
+  - integration tests pass
+  - dashboard lint/build pass
+
