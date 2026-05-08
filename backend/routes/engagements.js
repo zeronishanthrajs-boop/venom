@@ -47,6 +47,16 @@ function shouldApplyStartupProfile(body) {
 
 const router = express.Router();
 
+function ensureOwnerRole(req, res) {
+  if (req.user?.role === "owner") {
+    return true;
+  }
+  res.status(403).json({
+    error: "Only owner role can perform this action."
+  });
+  return false;
+}
+
 async function reconcileDraftStatuses(engagements = []) {
   const draftIds = engagements
     .filter((item) => item?.status === "draft")
@@ -428,6 +438,44 @@ router.get("/", requireDb, async (req, res, next) => {
     const reconciled = await reconcileDraftStatuses(engagements);
 
     return res.status(200).json(reconciled);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.delete("/", requireDb, async (req, res, next) => {
+  try {
+    if (!ensureOwnerRole(req, res)) {
+      return;
+    }
+
+    const engagementIds = await Engagement.find({}, { _id: 1 }).lean();
+    const ids = engagementIds.map((item) => item._id);
+    if (ids.length === 0) {
+      return res.status(200).json({
+        ok: true,
+        deletedEngagements: 0,
+        plansDeleted: 0,
+        executionJobsDeleted: 0,
+        evidenceDeleted: 0
+      });
+    }
+
+    const [planDeleteResult, jobDeleteResult, evidenceDeleteResult, engagementDeleteResult] =
+      await Promise.all([
+        Plan.deleteMany({ engagementId: { $in: ids } }),
+        ExecutionJob.deleteMany({ engagementId: { $in: ids } }),
+        Evidence.deleteMany({ engagementId: { $in: ids } }),
+        Engagement.deleteMany({ _id: { $in: ids } })
+      ]);
+
+    return res.status(200).json({
+      ok: true,
+      deletedEngagements: engagementDeleteResult.deletedCount || 0,
+      plansDeleted: planDeleteResult.deletedCount || 0,
+      executionJobsDeleted: jobDeleteResult.deletedCount || 0,
+      evidenceDeleted: evidenceDeleteResult.deletedCount || 0
+    });
   } catch (error) {
     return next(error);
   }

@@ -57,6 +57,10 @@ function redactTargetUrl(value) {
 function resolveLocalChromiumPath() {
   const candidates = [
     process.env.CHROMIUM_PATH,
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
@@ -329,7 +333,7 @@ async function renderPdfFromTemplate(templateData) {
   const pdfPromise = (async () => {
     let browser;
     try {
-      let chromiumPath = process.env.CHROMIUM_PATH || (await chromium.executablePath());
+      let chromiumPath = process.env.CHROMIUM_PATH || "";
       let launchArgs = [
         ...chromium.args,
         "--no-sandbox",
@@ -339,8 +343,17 @@ async function renderPdfFromTemplate(templateData) {
         "--single-process"
       ];
       let headlessMode = chromium.headless ?? true;
+      let sparticuzPathError = null;
 
       const localPath = resolveLocalChromiumPath();
+      if (!chromiumPath) {
+        try {
+          chromiumPath = await chromium.executablePath();
+        } catch (error) {
+          sparticuzPathError = error;
+        }
+      }
+
       if (process.platform === "win32" && localPath) {
         chromiumPath = localPath;
         launchArgs = ["--disable-dev-shm-usage", "--disable-gpu"];
@@ -353,9 +366,13 @@ async function renderPdfFromTemplate(templateData) {
         }
       }
 
-      if (!chromiumPath) {
+      if (!chromiumPath || !fs.existsSync(chromiumPath)) {
+        const extra =
+          sparticuzPathError && sparticuzPathError instanceof Error
+            ? ` (${sparticuzPathError.message})`
+            : "";
         throw new Error(
-          "No Chromium executable found. Set CHROMIUM_PATH for local PDF generation."
+          `No Chromium executable found. Set CHROMIUM_PATH for local PDF generation${extra}.`
         );
       }
 

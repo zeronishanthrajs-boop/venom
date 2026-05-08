@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  clearAllEngagements,
   createEngagement,
   runAssessmentChain,
   evolvePromptsNow,
@@ -262,6 +263,8 @@ export default function DashboardPage() {
   >({});
   const [deletingById, setDeletingById] = useState<Record<string, boolean>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const [clearingAllEngagements, setClearingAllEngagements] = useState(false);
   const [metricsOverview, setMetricsOverview] = useState<MetricsOverview | null>(
     null
   );
@@ -1330,6 +1333,60 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleClearAllEngagements() {
+    if (!session || session.role !== "owner") {
+      return;
+    }
+
+    setClearingAllEngagements(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const result = await clearAllEngagements(session);
+      setConfirmClearAll(false);
+      setConfirmDeleteId(null);
+      setEngagements([]);
+      setLatestPlanByEngagement({});
+      setLatestExecutionByEngagement({});
+      setTopMatchByEngagement({});
+      setLearningSummaryByEngagement({});
+      setReportByEngagement({});
+      setComplianceByEngagement({});
+      setChainSummaryByEngagement({});
+      setEvidenceStatusByEngagement({});
+      setViewModeByEngagement({});
+      setOrchestratingById({});
+      setPlanningById({});
+      setExecutingById({});
+      setMatchingById({});
+      setLearningById({});
+      setDeletingById({});
+      setDownloadingById({});
+      setDownloadingBackendPdfById({});
+      setEmailingReportById({});
+      setComplianceLoadingById({});
+      setChainRunningById({});
+      setEvidenceLoadingById({});
+      setProgressByEngagement({});
+      setMessage(
+        `Cleared ${result.deletedEngagements} engagement(s), ${result.plansDeleted} plan(s), ${result.executionJobsDeleted} job(s), and ${result.evidenceDeleted} evidence item(s).`
+      );
+      await loadEngagementData(session, false);
+      await loadWeek7Telemetry(session);
+      await loadWeek11ControlPlane(session);
+      await loadWeek12Ops(session);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to clear engagements."
+      );
+    } finally {
+      setClearingAllEngagements(false);
+    }
+  }
+
   if (!sessionReady) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#07090d] px-6">
@@ -1374,6 +1431,16 @@ export default function DashboardPage() {
                 className="rounded-xl border border-violet-500/45 bg-violet-500/10 px-3 py-2 text-sm font-medium text-violet-200 shadow-sm transition hover:-translate-y-px hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {runningMigrations ? "Running Migrations..." : "Run Data Migrations"}
+              </button>
+            ) : null}
+            {session.role === "owner" ? (
+              <button
+                type="button"
+                onClick={() => setConfirmClearAll(true)}
+                disabled={clearingAllEngagements}
+                className="rounded-xl border border-rose-500/45 bg-rose-500/10 px-3 py-2 text-sm font-medium text-rose-200 shadow-sm transition hover:-translate-y-px hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {clearingAllEngagements ? "Clearing..." : "Clear All Tests"}
               </button>
             ) : null}
             <button
@@ -2688,6 +2755,36 @@ export default function DashboardPage() {
                 {deletingById[engagementPendingDelete._id]
                   ? "Removing..."
                   : "Remove Task"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {confirmClearAll ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 px-4">
+          <div className="w-full max-w-md rounded-2xl border border-rose-500/45 bg-slate-900 p-5 shadow-2xl">
+            <h3 className="text-lg font-semibold text-slate-100">Clear All Previous Tests</h3>
+            <p className="mt-2 text-sm text-slate-300">
+              This will permanently remove all engagements and their plans, jobs, and
+              evidence from the backend. Continue?
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmClearAll(false)}
+                disabled={clearingAllEngagements}
+                className="rounded-lg border border-slate-600 px-3 py-1.5 text-sm font-medium text-slate-200 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleClearAllEngagements()}
+                disabled={clearingAllEngagements}
+                className="rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {clearingAllEngagements ? "Clearing..." : "Clear All"}
               </button>
             </div>
           </div>

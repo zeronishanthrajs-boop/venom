@@ -2393,3 +2393,50 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
   - valid login -> dashboard navigation: `PASS`
   - masked identity line on dashboard: `PASS` (`Logged in as n***1@gmail.com`)
 
+
+## [2026-05-09 00:47:08 +05:30] - CHECK: PDF Download Reliability + Clear-All Frontend Action
+
+### Request handled
+- Fix PDF report download failure path.
+- Add a frontend option to clear previous tests.
+- Verify, then push.
+
+### Implementation plan executed
+1. Harden Chromium executable resolution in backend PDF renderer for cloud/local differences.
+2. Add owner-only backend bulk-delete route for engagements + related data.
+3. Add frontend `Clear All Tests` action with confirmation modal.
+4. Run smoke checks and full lint/test/build before push.
+
+### Code changes
+- `backend/services/reportGenerator.js`
+  - Expanded Chromium candidate search to include Linux paths used in cloud runtimes.
+  - Added resilient `chromium.executablePath()` error handling and fallback path selection.
+  - Added stricter missing-executable validation with actionable error message.
+- `backend/routes/engagements.js`
+  - Added `DELETE /api/engagements` (owner-only) to remove all engagements and cascade-delete plans/jobs/evidence.
+- `dashboard/src/lib/api.ts`
+  - Added `clearAllEngagements(session)` and response type.
+- `dashboard/src/app/dashboard/page.tsx`
+  - Added owner-only `Clear All Tests` button in header.
+  - Added confirmation modal (`Clear All Previous Tests`).
+  - Added `handleClearAllEngagements()` to execute bulk delete and reset local dashboard caches/state.
+
+### Verification
+- Local backend smoke:
+  - Created test engagements, generated PDF, then executed bulk clear.
+  - `GET /api/reports/:id/pdf` => `200`, file size `63765` bytes.
+  - Engagement count before clear: `10`.
+  - `DELETE /api/engagements` result:
+    - `deletedEngagements: 10`
+    - `plansDeleted: 18`
+    - `executionJobsDeleted: 56`
+    - `evidenceDeleted: 77`
+  - Engagement count after clear: `0`.
+- Quality gates:
+  - `backend npm test` => PASS (`123/123`).
+  - `dashboard npm run lint` => PASS.
+  - `dashboard npm run build` => PASS.
+
+### Outcome
+- PDF path is more resilient to runtime Chromium resolution failures.
+- Frontend now supports one-click owner-approved cleanup of previous test data.

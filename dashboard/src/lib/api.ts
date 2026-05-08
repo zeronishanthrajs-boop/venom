@@ -84,6 +84,14 @@ export type DeleteEngagementResponse = {
   evidenceDeleted?: number;
 };
 
+export type ClearAllEngagementsResponse = {
+  ok: true;
+  deletedEngagements: number;
+  plansDeleted: number;
+  executionJobsDeleted: number;
+  evidenceDeleted: number;
+};
+
 export type ChainExecutionResult = {
   step: number;
   toolId: string;
@@ -736,6 +744,17 @@ export async function deleteEngagement(
   });
 
   return parseResponse<DeleteEngagementResponse>(response);
+}
+
+export async function clearAllEngagements(
+  session: VenomSession
+): Promise<ClearAllEngagementsResponse> {
+  const response = await apiFetch("/api/engagements", {
+    method: "DELETE",
+    headers: buildHeaders(session)
+  }, 120000);
+
+  return parseResponse<ClearAllEngagementsResponse>(response);
 }
 
 export async function fetchEngagementReport(
