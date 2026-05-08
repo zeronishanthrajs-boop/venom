@@ -2344,3 +2344,52 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
   - integration tests pass
   - dashboard lint/build pass
 
+## [2026-05-09 00:00:14 +05:30] - CHECK: AI Usability Testing + Fix + Retest
+
+### AI-Based Usability Testing Scope
+- Automated Lighthouse audit on:
+  - `/login`
+  - `/onboard`
+- Automated browser journey test:
+  - password show/hide control
+  - invalid login feedback
+  - valid login navigation
+  - dashboard identity line masking check
+
+### Failure Found
+1. Console/network error on login for anonymous users:
+   - `GET /api/auth/session` returned `401`
+   - Lighthouse flagged `errors-in-console` failure
+   - Impact: false-negative “broken” signal during normal unauthenticated entry to login.
+
+### Implementation Plan (Executed)
+1. Normalize unauthenticated session check behavior:
+   - Return `200 { session: null }` instead of `401` for missing/revoked/invalid cookie.
+2. Keep client behavior unchanged:
+   - `fetchSession()` already treats null session as unauthenticated state.
+3. Triple-check:
+   - `dashboard npm run lint`
+   - `dashboard npm run build`
+   - rerun AI usability suite (Lighthouse + browser flow).
+
+### Code Change
+- Updated:
+  - `dashboard/src/app/api/auth/session/route.ts`
+
+### Retest Results
+- Lighthouse (`localhost:3100/login`):
+  - Performance: `54`
+  - Accessibility: `100`
+  - Best Practices: `100`
+  - `errors-in-console`: `PASS` (score `1`)
+- Lighthouse (`localhost:3100/onboard`):
+  - Performance: `65`
+  - Accessibility: `100`
+  - Best Practices: `100`
+  - `errors-in-console`: `PASS` (score `1`)
+- Browser journey assertions:
+  - password toggle: `PASS`
+  - invalid credential feedback: `PASS`
+  - valid login -> dashboard navigation: `PASS`
+  - masked identity line on dashboard: `PASS` (`Logged in as n***1@gmail.com`)
+
