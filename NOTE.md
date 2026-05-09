@@ -2440,3 +2440,74 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 ### Outcome
 - PDF path is more resilient to runtime Chromium resolution failures.
 - Frontend now supports one-click owner-approved cleanup of previous test data.
+
+## [2026-05-09 20:11:09 +05:30] - CHECK: Engagement Errors Fix + Vercel/Render Deployment
+
+### Request handled
+- List current issues from live engagement screenshot.
+- Implement fixes.
+- Push to Vercel and Render.
+- Record full details in `NOTE.md` with timestamp.
+
+### Issues identified from screenshot/runtime
+1. Repeated `429 Too many requests, please slow down.` during engagement actions.
+2. Dashboard auto-refresh cadence was too aggressive:
+   - multiple data groups refreshed every 5 seconds.
+3. Refresh overlap risk:
+   - new refresh ticks could start before prior async loads completed.
+4. Secondary UX symptom:
+   - decision brief / translation sections showed repeated upstream errors while rate-limited.
+
+### Solving plan executed
+1. Reduce frontend polling pressure.
+2. Prevent overlapping periodic refresh calls.
+3. Increase backend default API rate limit headroom for production workloads.
+4. Add explicit rate-limit env keys in deployment templates.
+5. Run full local verification, deploy, then verify cloud health.
+
+### Code changes
+- `dashboard/src/app/dashboard/page.tsx`
+  - Replaced single 5-second global refresh loop with staggered intervals:
+    - telemetry refresh every `15000ms`
+    - control-plane refresh every `30000ms`
+    - ops refresh every `30000ms`
+  - Added in-flight guards (`telemetryInFlight`, `controlPlaneInFlight`, `opsInFlight`) to avoid overlapping refresh bursts.
+- `backend/middleware/rateLimiter.js`
+  - Increased default `API_RATE_LIMIT_MAX` fallback from `120` to `300`.
+- `backend/.env.example`
+  - Added:
+    - `API_RATE_LIMIT_WINDOW_MS=60000`
+    - `API_RATE_LIMIT_MAX=300`
+    - `AUTH_RATE_LIMIT_WINDOW_MS=900000`
+    - `AUTH_RATE_LIMIT_MAX=5`
+- `render.yaml`
+  - Added matching backend env vars for rate-limit controls.
+
+### Local verification
+- `backend npm test` -> PASS (`123/123`)
+- `dashboard npm run lint` -> PASS
+- `dashboard npm run build` -> PASS
+
+### Deployment actions
+- Git push to `main`:
+  - commit: `e3637c4`
+  - message: `fix(stability): reduce dashboard polling bursts and tune API rate limits`
+- Vercel production deployment:
+  - deployment id: `dpl_2Bqgu3Mb6Ejxdp9jUN4J1pedb9Yq`
+  - deployment URL: `https://dashboard-3vyiq0jm4-zeronishanthrajs-boops-projects.vercel.app`
+  - active alias: `https://dashboard-sigma-puce-87.vercel.app`
+- Render backend:
+  - auto-deploy triggered by `main` push (service source: `https://venom-backend-x2pj.onrender.com`)
+
+### Live cloud verification
+- `GET https://dashboard-sigma-puce-87.vercel.app/api/system/ready` -> `200`
+  - payload: `ready=true`, `upstreamStatus=200`
+  - backend source confirmed: `https://venom-backend-x2pj.onrender.com`
+- `GET https://venom-backend-x2pj.onrender.com/health` -> `200`
+- `GET https://venom-backend-x2pj.onrender.com/ready` -> `200`
+- `GET https://venom-backend-x2pj.onrender.com/api/engagements` (no auth) -> `401` (expected auth guard), with rate-limit headers present.
+
+### Outcome
+- Deployment on both Vercel and Render is healthy.
+- Main cause of engagement-page 429 bursts (frontend refresh pressure + overlap) has been mitigated.
+- Runtime is stable and authenticated routes continue enforcing expected controls.
