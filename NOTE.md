@@ -2492,12 +2492,17 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - Git push to `main`:
   - commit: `e3637c4`
   - message: `fix(stability): reduce dashboard polling bursts and tune API rate limits`
+- Git push to `main` (timestamped documentation sync):
+  - commit: `29483a8`
+  - message: `docs(note): add timestamped issue-fix and deployment verification log`
 - Vercel production deployment:
   - deployment id: `dpl_2Bqgu3Mb6Ejxdp9jUN4J1pedb9Yq`
   - deployment URL: `https://dashboard-3vyiq0jm4-zeronishanthrajs-boops-projects.vercel.app`
+  - final deployment id: `dpl_D19oLETrV1CSzjESxYgnkTd1ar8j`
+  - final deployment URL: `https://dashboard-c0sptkr4p-zeronishanthrajs-boops-projects.vercel.app`
   - active alias: `https://dashboard-sigma-puce-87.vercel.app`
 - Render backend:
-  - auto-deploy triggered by `main` push (service source: `https://venom-backend-x2pj.onrender.com`)
+  - auto-deploy triggered by both `main` pushes (service source: `https://venom-backend-x2pj.onrender.com`)
 
 ### Live cloud verification
 - `GET https://dashboard-sigma-puce-87.vercel.app/api/system/ready` -> `200`
@@ -2505,7 +2510,9 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
   - backend source confirmed: `https://venom-backend-x2pj.onrender.com`
 - `GET https://venom-backend-x2pj.onrender.com/health` -> `200`
 - `GET https://venom-backend-x2pj.onrender.com/ready` -> `200`
-- `GET https://venom-backend-x2pj.onrender.com/api/engagements` (no auth) -> `401` (expected auth guard), with rate-limit headers present.
+- `GET https://venom-backend-x2pj.onrender.com/api/engagements` (no auth) -> `401` (expected auth guard)
+  - `RateLimit-Limit: 300`
+  - `RateLimit-Remaining: 299`
 
 ### Outcome
 - Deployment on both Vercel and Render is healthy.
