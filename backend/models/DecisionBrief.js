@@ -77,7 +77,7 @@ const decisionBriefSchema = new mongoose.Schema(
     },
     source: {
       type: String,
-      enum: ["heuristic", "claude"],
+      enum: ["heuristic", "gemini", "claude"],
       default: "heuristic"
     },
     generatedAt: {
@@ -91,4 +91,3 @@ const decisionBriefSchema = new mongoose.Schema(
 decisionBriefSchema.index({ engagementId: 1, generatedAt: -1 });
 
 module.exports = mongoose.model("DecisionBrief", decisionBriefSchema);
-

@@ -1,3 +1,5 @@
+const { callGeminiText } = require("./geminiClient");
+
 function normalizeSeverity(value) {
   return String(value || "low").trim().toLowerCase();
 }
@@ -69,46 +71,25 @@ ${JSON.stringify(finding, null, 2)}
 Only output plain text.`;
 }
 
-function getClaudeModel() {
-  return process.env.CLAUDE_TRANSLATOR_MODEL || "claude-3-5-haiku-latest";
+function getGeminiModel() {
+  return process.env.GEMINI_TRANSLATOR_MODEL || process.env.GEMINI_MODEL || "gemini-2.0-flash";
 }
 
-async function callClaudeTranslation(finding, audience) {
-  const apiKey = process.env.CLAUDE_API_KEY;
+async function callGeminiTranslation(finding, audience) {
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || process.env.ENABLE_FINDING_TRANSLATION_AI === "false") {
     return null;
   }
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: getClaudeModel(),
-      max_tokens: 350,
-      temperature: 0.2,
-      messages: [
-        {
-          role: "user",
-          content: buildAudiencePrompt(finding, audience)
-        }
-      ]
-    }),
-    signal:
-      typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
-        ? AbortSignal.timeout(15000)
-        : undefined
-  });
-
-  if (!response.ok) {
-    return null;
-  }
-
-  const payload = await response.json().catch(() => null);
-  const text = payload?.content?.[0]?.text;
+  const response = await callGeminiText({
+    apiKey,
+    model: getGeminiModel(),
+    userPrompt: buildAudiencePrompt(finding, audience),
+    maxOutputTokens: 350,
+    temperature: 0.2,
+    timeoutMs: 15000
+  }).catch(() => null);
+  const text = response?.text;
   if (!text || typeof text !== "string") {
     return null;
   }
@@ -119,11 +100,11 @@ async function translateFinding(finding, audience = "founder") {
   const normalizedAudience =
     audience === "engineer" || audience === "brief" ? audience : "founder";
 
-  const claudeText = await callClaudeTranslation(finding, normalizedAudience).catch(
+  const geminiText = await callGeminiTranslation(finding, normalizedAudience).catch(
     () => null
   );
-  if (claudeText) {
-    return claudeText;
+  if (geminiText) {
+    return geminiText;
   }
 
   if (normalizedAudience === "engineer") {
@@ -172,4 +153,3 @@ module.exports = {
     buildHeuristicBriefTranslation
   }
 };
-

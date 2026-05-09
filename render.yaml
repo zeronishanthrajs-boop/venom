@@ -21,19 +21,21 @@ services:
         sync: false
       - key: CORS_ORIGINS
         sync: false
-      - key: CLAUDE_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
-      - key: CLAUDE_MODEL
-        value: claude-3-5-sonnet-latest
-      - key: CLAUDE_LEARNER_MODEL
-        value: claude-3-5-sonnet-latest
-      - key: CLAUDE_CHAIN_MODEL
-        value: claude-3-5-sonnet-latest
-      - key: CLAUDE_PROMPT_EVOLVER_MODEL
-        value: claude-3-5-sonnet-latest
-      - key: CLAUDE_PLANNER_STRICT
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
+      - key: GEMINI_RESEARCH_MODEL
+        value: gemini-2.0-flash
+      - key: GEMINI_LEARNER_MODEL
+        value: gemini-2.0-flash
+      - key: GEMINI_CHAIN_MODEL
+        value: gemini-2.0-flash
+      - key: GEMINI_PROMPT_EVOLVER_MODEL
+        value: gemini-2.0-flash
+      - key: GEMINI_PLANNER_STRICT
         value: "false"
-      - key: CLAUDE_CHAIN_ENABLED
+      - key: GEMINI_CHAIN_ENABLED
         value: "true"
       - key: MAX_CONCURRENT_TARGETS
         value: "3"
@@ -45,12 +47,14 @@ services:
         value: UTC
       - key: PROMPT_EVOLUTION_MIN_CONFIDENCE
         value: "0.70"
-      - key: ENABLE_CLAUDE_CVE_TAGGING
+      - key: ENABLE_GEMINI_CVE_TAGGING
         value: "true"
-      - key: CLAUDE_TAGGER_MODEL
-        value: claude-3-5-haiku-latest
-      - key: CLAUDE_JSON_REPAIR_MODEL
-        value: claude-3-5-sonnet-latest
+      - key: GEMINI_TAGGER_MODEL
+        value: gemini-2.0-flash
+      - key: GEMINI_TAGGER_TIMEOUT_MS
+        value: "15000"
+      - key: GEMINI_JSON_REPAIR_MODEL
+        value: gemini-2.0-flash
       - key: ENABLE_CVE_SYNC_JOB
         value: "true"
       - key: CVE_SYNC_CRON
@@ -117,10 +121,10 @@ services:
         value: "true"
       - key: ENABLE_DECISION_BRIEF_AI
         value: "true"
-      - key: CLAUDE_DECISION_MODEL
-        value: claude-3-5-sonnet-latest
-      - key: CLAUDE_TRANSLATOR_MODEL
-        value: claude-3-5-haiku-latest
+      - key: GEMINI_DECISION_MODEL
+        value: gemini-2.0-flash
+      - key: GEMINI_TRANSLATOR_MODEL
+        value: gemini-2.0-flash
       - key: ENABLE_FINDING_TRANSLATION_AI
         value: "false"
       - key: CONTINUOUS_SCAN_ENABLED

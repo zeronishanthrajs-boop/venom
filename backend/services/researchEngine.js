@@ -1,11 +1,11 @@
 const axios = require("axios");
-const Anthropic = require("@anthropic-ai/sdk");
 const { logger } = require("../config/logger");
 
 const Pattern = require("../models/Pattern");
 const ResearchLog = require("../models/ResearchLog");
 const { evolvePrompts } = require("./promptEvolver");
 const { broadcastResearchUpdate } = require("./realtimeServer");
+const { callGeminiText } = require("./geminiClient");
 
 const RESEARCH_SOURCES = [
   {
@@ -239,7 +239,7 @@ async function safeFetch(source) {
   }
 }
 
-function parseClaudeJson(text) {
+function parseGeminiJson(text) {
   const cleaned = String(text || "").replace(/```json|```/gi, "").trim();
   if (!cleaned) {
     return null;
@@ -274,24 +274,23 @@ function buildHeuristicTechniques(sourceName, rawData) {
   return [];
 }
 
-async function safeClaudeAnalyze(sourceName, rawData) {
-  if (!process.env.CLAUDE_API_KEY) {
+async function safeGeminiAnalyze(sourceName, rawData) {
+  if (!process.env.GEMINI_API_KEY) {
     return {
       techniques: buildHeuristicTechniques(sourceName, rawData),
-      researchSummary: "No Claude API key configured. Heuristic extraction used."
+      researchSummary: "No Gemini API key configured. Heuristic extraction used."
     };
   }
 
   try {
-    const client = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY });
     const dataStr = JSON.stringify(rawData).slice(0, 6000);
-    const response = await client.messages.create({
-      model: process.env.CLAUDE_RESEARCH_MODEL || "claude-3-5-haiku-latest",
-      max_tokens: 1500,
-      messages: [
-        {
-          role: "user",
-          content: `Analyze this security feed from ${sourceName} and extract NEW actionable attack techniques for web/API/network penetration testing.
+    const response = await callGeminiText({
+      apiKey: process.env.GEMINI_API_KEY,
+      model: process.env.GEMINI_RESEARCH_MODEL || process.env.GEMINI_MODEL || "gemini-2.0-flash",
+      maxOutputTokens: 1500,
+      temperature: 0.2,
+      responseMimeType: "application/json",
+      userPrompt: `Analyze this security feed from ${sourceName} and extract NEW actionable attack techniques for web/API/network penetration testing.
 
 DATA:
 ${dataStr}
@@ -313,25 +312,21 @@ Return JSON:
   ],
   "researchSummary": string
 }`
-        }
-      ]
     });
 
-    const text = Array.isArray(response.content)
-      ? response.content.find((item) => item?.type === "text")?.text || ""
-      : "";
-    const parsed = parseClaudeJson(text);
+    const text = response.text || "";
+    const parsed = parseGeminiJson(text);
     if (!parsed || !Array.isArray(parsed.techniques)) {
       return {
         techniques: buildHeuristicTechniques(sourceName, rawData),
-        researchSummary: "Claude output parsing failed. Heuristic extraction used."
+        researchSummary: "Gemini output parsing failed. Heuristic extraction used."
       };
     }
     return parsed;
   } catch (err) {
     logger.warn(
       { source: sourceName, error: err.message },
-      "Research Claude analysis failed"
+      "Research Gemini analysis failed"
     );
     return {
       techniques: buildHeuristicTechniques(sourceName, rawData),
@@ -468,7 +463,7 @@ async function runResearchCycle({
         continue;
       }
 
-      const analysis = await safeClaudeAnalyze(source.name, rawData);
+      const analysis = await safeGeminiAnalyze(source.name, rawData);
       report.sourcesSucceeded += 1;
 
       let sourceCreated = 0;

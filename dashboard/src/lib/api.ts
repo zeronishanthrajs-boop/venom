@@ -24,7 +24,7 @@ export type Plan = {
   _id: string;
   engagementId: string;
   promptVersion: string;
-  plannerSource: "claude" | "claude-api" | "template";
+  plannerSource: "gemini" | "gemini-api" | "claude" | "claude-api" | "template";
   model: string;
   fallbackReason?: string;
   summary: string;
@@ -107,7 +107,7 @@ export type ChainExecutionResult = {
 export type ChainRunResponse = {
   engagementId: string;
   targetUrl?: string;
-  source: "claude" | "heuristic";
+  source: "gemini" | "claude" | "heuristic";
   message?: string;
   stepsPlanned: number;
   stepsExecuted: number;
@@ -520,7 +520,7 @@ export type DecisionBrief = {
   totalFindings: number;
   actionableFindings: number;
   ignoredFindings: number;
-  source: "heuristic" | "claude";
+  source: "heuristic" | "gemini" | "claude";
   generatedAt: string;
 };
 

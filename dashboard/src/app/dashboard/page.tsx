@@ -2337,13 +2337,16 @@ export default function DashboardPage() {
                               {latestPlan.promptVersion || "v1"}
                               <span
                                 className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                  latestPlan.plannerSource === "gemini-api" ||
                                   latestPlan.plannerSource === "claude-api"
                                     ? "bg-emerald-900/70 text-emerald-300"
                                     : "bg-rose-900/70 text-rose-200"
                                 }`}
                               >
-                                {latestPlan.plannerSource === "claude-api"
-                                  ? "Claude API"
+                                {latestPlan.plannerSource === "gemini-api"
+                                  ? "Gemini API"
+                                  : latestPlan.plannerSource === "claude-api"
+                                    ? "Claude API"
                                   : "Template"}
                               </span>
                             </p>
@@ -2503,13 +2506,16 @@ export default function DashboardPage() {
                             <span className="font-medium">{latestPlan.summary}</span>
                             <span
                               className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                latestPlan.plannerSource === "gemini-api" ||
                                 latestPlan.plannerSource === "claude-api"
                                   ? "bg-emerald-900/70 text-emerald-300"
                                   : "bg-rose-900/70 text-rose-200"
                               }`}
                             >
-                              {latestPlan.plannerSource === "claude-api"
-                                ? "Claude API"
+                              {latestPlan.plannerSource === "gemini-api"
+                                ? "Gemini API"
+                                : latestPlan.plannerSource === "claude-api"
+                                  ? "Claude API"
                                 : "Template"}
                             </span>
                             {latestPlan.fallbackReason ? (

@@ -1,4 +1,5 @@
 const CveSnapshot = require("../models/CveSnapshot");
+const { callGeminiText } = require("./geminiClient");
 
 const NVD_BASE_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0";
 const TAG_CANDIDATES = [
@@ -239,14 +240,14 @@ async function tagCveForVenom({ cveId, description, cvssScore, cweIds, cpes }) {
     cpes
   });
 
-  const apiKey = process.env.CLAUDE_API_KEY;
-  const enabled = process.env.ENABLE_CLAUDE_CVE_TAGGING !== "false";
+  const apiKey = process.env.GEMINI_API_KEY;
+  const enabled = process.env.ENABLE_GEMINI_CVE_TAGGING !== "false";
   if (!enabled || !apiKey || (typeof cvssScore === "number" && cvssScore < 4.0)) {
     return heuristic.length > 0 ? heuristic : ["information-disclosure"];
   }
 
-  const model = process.env.CLAUDE_TAGGER_MODEL || "claude-3-5-haiku-latest";
-  const timeoutMs = Math.max(toInteger(process.env.CLAUDE_TAGGER_TIMEOUT_MS, 15000), 5000);
+  const model = process.env.GEMINI_TAGGER_MODEL || process.env.GEMINI_MODEL || "gemini-2.0-flash";
+  const timeoutMs = Math.max(toInteger(process.env.GEMINI_TAGGER_TIMEOUT_MS, 15000), 5000);
 
   const message = [
     `CVE: ${cveId}`,
@@ -262,39 +263,21 @@ async function tagCveForVenom({ cveId, description, cvssScore, cweIds, cpes }) {
   ].join("\n");
 
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 256,
-        temperature: 0,
-        messages: [
-          {
-            role: "user",
-            content: message
-          }
-        ]
-      }),
-      signal:
-        typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
-          ? AbortSignal.timeout(timeoutMs)
-          : undefined
-    });
+    const response = await callGeminiText({
+      apiKey,
+      model,
+      userPrompt: message,
+      temperature: 0,
+      maxOutputTokens: 256,
+      timeoutMs,
+      responseMimeType: "application/json"
+    }).catch(() => null);
 
-    if (!response.ok) {
+    if (!response) {
       return heuristic.length > 0 ? heuristic : ["information-disclosure"];
     }
 
-    const payload = await response.json();
-    const textBlock = Array.isArray(payload?.content)
-      ? payload.content.find((item) => item?.type === "text")
-      : null;
-    const parsedTags = parseTagArrayResponse(textBlock?.text || "");
+    const parsedTags = parseTagArrayResponse(response.text || "");
 
     const merged = [...new Set([...heuristic, ...parsedTags])];
     return merged.length > 0 ? merged.slice(0, 8) : ["information-disclosure"];

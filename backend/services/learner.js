@@ -8,6 +8,7 @@ const {
   computeSuccessRate
 } = require("./patternEngine");
 const { resolvePromptContent } = require("./promptCatalog");
+const { callGeminiText } = require("./geminiClient");
 
 const SAFE_TARGET_TYPES = new Set(["website", "api", "network", "mixed"]);
 const SAFE_TAGS = new Set([
@@ -228,14 +229,14 @@ function extractJsonArray(text) {
   return candidate;
 }
 
-async function extractClaudePatternCandidates(successfulJobs) {
-  const apiKey = process.env.CLAUDE_API_KEY;
+async function extractGeminiPatternCandidates(successfulJobs) {
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || successfulJobs.length === 0) {
     return [];
   }
 
   const summary = successfulJobs.map(buildJobSummary);
-  const model = process.env.CLAUDE_LEARNER_MODEL || process.env.CLAUDE_MODEL || "claude-3-5-sonnet-latest";
+  const model = process.env.GEMINI_LEARNER_MODEL || process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
   const learningPrompt = await resolvePromptContent("learning");
   const prompt = [
@@ -253,34 +254,20 @@ async function extractClaudePatternCandidates(successfulJobs) {
     JSON.stringify(summary, null, 2)
   ].join("\n");
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 1200,
-      temperature: 0.2,
-      messages: [
-        {
-          role: "user",
-          content: prompt
-        }
-      ]
-    })
-  });
+  const response = await callGeminiText({
+    apiKey,
+    model,
+    userPrompt: prompt,
+    temperature: 0.2,
+    maxOutputTokens: 1200,
+    responseMimeType: "application/json"
+  }).catch(() => null);
 
-  if (!response.ok) {
+  if (!response) {
     return [];
   }
 
-  const payload = await response.json();
-  const text = Array.isArray(payload?.content)
-    ? payload.content.find((item) => item?.type === "text")?.text || ""
-    : "";
+  const text = response.text || "";
 
   try {
     const parsed = JSON.parse(extractJsonArray(text));
@@ -446,13 +433,13 @@ async function runLearningCycle(engagementId) {
   }
 
   const successfulJobs = jobs.filter((job) => jobIsSuccessful(job));
-  const rawCandidates = await extractClaudePatternCandidates(successfulJobs);
-  const sanitizedClaude = rawCandidates
+  const rawCandidates = await extractGeminiPatternCandidates(successfulJobs);
+  const sanitizedGemini = rawCandidates
     .map((candidate) => sanitizePatternCandidate(candidate, engagement.targetType))
     .filter(Boolean);
 
-  let extractionSource = "claude";
-  let candidates = sanitizedClaude;
+  let extractionSource = "gemini";
+  let candidates = sanitizedGemini;
 
   if (candidates.length === 0) {
     extractionSource = "heuristic";
@@ -463,7 +450,7 @@ async function runLearningCycle(engagementId) {
   }
 
   const sourceLabel =
-    extractionSource === "claude" ? "claude-extracted" : "heuristic-extracted";
+    extractionSource === "gemini" ? "gemini-extracted" : "heuristic-extracted";
   const createdPatterns = await createNewPatternsFromCandidates(candidates, sourceLabel);
 
   await ExecutionJob.updateMany(

@@ -5,6 +5,7 @@ const ExecutionJob = require("../models/ExecutionJob");
 const Engagement = require("../models/Engagement");
 const { extractFindingCount } = require("./metricsEngine");
 const { resolvePromptContent, normalizePromptType } = require("./promptCatalog");
+const { callGeminiText } = require("./geminiClient");
 
 const SUPPORTED_PROMPT_TYPES = ["planning", "chain", "learning"];
 
@@ -131,45 +132,25 @@ function buildEvolutionPrompt({ promptType, currentPrompt, metrics }) {
   ].join("\n");
 }
 
-async function callClaudeForEvolution(promptPayload) {
-  const apiKey = process.env.CLAUDE_API_KEY;
+async function callGeminiForEvolution(promptPayload) {
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return null;
   }
 
   const model =
-    process.env.CLAUDE_PROMPT_EVOLVER_MODEL ||
-    process.env.CLAUDE_MODEL ||
-    "claude-3-5-sonnet-latest";
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 1600,
-      temperature: 0.2,
-      messages: [
-        {
-          role: "user",
-          content: promptPayload
-        }
-      ]
-    })
+    process.env.GEMINI_PROMPT_EVOLVER_MODEL ||
+    process.env.GEMINI_MODEL ||
+    "gemini-2.0-flash";
+  const response = await callGeminiText({
+    apiKey,
+    model,
+    userPrompt: promptPayload,
+    temperature: 0.2,
+    maxOutputTokens: 1600,
+    responseMimeType: "application/json"
   });
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    throw new Error(`Claude evolution request failed (${response.status}): ${errorText}`);
-  }
-
-  const payload = await response.json();
-  const text = Array.isArray(payload?.content)
-    ? payload.content.find((item) => item?.type === "text")?.text || ""
-    : "";
+  const text = response.text || "";
   return { text, model };
 }
 
@@ -208,7 +189,7 @@ async function evolvePromptType(promptType, options = {}) {
     };
   }
 
-  const response = await callClaudeForEvolution(
+  const response = await callGeminiForEvolution(
     buildEvolutionPrompt({
       promptType: normalized,
       currentPrompt,
@@ -220,7 +201,7 @@ async function evolvePromptType(promptType, options = {}) {
     return {
       promptType: normalized,
       status: "skipped",
-      reason: "claude_api_key_missing"
+      reason: "gemini_api_key_missing"
     };
   }
 

@@ -1,6 +1,7 @@
 const Engagement = require("../models/Engagement");
 const ExecutionJob = require("../models/ExecutionJob");
 const DecisionBrief = require("../models/DecisionBrief");
+const { callGeminiText } = require("./geminiClient");
 
 function normalizeSeverity(value) {
   return String(value || "low").trim().toLowerCase();
@@ -240,13 +241,13 @@ function extractJsonObject(text) {
   }
 }
 
-async function tryClaudeDecisionBrief(engagement, scoredFindings, ignoreList) {
-  const apiKey = process.env.CLAUDE_API_KEY;
+async function tryGeminiDecisionBrief(engagement, scoredFindings, ignoreList) {
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || process.env.ENABLE_DECISION_BRIEF_AI === "false") {
     return null;
   }
 
-  const model = process.env.CLAUDE_DECISION_MODEL || "claude-3-5-sonnet-latest";
+  const model = process.env.GEMINI_DECISION_MODEL || process.env.GEMINI_MODEL || "gemini-2.0-flash";
   const prompt = `You are VENOM decision intelligence. Produce an actionable risk brief in JSON.
 
 Target: ${engagement.targetUrl}
@@ -268,31 +269,16 @@ Return STRICT JSON:
   "shouldPageOnCall": true
 }`;
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 1800,
-      temperature: 0.2,
-      messages: [{ role: "user", content: prompt }]
-    }),
-    signal:
-      typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
-        ? AbortSignal.timeout(25000)
-        : undefined
-  });
-
-  if (!response.ok) {
-    return null;
-  }
-
-  const payload = await response.json().catch(() => null);
-  const text = payload?.content?.[0]?.text;
+  const response = await callGeminiText({
+    apiKey,
+    model,
+    userPrompt: prompt,
+    temperature: 0.2,
+    maxOutputTokens: 1800,
+    timeoutMs: 25000,
+    responseMimeType: "application/json"
+  }).catch(() => null);
+  const text = response?.text;
   if (!text) {
     return null;
   }
@@ -372,25 +358,25 @@ async function generateDecisionBrief(engagementId) {
     .sort((left, right) => right.contextualSeverity - left.contextualSeverity);
 
   const heuristic = buildHeuristicDecision(scored);
-  const claude = await tryClaudeDecisionBrief(
+  const gemini = await tryGeminiDecisionBrief(
     engagement,
     scored,
     heuristic.ignoreReasons
   ).catch(() => null);
 
-  const topRisks = Array.isArray(claude?.topThreeRisks)
-    ? claude.topThreeRisks.slice(0, 3)
+  const topRisks = Array.isArray(gemini?.topThreeRisks)
+    ? gemini.topThreeRisks.slice(0, 3)
     : heuristic.topThreeRisks;
-  const ignoreList = Array.isArray(claude?.ignoreReasons)
-    ? claude.ignoreReasons
+  const ignoreList = Array.isArray(gemini?.ignoreReasons)
+    ? gemini.ignoreReasons
     : heuristic.ignoreReasons;
   const riskLevel = ["critical", "high", "medium", "low", "clean"].includes(
-    String(claude?.riskLevel || "").toLowerCase()
+    String(gemini?.riskLevel || "").toLowerCase()
   )
-    ? String(claude.riskLevel).toLowerCase()
+    ? String(gemini.riskLevel).toLowerCase()
     : heuristic.riskLevel;
   const overallRiskSentence =
-    String(claude?.overallRiskSentence || "").trim() ||
+    String(gemini?.overallRiskSentence || "").trim() ||
     heuristic.overallRiskSentence;
 
   const generatedAt = new Date();
@@ -402,12 +388,12 @@ async function generateDecisionBrief(engagementId) {
         ignoreList,
         overallRiskSentence,
         riskLevel,
-        shouldPageOnCall: Boolean(claude?.shouldPageOnCall ?? heuristic.shouldPageOnCall),
+        shouldPageOnCall: Boolean(gemini?.shouldPageOnCall ?? heuristic.shouldPageOnCall),
         riskScore: heuristic.riskScore,
         totalFindings: findings.length,
         actionableFindings: heuristic.actionableCount,
         ignoredFindings: heuristic.ignoredCount,
-        source: claude ? "claude" : "heuristic",
+        source: gemini ? "gemini" : "heuristic",
         generatedAt
       }
     },

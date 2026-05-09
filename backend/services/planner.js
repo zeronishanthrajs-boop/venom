@@ -3,6 +3,7 @@ const path = require("node:path");
 const Pattern = require("../models/Pattern");
 const CveSnapshot = require("../models/CveSnapshot");
 const { resolvePromptContent } = require("./promptCatalog");
+const { callGeminiText } = require("./geminiClient");
 
 const PROMPT_VERSION = "planning_v2_3_2026_05_04";
 const UNSAFE_TERMS =
@@ -275,13 +276,13 @@ function buildUserPayload(engagement) {
   };
 }
 
-async function callClaudePlanner(engagement, plannerContextInput) {
-  const apiKey = process.env.CLAUDE_API_KEY;
+async function callGeminiPlanner(engagement, plannerContextInput) {
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return null;
   }
 
-  const model = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
+  const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
   const [systemPromptSource, plannerContext] = await Promise.all([
     loadSystemPrompt(),
     plannerContextInput ? Promise.resolve(plannerContextInput) : loadPlannerContext(engagement)
@@ -304,85 +305,41 @@ Safety constraints:
 - Do not propose offensive exploitation instructions.
 - Focus on authorized validation, evidence collection, and mitigation-oriented reasoning.`;
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 1200,
-      temperature: 0.2,
-      system: contextualSystemPrompt,
-      messages: [
-        {
-          role: "user",
-          content: `Generate a safe assessment plan for this engagement.\n\n${JSON.stringify(
-            userPayload,
-            null,
-            2
-          )}`
-        }
-      ]
-    })
+  const geminiResponse = await callGeminiText({
+    apiKey,
+    model,
+    systemInstruction: contextualSystemPrompt,
+    userPrompt: `Generate a safe assessment plan for this engagement.\n\n${JSON.stringify(
+      userPayload,
+      null,
+      2
+    )}`,
+    temperature: 0.2,
+    maxOutputTokens: 1200
   });
-
-  if (!response.ok) {
-    const failureText = await response.text();
-    throw new Error(
-      `Claude API request failed with ${response.status}: ${failureText}`
-    );
-  }
-
-  const payload = await response.json();
-  const textBlock = Array.isArray(payload.content)
-    ? payload.content.find((item) => item?.type === "text")
-    : null;
-  const rawText = textBlock?.text || "";
+  const rawText = geminiResponse.text || "";
 
   let parsed;
   try {
     parsed = JSON.parse(extractJsonObjectText(rawText));
   } catch {
-    const repairModel = process.env.CLAUDE_JSON_REPAIR_MODEL || model;
-    const repairResponse = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: repairModel,
-        max_tokens: 1200,
-        temperature: 0,
-        messages: [
-          {
-            role: "user",
-            content: `Convert the following text into strict valid JSON that matches VENOM plan schema. Output JSON only.\n\n${rawText}`
-          }
-        ]
-      })
+    const repairModel = process.env.GEMINI_JSON_REPAIR_MODEL || model;
+    const repairResponse = await callGeminiText({
+      apiKey,
+      model: repairModel,
+      userPrompt: `Convert the following text into strict valid JSON that matches VENOM plan schema. Output JSON only.\n\n${rawText}`,
+      temperature: 0,
+      maxOutputTokens: 1200,
+      responseMimeType: "application/json"
+    }).catch((error) => {
+      throw new Error(`Gemini JSON repair failed: ${error?.message || "Unknown error"}`);
     });
-
-    if (!repairResponse.ok) {
-      const repairFailure = await repairResponse.text().catch(() => "");
-      throw new Error(
-        `Claude JSON repair failed (${repairResponse.status}): ${repairFailure}`
-      );
-    }
-
-    const repairPayload = await repairResponse.json();
-    const repairText = Array.isArray(repairPayload?.content)
-      ? repairPayload.content.find((item) => item?.type === "text")?.text || ""
-      : "";
+    const repairText = repairResponse?.text || "";
     parsed = JSON.parse(extractJsonObjectText(repairText));
   }
 
   return {
-    source: "claude-api",
+    source: "gemini-api",
     model,
     promptVersion:
       systemPromptSource?.source === "db-active"
@@ -395,16 +352,16 @@ Safety constraints:
 
 async function generatePlanForEngagement(engagement) {
   const { logger, withMaskedSecrets } = require("../config/logger");
-  const apiKeyRaw = process.env.CLAUDE_API_KEY || "";
-  const hasClaudeKey = Boolean(apiKeyRaw);
-  const keyPreview = hasClaudeKey
+  const apiKeyRaw = process.env.GEMINI_API_KEY || "";
+  const hasGeminiKey = Boolean(apiKeyRaw);
+  const keyPreview = hasGeminiKey
     ? `${String(apiKeyRaw).slice(0, 10)}...`
     : "NOT SET";
-  const plannerModel = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
-  const strictPlanner = process.env.CLAUDE_PLANNER_STRICT === "true";
+  const plannerModel = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+  const strictPlanner = process.env.GEMINI_PLANNER_STRICT === "true";
   logger.info(
     withMaskedSecrets({
-      hasApiKey: hasClaudeKey,
+      hasApiKey: hasGeminiKey,
       keyPreview,
       model: plannerModel,
       engagementId: String(engagement?._id || "")
@@ -413,13 +370,13 @@ async function generatePlanForEngagement(engagement) {
   );
 
   const plannerContext = await loadPlannerContext(engagement);
-  if (!hasClaudeKey) {
-    logger.warn("No CLAUDE_API_KEY configured, using template fallback");
+  if (!hasGeminiKey) {
+    logger.warn("No GEMINI_API_KEY configured, using template fallback");
     return {
       source: "template",
       model: "template-planner-v1",
       promptVersion: PROMPT_VERSION,
-      fallbackReason: "CLAUDE_API_KEY is not configured",
+      fallbackReason: "GEMINI_API_KEY is not configured",
       plan: appendCveContextToTemplatePlan(
         normalizePlan(templatePlan(engagement)),
         plannerContext.recentCves
@@ -428,8 +385,8 @@ async function generatePlanForEngagement(engagement) {
     };
   }
 
-  const claudeResult = await callClaudePlanner(engagement, plannerContext).catch((error) => {
-    if (hasClaudeKey && strictPlanner) {
+  const geminiResult = await callGeminiPlanner(engagement, plannerContext).catch((error) => {
+    if (hasGeminiKey && strictPlanner) {
       throw error;
     }
     logger.error(
@@ -438,17 +395,17 @@ async function generatePlanForEngagement(engagement) {
         type: error?.constructor?.name || "Unknown",
         status: error?.status || error?.statusCode || error?.code || "N/A"
       },
-      "Claude API planner request failed"
+      "Gemini API planner request failed"
     );
-    logger.warn("Claude planner unavailable, using template fallback.");
+    logger.warn("Gemini planner unavailable, using template fallback.");
     return null;
   });
 
-  if (claudeResult) {
-    logger.info("Claude planner request succeeded");
+  if (geminiResult) {
+    logger.info("Gemini planner request succeeded");
     return {
-      ...claudeResult,
-      promptVersion: claudeResult.promptVersion || PROMPT_VERSION
+      ...geminiResult,
+      promptVersion: geminiResult.promptVersion || PROMPT_VERSION
     };
   }
 
@@ -456,7 +413,7 @@ async function generatePlanForEngagement(engagement) {
     source: "template",
     model: "template-planner-v1",
     promptVersion: PROMPT_VERSION,
-    fallbackReason: "Claude API request failed; template fallback applied",
+    fallbackReason: "Gemini API request failed; template fallback applied",
     plan: appendCveContextToTemplatePlan(
       normalizePlan(templatePlan(engagement)),
       plannerContext.recentCves

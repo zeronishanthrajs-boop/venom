@@ -3,6 +3,7 @@ const ExecutionJob = require("../models/ExecutionJob");
 const { executeEngagementTool } = require("./executionService");
 const { getTool } = require("../tooling/toolRegistry");
 const { resolvePromptContent } = require("./promptCatalog");
+const { callGeminiText } = require("./geminiClient");
 
 const SAFE_CHAIN_TOOL_IDS = [
   "http_headers_probe",
@@ -189,14 +190,14 @@ function inferHaltCodeFromError(error) {
   return "default";
 }
 
-async function tryClaudeChainPlan(engagement, findings) {
-  const apiKey = process.env.CLAUDE_API_KEY;
-  const claudeEnabled = process.env.CLAUDE_CHAIN_ENABLED !== "false";
-  if (!apiKey || !claudeEnabled) {
+async function tryGeminiChainPlan(engagement, findings) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const geminiEnabled = process.env.GEMINI_CHAIN_ENABLED !== "false";
+  if (!apiKey || !geminiEnabled) {
     return null;
   }
 
-  const model = process.env.CLAUDE_CHAIN_MODEL || process.env.CLAUDE_MODEL || "claude-3-5-sonnet-latest";
+  const model = process.env.GEMINI_CHAIN_MODEL || process.env.GEMINI_MODEL || "gemini-2.0-flash";
   const scopeSnapshot = {
     targetUrl: engagement.targetUrl,
     targetType: engagement.targetType,
@@ -213,42 +214,27 @@ ${SAFE_CHAIN_TOOL_IDS.join(", ")}
 Output shape:
 [{"toolId":"http_headers_probe","name":"...", "rationale":"...", "continueOnFailure":false}]`;
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 900,
-      temperature: 0.1,
-      system: instructions,
-      messages: [
-        {
-          role: "user",
-          content: `Generate the best next-step chain for this engagement.\n\n${JSON.stringify(
-            {
-              scopeSnapshot,
-              findings: findings.slice(0, 20)
-            },
-            null,
-            2
-          )}`
-        }
-      ]
-    })
-  });
+  const response = await callGeminiText({
+    apiKey,
+    model,
+    systemInstruction: instructions,
+    userPrompt: `Generate the best next-step chain for this engagement.\n\n${JSON.stringify(
+      {
+        scopeSnapshot,
+        findings: findings.slice(0, 20)
+      },
+      null,
+      2
+    )}`,
+    temperature: 0.1,
+    maxOutputTokens: 900
+  }).catch(() => null);
 
-  if (!response.ok) {
+  if (!response) {
     return null;
   }
 
-  const payload = await response.json();
-  const text = Array.isArray(payload?.content)
-    ? payload.content.find((item) => item?.type === "text")?.text || ""
-    : "";
+  const text = response.text || "";
   const cleaned = String(text).replace(/```json/gi, "").replace(/```/g, "").trim();
   const firstBracket = cleaned.indexOf("[");
   const lastBracket = cleaned.lastIndexOf("]");
@@ -290,11 +276,11 @@ async function runExploitationChain({
     .lean();
   const findings = flattenHistoricalFindings(previousJobs);
 
-  const claudeSteps = await tryClaudeChainPlan(engagement, findings);
-  const source = Array.isArray(claudeSteps) ? "claude" : "heuristic";
+  const geminiSteps = await tryGeminiChainPlan(engagement, findings);
+  const source = Array.isArray(geminiSteps) ? "gemini" : "heuristic";
   const rawSteps =
-    Array.isArray(claudeSteps) && claudeSteps.length > 0
-      ? claudeSteps
+    Array.isArray(geminiSteps) && geminiSteps.length > 0
+      ? geminiSteps
       : buildHeuristicChainSteps(engagement, findings);
 
   const steps = sanitizeChainSteps(rawSteps, engagement);

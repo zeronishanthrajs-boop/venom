@@ -62,14 +62,14 @@ router.post("/", requireDb, async (req, res, next) => {
       });
     }
 
-    if (typeof error?.message === "string" && /Claude API request failed/i.test(error.message)) {
+    if (typeof error?.message === "string" && /Gemini API request failed/i.test(error.message)) {
       return res.status(502).json({
-        error: "Planner upstream (Claude API) unavailable",
+        error: "Planner upstream (Gemini API) unavailable",
         details: error.message
       });
     }
 
-    if (typeof error?.message === "string" && /Claude JSON repair failed/i.test(error.message)) {
+    if (typeof error?.message === "string" && /Gemini JSON repair failed/i.test(error.message)) {
       return res.status(502).json({
         error: "Planner JSON normalization upstream unavailable",
         details: error.message
