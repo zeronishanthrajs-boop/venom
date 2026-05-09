@@ -619,14 +619,62 @@ export default function DashboardPage() {
       return;
     }
 
-    const timer = window.setInterval(() => {
-      void loadWeek7Telemetry(session);
-      void loadWeek11ControlPlane(session);
-      void loadWeek12Ops(session);
-    }, 5000);
+    let cancelled = false;
+    let telemetryInFlight = false;
+    let controlPlaneInFlight = false;
+    let opsInFlight = false;
+
+    const refreshTelemetry = async () => {
+      if (cancelled || telemetryInFlight) {
+        return;
+      }
+      telemetryInFlight = true;
+      try {
+        await loadWeek7Telemetry(session);
+      } finally {
+        telemetryInFlight = false;
+      }
+    };
+
+    const refreshControlPlane = async () => {
+      if (cancelled || controlPlaneInFlight) {
+        return;
+      }
+      controlPlaneInFlight = true;
+      try {
+        await loadWeek11ControlPlane(session);
+      } finally {
+        controlPlaneInFlight = false;
+      }
+    };
+
+    const refreshOps = async () => {
+      if (cancelled || opsInFlight) {
+        return;
+      }
+      opsInFlight = true;
+      try {
+        await loadWeek12Ops(session);
+      } finally {
+        opsInFlight = false;
+      }
+    };
+
+    const telemetryTimer = window.setInterval(() => {
+      void refreshTelemetry();
+    }, 15000);
+    const controlPlaneTimer = window.setInterval(() => {
+      void refreshControlPlane();
+    }, 30000);
+    const opsTimer = window.setInterval(() => {
+      void refreshOps();
+    }, 30000);
 
     return () => {
-      window.clearInterval(timer);
+      cancelled = true;
+      window.clearInterval(telemetryTimer);
+      window.clearInterval(controlPlaneTimer);
+      window.clearInterval(opsTimer);
     };
   }, [session]);
 
