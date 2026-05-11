@@ -276,13 +276,65 @@ function buildUserPayload(engagement) {
   };
 }
 
+function uniqueModels(models = []) {
+  const seen = new Set();
+  const output = [];
+  for (const model of models) {
+    const normalized = String(model || "").trim();
+    if (!normalized) {
+      continue;
+    }
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      output.push(normalized);
+    }
+  }
+  return output;
+}
+
+function getPlannerModelCandidates() {
+  const primary = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+  const fallbackCsv = String(process.env.GEMINI_FALLBACK_MODELS || "");
+  const fallbacks = fallbackCsv
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return uniqueModels([primary, ...fallbacks]);
+}
+
+function summarizeGeminiPlannerFailure(error, modelCandidates = []) {
+  const raw = String(error?.message || "Unknown Gemini planner error");
+  const modelsText = modelCandidates.length > 0 ? modelCandidates.join(", ") : "n/a";
+  const normalized = raw.toLowerCase();
+  const statusMatch = raw.match(/\bwith\s+(\d{3})\b/i);
+  const statusCode = statusMatch ? Number(statusMatch[1]) : null;
+
+  if (statusCode === 401 || statusCode === 403 || normalized.includes("permission")) {
+    return `Gemini rejected the request (auth/permission). Verify GEMINI_API_KEY access for models [${modelsText}].`;
+  }
+
+  if (statusCode === 404 || normalized.includes("not found")) {
+    return `Gemini model unavailable for current key. Check GEMINI_MODEL/GEMINI_FALLBACK_MODELS [${modelsText}].`;
+  }
+
+  if (statusCode === 429 || normalized.includes("quota")) {
+    return "Gemini quota/rate limit reached. Retry later or adjust usage limits.";
+  }
+
+  if (statusCode && statusCode >= 500) {
+    return "Gemini upstream service error. Retry shortly; fallback template applied.";
+  }
+
+  return `Gemini planner request failed: ${raw.slice(0, 220)}`;
+}
+
 async function callGeminiPlanner(engagement, plannerContextInput) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return null;
   }
 
-  const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+  const modelCandidates = getPlannerModelCandidates();
   const [systemPromptSource, plannerContext] = await Promise.all([
     loadSystemPrompt(),
     plannerContextInput ? Promise.resolve(plannerContextInput) : loadPlannerContext(engagement)
@@ -305,49 +357,60 @@ Safety constraints:
 - Do not propose offensive exploitation instructions.
 - Focus on authorized validation, evidence collection, and mitigation-oriented reasoning.`;
 
-  const geminiResponse = await callGeminiText({
-    apiKey,
-    model,
-    systemInstruction: contextualSystemPrompt,
-    userPrompt: `Generate a safe assessment plan for this engagement.\n\n${JSON.stringify(
-      userPayload,
-      null,
-      2
-    )}`,
-    temperature: 0.2,
-    maxOutputTokens: 1200
-  });
-  const rawText = geminiResponse.text || "";
+  let lastError = null;
+  for (const model of modelCandidates) {
+    try {
+      const geminiResponse = await callGeminiText({
+        apiKey,
+        model,
+        systemInstruction: contextualSystemPrompt,
+        userPrompt: `Generate a safe assessment plan for this engagement.\n\n${JSON.stringify(
+          userPayload,
+          null,
+          2
+        )}`,
+        temperature: 0.2,
+        maxOutputTokens: 1200
+      });
+      const rawText = geminiResponse.text || "";
 
-  let parsed;
-  try {
-    parsed = JSON.parse(extractJsonObjectText(rawText));
-  } catch {
-    const repairModel = process.env.GEMINI_JSON_REPAIR_MODEL || model;
-    const repairResponse = await callGeminiText({
-      apiKey,
-      model: repairModel,
-      userPrompt: `Convert the following text into strict valid JSON that matches VENOM plan schema. Output JSON only.\n\n${rawText}`,
-      temperature: 0,
-      maxOutputTokens: 1200,
-      responseMimeType: "application/json"
-    }).catch((error) => {
-      throw new Error(`Gemini JSON repair failed: ${error?.message || "Unknown error"}`);
-    });
-    const repairText = repairResponse?.text || "";
-    parsed = JSON.parse(extractJsonObjectText(repairText));
+      let parsed;
+      try {
+        parsed = JSON.parse(extractJsonObjectText(rawText));
+      } catch {
+        const repairModel = process.env.GEMINI_JSON_REPAIR_MODEL || model;
+        const repairResponse = await callGeminiText({
+          apiKey,
+          model: repairModel,
+          userPrompt: `Convert the following text into strict valid JSON that matches VENOM plan schema. Output JSON only.\n\n${rawText}`,
+          temperature: 0,
+          maxOutputTokens: 1200,
+          responseMimeType: "application/json"
+        }).catch((error) => {
+          throw new Error(`Gemini JSON repair failed: ${error?.message || "Unknown error"}`);
+        });
+        const repairText = repairResponse?.text || "";
+        parsed = JSON.parse(extractJsonObjectText(repairText));
+      }
+
+      return {
+        source: "gemini-api",
+        model,
+        promptVersion:
+          systemPromptSource?.source === "db-active"
+            ? systemPromptSource.version
+            : PROMPT_VERSION,
+        plan: normalizePlan(parsed),
+        rawModelOutput: rawText
+      };
+    } catch (error) {
+      lastError = error;
+    }
   }
 
-  return {
-    source: "gemini-api",
-    model,
-    promptVersion:
-      systemPromptSource?.source === "db-active"
-        ? systemPromptSource.version
-        : PROMPT_VERSION,
-    plan: normalizePlan(parsed),
-    rawModelOutput: rawText
-  };
+  throw new Error(
+    summarizeGeminiPlannerFailure(lastError, modelCandidates)
+  );
 }
 
 async function generatePlanForEngagement(engagement) {
@@ -357,7 +420,8 @@ async function generatePlanForEngagement(engagement) {
   const keyPreview = hasGeminiKey
     ? `${String(apiKeyRaw).slice(0, 10)}...`
     : "NOT SET";
-  const plannerModel = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+  const plannerModels = getPlannerModelCandidates();
+  const plannerModel = plannerModels[0] || "gemini-2.0-flash";
   const strictPlanner = process.env.GEMINI_PLANNER_STRICT === "true";
   logger.info(
     withMaskedSecrets({
@@ -385,15 +449,18 @@ async function generatePlanForEngagement(engagement) {
     };
   }
 
+  let geminiFailureReason = "";
   const geminiResult = await callGeminiPlanner(engagement, plannerContext).catch((error) => {
     if (hasGeminiKey && strictPlanner) {
       throw error;
     }
+    geminiFailureReason = summarizeGeminiPlannerFailure(error, plannerModels);
     logger.error(
       {
         error: error?.message || "Unknown error",
         type: error?.constructor?.name || "Unknown",
-        status: error?.status || error?.statusCode || error?.code || "N/A"
+        status: error?.status || error?.statusCode || error?.code || "N/A",
+        fallbackReason: geminiFailureReason
       },
       "Gemini API planner request failed"
     );
@@ -413,7 +480,8 @@ async function generatePlanForEngagement(engagement) {
     source: "template",
     model: "template-planner-v1",
     promptVersion: PROMPT_VERSION,
-    fallbackReason: "Gemini API request failed; template fallback applied",
+    fallbackReason:
+      geminiFailureReason || "Gemini API request failed; template fallback applied",
     plan: appendCveContextToTemplatePlan(
       normalizePlan(templatePlan(engagement)),
       plannerContext.recentCves

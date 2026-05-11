@@ -436,6 +436,51 @@ function assertSmtpConfigured() {
   }
 }
 
+function toPositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function normalizeSmtpError(error) {
+  const message = String(error?.message || "SMTP operation failed");
+  const normalized = message.toLowerCase();
+  const code = String(error?.code || "").toUpperCase();
+
+  if (
+    code === "EAUTH" ||
+    normalized.includes("invalid login") ||
+    normalized.includes("authentication")
+  ) {
+    const authError = new Error("SMTP authentication failed. Check SMTP_USER/SMTP_PASS.");
+    authError.code = "SMTP_AUTH_FAILED";
+    return authError;
+  }
+
+  if (
+    code === "ETIMEDOUT" ||
+    code === "ECONNECTION" ||
+    code === "ESOCKET" ||
+    code === "ENOTFOUND" ||
+    code === "EAI_AGAIN" ||
+    normalized.includes("timed out") ||
+    normalized.includes("connection") ||
+    normalized.includes("greeting never received")
+  ) {
+    const connectionError = new Error(
+      "SMTP connection failed or timed out. Check SMTP_HOST/SMTP_PORT and provider firewall rules."
+    );
+    connectionError.code = "SMTP_CONNECT_FAILED";
+    return connectionError;
+  }
+
+  const fallbackError = new Error(`SMTP send failed: ${message}`);
+  fallbackError.code = "SMTP_SEND_FAILED";
+  return fallbackError;
+}
+
 async function emailReport(engagementId, recipientEmail) {
   assertSmtpConfigured();
   if (!recipientEmail || typeof recipientEmail !== "string") {
@@ -452,6 +497,10 @@ async function emailReport(engagementId, recipientEmail) {
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 587),
     secure: String(process.env.SMTP_PORT || "587") === "465",
+    connectionTimeout: toPositiveInt(process.env.SMTP_CONNECTION_TIMEOUT_MS, 7000),
+    greetingTimeout: toPositiveInt(process.env.SMTP_GREETING_TIMEOUT_MS, 7000),
+    socketTimeout: toPositiveInt(process.env.SMTP_SOCKET_TIMEOUT_MS, 10000),
+    dnsTimeout: toPositiveInt(process.env.SMTP_DNS_TIMEOUT_MS, 5000),
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS
@@ -461,19 +510,23 @@ async function emailReport(engagementId, recipientEmail) {
   const safeName = sanitizeFileName(context.engagement.name);
   const fileName = `venom-report-${safeName}-${Date.now()}.pdf`;
 
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to: recipientEmail,
-    subject: `[VENOM] Security Report - ${context.engagement.name}`,
-    text: `Attached is the VENOM security report for ${context.engagement.targetUrl}.`,
-    attachments: [
-      {
-        filename: fileName,
-        content: pdfBuffer,
-        contentType: "application/pdf"
-      }
-    ]
-  });
+  try {
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: recipientEmail,
+      subject: `[VENOM] Security Report - ${context.engagement.name}`,
+      text: `Attached is the VENOM security report for ${context.engagement.targetUrl}.`,
+      attachments: [
+        {
+          filename: fileName,
+          content: pdfBuffer,
+          contentType: "application/pdf"
+        }
+      ]
+    });
+  } catch (error) {
+    throw normalizeSmtpError(error);
+  }
 
   return {
     sent: true,

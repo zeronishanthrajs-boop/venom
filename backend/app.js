@@ -93,6 +93,11 @@ function getMissingEnvKeys(keys = []) {
 function buildDependencyDiagnostics() {
   const missingSmtp = getMissingEnvKeys(["SMTP_HOST", "SMTP_USER", "SMTP_PASS"]);
   const geminiConfigured = Boolean(String(process.env.GEMINI_API_KEY || "").trim());
+  const geminiPrimaryModel = String(process.env.GEMINI_MODEL || "gemini-2.0-flash").trim();
+  const geminiFallbackModels = String(process.env.GEMINI_FALLBACK_MODELS || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 
   const chromiumPath = String(process.env.CHROMIUM_PATH || "").trim();
   const chromiumPathProvided = Boolean(chromiumPath);
@@ -117,7 +122,9 @@ function buildDependencyDiagnostics() {
         missing: missingSmtp
       },
       gemini: {
-        configured: geminiConfigured
+        configured: geminiConfigured,
+        primaryModel: geminiPrimaryModel,
+        fallbackModels: geminiFallbackModels
       },
       pdf: {
         chromiumPathProvided,

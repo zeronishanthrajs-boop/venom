@@ -108,6 +108,26 @@ router.post("/:engagementId/email", requireDb, async (req, res, next) => {
     if (error?.code === "SMTP_NOT_CONFIGURED") {
       return res.status(503).json({ error: error.message });
     }
+    if (error?.code === "SMTP_AUTH_FAILED") {
+      return res.status(502).json({
+        error: error.message,
+        suggestion:
+          "Confirm SMTP credentials and provider auth settings (app password/OAuth requirement)."
+      });
+    }
+    if (error?.code === "SMTP_CONNECT_FAILED") {
+      return res.status(502).json({
+        error: error.message,
+        suggestion:
+          "Validate SMTP_HOST/SMTP_PORT and ensure outbound SMTP is allowed from Render."
+      });
+    }
+    if (error?.code === "SMTP_SEND_FAILED") {
+      return res.status(502).json({
+        error: error.message,
+        suggestion: "Check Render logs for exact SMTP provider rejection details."
+      });
+    }
     if (error?.code === "INVALID_EMAIL") {
       return res.status(400).json({ error: error.message });
     }
