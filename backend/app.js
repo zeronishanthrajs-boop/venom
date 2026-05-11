@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const fs = require("node:fs");
 const { getDbStatus } = require("./config/db");
 const authMiddleware = require("./middleware/auth");
 const activityLogger = require("./middleware/activityLogger");
@@ -85,6 +86,47 @@ function applySecurityHeaders(app) {
   });
 }
 
+function getMissingEnvKeys(keys = []) {
+  return keys.filter((key) => !String(process.env[key] || "").trim());
+}
+
+function buildDependencyDiagnostics() {
+  const missingSmtp = getMissingEnvKeys(["SMTP_HOST", "SMTP_USER", "SMTP_PASS"]);
+  const geminiConfigured = Boolean(String(process.env.GEMINI_API_KEY || "").trim());
+
+  const chromiumPath = String(process.env.CHROMIUM_PATH || "").trim();
+  const chromiumPathProvided = Boolean(chromiumPath);
+  const chromiumPathExists = chromiumPathProvided ? fs.existsSync(chromiumPath) : null;
+
+  const warnings = [];
+  if (missingSmtp.length > 0) {
+    warnings.push(`SMTP missing: ${missingSmtp.join(", ")}`);
+  }
+  if (!geminiConfigured) {
+    warnings.push("GEMINI_API_KEY is not configured");
+  }
+  if (chromiumPathProvided && chromiumPathExists === false) {
+    warnings.push("CHROMIUM_PATH is set but file does not exist");
+  }
+
+  return {
+    warnings,
+    dependencies: {
+      smtp: {
+        configured: missingSmtp.length === 0,
+        missing: missingSmtp
+      },
+      gemini: {
+        configured: geminiConfigured
+      },
+      pdf: {
+        chromiumPathProvided,
+        chromiumPathExists
+      }
+    }
+  };
+}
+
 function createApp() {
   const app = express();
   applySecurityHeaders(app);
@@ -110,10 +152,12 @@ function createApp() {
 
   app.get("/ready", (_req, res) => {
     const db = getDbStatus();
+    const diagnostics = buildDependencyDiagnostics();
     if (db.readyState === 1) {
       return res.status(200).json({
         status: "ready",
         db,
+        ...diagnostics,
         timestamp: new Date().toISOString()
       });
     }
@@ -121,6 +165,7 @@ function createApp() {
     return res.status(503).json({
       status: "not_ready",
       db,
+      ...diagnostics,
       error:
         "Database is not connected. Configure MONGODB_URI or enable ENABLE_INMEMORY_DB for local development.",
       timestamp: new Date().toISOString()

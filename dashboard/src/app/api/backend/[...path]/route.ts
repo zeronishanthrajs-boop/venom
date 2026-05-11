@@ -5,7 +5,11 @@ import { isAuthTokenRevoked } from "@/lib/authRevocation";
 import { AUTH_COOKIE_NAME } from "@/lib/authConstants";
 
 export const runtime = "nodejs";
-const UPSTREAM_TIMEOUT_MS = 15000;
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 15000;
+const LONG_RUNNING_TIMEOUT_MS = 120000;
+const ORCHESTRATION_TIMEOUT_MS = 300000;
+const REPORT_PDF_TIMEOUT_MS = 90000;
+const REPORT_EMAIL_TIMEOUT_MS = 60000;
 
 type RouteContext = {
   params: Promise<{ path: string[] }>;
@@ -37,6 +41,32 @@ function getBackendApiKey() {
   );
 }
 
+function getUpstreamTimeoutMs(pathSegments: string[]) {
+  const joinedPath = `/${pathSegments.join("/")}`.toLowerCase();
+
+  if (/^\/api\/reports\/[^/]+\/pdf$/.test(joinedPath)) {
+    return REPORT_PDF_TIMEOUT_MS;
+  }
+
+  if (/^\/api\/reports\/[^/]+\/email$/.test(joinedPath)) {
+    return REPORT_EMAIL_TIMEOUT_MS;
+  }
+
+  if (joinedPath.startsWith("/api/orchestrate")) {
+    return ORCHESTRATION_TIMEOUT_MS;
+  }
+
+  if (
+    joinedPath.startsWith("/api/chain/") ||
+    joinedPath.startsWith("/api/prompts/evolve") ||
+    joinedPath.startsWith("/api/cves/sync")
+  ) {
+    return LONG_RUNNING_TIMEOUT_MS;
+  }
+
+  return DEFAULT_UPSTREAM_TIMEOUT_MS;
+}
+
 async function proxyRequest(request: NextRequest, context: RouteContext) {
   const token = request.cookies.get(AUTH_COOKIE_NAME)?.value || null;
   if (isAuthTokenRevoked(token)) {
@@ -60,6 +90,7 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
   }
 
   const { path } = await context.params;
+  const timeoutMs = getUpstreamTimeoutMs(path || []);
   const upstreamPath = path?.length ? `/${path.join("/")}` : "";
   const query = new URL(request.url).search;
   const upstreamUrl = `${getBackendBaseUrl()}${upstreamPath}${query}`;
@@ -79,7 +110,7 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
   const rawBody = bodyAllowed ? await request.text() : "";
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let upstreamResponse: Response;
 
   try {
@@ -96,7 +127,7 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
     if (error instanceof DOMException && error.name === "AbortError") {
       return NextResponse.json(
         {
-          error: `Upstream timeout after ${UPSTREAM_TIMEOUT_MS}ms`
+          error: `Upstream timeout after ${timeoutMs}ms`
         },
         { status: 504 }
       );

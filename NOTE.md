@@ -2518,3 +2518,120 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 - Deployment on both Vercel and Render is healthy.
 - Main cause of engagement-page 429 bursts (frontend refresh pressure + overlap) has been mitigated.
 - Runtime is stable and authenticated routes continue enforcing expected controls.
+
+---
+
+## [2026-05-11 21:29:54 +05:30] Incident Triage: SMTP/PDF/Planner Fallback
+
+### Reported Symptoms (from dashboard + log export)
+1. `SMTP is not configured. Missing: SMTP_HOST, SMTP_USER, SMTP_PASS.`
+2. `PDF VERSION IS NOT DOWNLOADING`.
+3. Latest plan shows `Source: template` with fallback reason `Gemini API request failed; template fallback applied`.
+4. Dashboard appends generic guidance: `Check backend /ready, MongoDB health, and deployment status.`
+5. `sqlmap_detect` probe status is `blocked`.
+
+### Confirmed Issues
+1. **SMTP not configured on backend runtime (configuration issue).**
+   - Evidence: `POST /api/reports/:engagementId/email` returned `503` in exported dashboard logs.
+2. **Backend-bridge timeout causes PDF download failure (code issue).**
+   - Evidence: `GET /api/reports/:engagementId/pdf` returned `504` at ~`15007ms`.
+   - Root cause: dashboard proxy route has a hard upstream timeout of `15000ms`, while PDF rendering can exceed 15s.
+3. **503 messaging conflates dependency failures (UX/debug issue).**
+   - `throwApiError()` currently appends the same `/ready/MongoDB` hint for all `503`s, including SMTP misconfiguration.
+4. **Readiness endpoint is DB-only (observability gap).**
+   - `/ready` reports MongoDB state, but does not expose optional dependency readiness (SMTP/Gemini/PDF prerequisites), slowing incident triage.
+5. **Planner fallback currently active for this engagement (runtime status issue).**
+   - Latest plan is template fallback; Gemini API path did not complete for this run.
+6. **`sqlmap_detect` blocked is expected behavior in this stack (not a defect by itself).**
+   - Usually blocked by safety/authorization/tool guardrails.
+
+### Implementation Plan
+1. **Increase backend proxy timeout for heavy routes**
+   - Add route-aware timeout policy in `dashboard/src/app/api/backend/[...path]/route.ts`.
+   - Keep short timeout defaults, but use longer timeout for `/api/reports/*/pdf` and orchestration-heavy endpoints.
+2. **Improve dashboard 503 error parsing**
+   - Update `dashboard/src/lib/api.ts` to preserve precise upstream error messages (for SMTP and similar service-specific failures).
+   - Keep generic `/ready` guidance only for infra/readiness outages.
+3. **Extend backend `/ready` diagnostics**
+   - Add non-fatal dependency diagnostics in `backend/app.js` for SMTP and Gemini key presence (and optional PDF runtime hints).
+   - Keep readiness gating on DB connection, but include richer dependency metadata.
+4. **Validation and notes update**
+   - Run targeted checks (lint/tests where applicable + local request-level validations).
+   - Append timestamped post-implementation verification results to `NOTE.md`.
+5. **Deployment guidance**
+   - Document exact Render env actions still required (`SMTP_*`, `GEMINI_API_KEY`) after code fixes.
+
+
+## [2026-05-11 21:31:56 +05:30] Implementation Completed + Double-Check Results
+
+### Code Changes Implemented
+1. `dashboard/src/app/api/backend/[...path]/route.ts`
+   - Added route-aware upstream timeouts instead of global fixed `15000ms`.
+   - New timeout policy:
+     - `/api/reports/:id/pdf` -> `90000ms`
+     - `/api/reports/:id/email` -> `60000ms`
+     - `/api/orchestrate*` -> `300000ms`
+     - `/api/chain/*`, `/api/prompts/evolve*`, `/api/cves/sync*` -> `120000ms`
+     - default -> `15000ms`
+   - This directly addresses the observed PDF `504` at ~`15007ms`.
+
+2. `dashboard/src/lib/api.ts`
+   - Improved API error parsing for `503` and other failures.
+   - Preserves specific upstream message for service-specific failures (ex: SMTP missing keys).
+   - Applies generic `/ready + MongoDB` hint only when failure text indicates infra/readiness context.
+   - Includes backend `reason/suggestion` text in non-503 error output where available.
+
+3. `backend/app.js`
+   - Extended `/ready` output with non-fatal dependency diagnostics:
+     - `dependencies.smtp` (configured + missing keys)
+     - `dependencies.gemini` (configured flag)
+     - `dependencies.pdf` (`CHROMIUM_PATH` presence/existence hint)
+     - `warnings[]` summary
+   - Readiness gate remains DB-based (`ready` only when DB connected), but diagnostics are now richer.
+
+### Validation Run (Post-Change)
+1. Dashboard lint:
+   - Command: `dashboard -> npm run lint`
+   - Result: **PASS**
+
+2. Dashboard production build:
+   - Command: `dashboard -> npm run build`
+   - Result: **PASS** (TypeScript + route generation successful)
+
+3. Backend focused runtime check (`/ready` shape):
+   - Command: lightweight local supertest probe on `GET /ready`
+   - Result: **PASS**
+   - Confirmed response includes new `dependencies` object and warning list.
+
+4. Backend tests:
+   - Command: `backend -> npm test`
+   - Result: **PARTIAL** (`121` pass, `2` fail)
+   - Failing tests: RBAC integration tests blocked by local `mongodb-memory-server` startup timeout (`Instance failed to start within 10000ms`).
+   - This failure is environment/runtime related and not introduced by current patch set.
+
+### Issue Closure Status
+1. SMTP misconfiguration message clarity:
+   - **Resolved in UI error handling path** (service-specific message now preserved).
+   - **Runtime config still required** on Render (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`).
+
+2. PDF download timeout:
+   - **Resolved in code** by extending proxy timeout for PDF route.
+   - Requires deployment of updated dashboard build.
+
+3. `/ready` observability gap:
+   - **Resolved in code** with dependency diagnostics payload.
+   - Requires backend deployment to see in cloud.
+
+4. Gemini template fallback:
+   - **Code path unchanged intentionally** (fallback is expected when Gemini API request fails/missing key).
+   - **Runtime config/action required**: set valid `GEMINI_API_KEY`, redeploy backend, regenerate plan.
+
+### Deployment Actions Still Needed (Render/Vercel)
+1. Backend (Render): set `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`.
+2. Backend (Render): ensure `GEMINI_API_KEY` is in Environment Variables (not Secret Files-only).
+3. Deploy updated backend and dashboard from this patch.
+4. Re-test:
+   - `/api/reports/:id/pdf` download
+   - `/api/reports/:id/email`
+   - fresh plan generation (`plannerSource=gemini-api` expected when key + upstream are healthy)
+

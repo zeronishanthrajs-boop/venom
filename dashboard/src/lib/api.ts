@@ -676,6 +676,33 @@ function throwApiError(response: Response, payload: unknown): never {
     typeof (payload as { error?: unknown }).error === "string"
       ? ((payload as { error: string }).error || "").trim()
       : "";
+  const payloadReason =
+    typeof payload === "object" &&
+    payload !== null &&
+    "reason" in payload &&
+    typeof (payload as { reason?: unknown }).reason === "string"
+      ? ((payload as { reason: string }).reason || "").trim()
+      : "";
+  const payloadSuggestion =
+    typeof payload === "object" &&
+    payload !== null &&
+    "suggestion" in payload &&
+    typeof (payload as { suggestion?: unknown }).suggestion === "string"
+      ? ((payload as { suggestion: string }).suggestion || "").trim()
+      : "";
+
+  const primaryMessage = payloadError || payloadReason;
+  const normalizedPrimary = primaryMessage.toLowerCase();
+  const isReadinessHintRelevant =
+    normalizedPrimary.includes("database is not connected") ||
+    normalizedPrimary.includes("not_ready") ||
+    normalizedPrimary.includes("backend unavailable") ||
+    normalizedPrimary.includes("upstream timeout") ||
+    normalizedPrimary.includes("upstream fetch failed") ||
+    normalizedPrimary.includes("mongo");
+  const detailedMessage = [primaryMessage, payloadSuggestion]
+    .filter((part) => Boolean(part))
+    .join(". ");
 
   if (!response.ok) {
     if (response.status === 401) {
@@ -694,10 +721,13 @@ function throwApiError(response: Response, payload: unknown): never {
     }
 
     if (response.status === 503) {
-      const upstreamMessage = payloadError || "Backend unavailable";
-      throw new Error(
-        `${upstreamMessage}. Check backend /ready, MongoDB health, and deployment status.`
-      );
+      const upstreamMessage = primaryMessage || "Backend unavailable";
+      if (isReadinessHintRelevant) {
+        throw new Error(
+          `${upstreamMessage}. Check backend /ready, MongoDB health, and deployment status.`
+        );
+      }
+      throw new Error(upstreamMessage);
     }
 
     if (response.status === 504) {
@@ -707,7 +737,7 @@ function throwApiError(response: Response, payload: unknown): never {
     }
 
     const message =
-      payloadError || "Request failed. Check API settings.";
+      detailedMessage || "Request failed. Check API settings.";
     throw new Error(message);
   }
   throw new Error("Unexpected error");
