@@ -42,7 +42,7 @@ export function DecisionBriefPanel({
         requestError instanceof Error
           ? requestError.message
           : "Unable to load decision brief.";
-      if (!generate && /No brief yet|404/i.test(message)) {
+      if (!generate && /No brief yet/i.test(message)) {
         setBrief(null);
       } else {
         setError(message);

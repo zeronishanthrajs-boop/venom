@@ -1,5 +1,6 @@
 const express = require("express");
 const requireDb = require("../middleware/requireDb");
+const Engagement = require("../models/Engagement");
 const {
   generateDecisionBrief,
   getLatestDecisionBrief
@@ -32,9 +33,13 @@ router.get("/:engagementId/brief", requireDb, async (req, res, next) => {
     }
 
     if (!brief) {
-      return res.status(404).json({
-        error: "No brief yet. POST to generate or call GET with ?generate=true"
+      const engagementExists = await Engagement.exists({
+        _id: req.params.engagementId
       });
+      if (!engagementExists) {
+        return res.status(404).json({ error: "Engagement not found" });
+      }
+      return res.status(200).json(null);
     }
 
     return res.status(200).json(brief);
@@ -50,4 +55,3 @@ router.get("/:engagementId/brief", requireDb, async (req, res, next) => {
 });
 
 module.exports = router;
-

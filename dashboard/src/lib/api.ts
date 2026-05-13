@@ -1287,7 +1287,7 @@ export async function fetchDecisionBrief(
   session: VenomSession,
   engagementId: string,
   generate = false
-): Promise<DecisionBrief> {
+): Promise<DecisionBrief | null> {
   const query = generate ? "?generate=true" : "";
   const response = await apiFetch(
     `/api/decisions/${encodeURIComponent(engagementId)}/brief${query}`,
@@ -1298,7 +1298,7 @@ export async function fetchDecisionBrief(
     }
   );
 
-  return parseResponse<DecisionBrief>(response);
+  return parseResponse<DecisionBrief | null>(response);
 }
 
 export async function generateDecisionBriefNow(
