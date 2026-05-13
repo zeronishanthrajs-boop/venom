@@ -415,18 +415,13 @@ Safety constraints:
 
 async function generatePlanForEngagement(engagement) {
   const { logger, withMaskedSecrets } = require("../config/logger");
-  const apiKeyRaw = process.env.GEMINI_API_KEY || "";
-  const hasGeminiKey = Boolean(apiKeyRaw);
-  const keyPreview = hasGeminiKey
-    ? `${String(apiKeyRaw).slice(0, 10)}...`
-    : "NOT SET";
+  const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
   const plannerModels = getPlannerModelCandidates();
   const plannerModel = plannerModels[0] || "gemini-2.0-flash";
   const strictPlanner = process.env.GEMINI_PLANNER_STRICT === "true";
   logger.info(
     withMaskedSecrets({
       hasApiKey: hasGeminiKey,
-      keyPreview,
       model: plannerModel,
       engagementId: String(engagement?._id || "")
     }),

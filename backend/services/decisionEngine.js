@@ -342,7 +342,7 @@ async function generateDecisionBrief(engagementId) {
       },
       {
         upsert: true,
-        new: true,
+        returnDocument: "after",
         setDefaultsOnInsert: true
       }
     ).lean();
@@ -399,7 +399,7 @@ async function generateDecisionBrief(engagementId) {
     },
     {
       upsert: true,
-      new: true,
+      returnDocument: "after",
       setDefaultsOnInsert: true
     }
   ).lean();
