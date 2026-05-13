@@ -2661,3 +2661,46 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
 ### Notes
 - CSP missing header is a target configuration issue (real finding), not scanner noise.
 - Gemini planner fallback now produces actionable reason text; quota/rate limit requires provider-side quota/billing adjustment.
+
+## [2026-05-13 21:43:25 +05:30] - Render Log Audit + Runtime Hardening
+
+### Request handled
+- Reviewed `RENDER LOGS.md` for production runtime issues.
+- Applied required backend fixes from observed log signals.
+- Validated locally, pushed to GitHub, and redeployed Render + Vercel.
+
+### Signals observed in `RENDER LOGS.md`
+1. Sensitive operational detail in planner logs:
+   - `Planner generation attempt` included `keyPreview` for `GEMINI_API_KEY`.
+2. Repeated Mongoose runtime warning:
+   - `mongoose: the \`new\` option for \`findOneAndUpdate()\` and \`findOneAndReplace()\` is deprecated. Use \`returnDocument: 'after'\` instead.`
+3. Gemini quota/rate-limit fallback events:
+   - `Gemini quota/rate limit reached. Retry later or adjust usage limits.`
+   - Planner correctly fell back to template mode (expected runtime behavior under provider quota pressure).
+
+### Required changes implemented
+1. **Removed key preview logging**
+   - Updated `backend/services/planner.js` to stop logging any API key prefix/preview.
+   - Planner logs now retain only safe operational metadata (`hasApiKey`, `model`, `engagementId`).
+2. **Resolved Mongoose deprecation warnings**
+   - Updated `findOneAndUpdate` options from `new: true` to `returnDocument: "after"` in:
+     - `backend/services/decisionEngine.js`
+     - `backend/services/promptEvolver.js`
+
+### Validation
+- `backend -> npm test` => **PASS** (`123/123`)
+- `dashboard -> npm run build` => **PASS**
+
+### Git + deployment actions
+- Pushed commit to `main`:
+  - `6820880` — `fix(logs): remove key preview and resolve mongoose update deprecations`
+- Vercel production deployment:
+  - `dpl_9CTEooyz6KtcCPwieJG8hvBZtGce`
+  - alias: `https://dashboard-sigma-puce-87.vercel.app`
+- Render deployment:
+  - `dep-d82a4u1hi72c739jkc60` => `live`
+
+### Outcome
+- Planner logs no longer expose API key previews.
+- Mongoose deprecation warning source has been removed in updated backend code paths.
+- Gemini quota fallback remains safe and explicit (no outage; template fallback active when quota-limited).
