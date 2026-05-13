@@ -90,6 +90,7 @@ function sanitizeChainSteps(rawSteps, engagement) {
   const whitelist = engagement.constraints?.toolWhitelist || [];
   const allowByWhitelist = (toolId) =>
     whitelist.length === 0 || whitelist.includes(toolId);
+  const dockerEnabled = process.env.ENABLE_DOCKER_TOOLS === "true";
 
   const seen = new Set();
   const sanitized = [];
@@ -103,6 +104,10 @@ function sanitizeChainSteps(rawSteps, engagement) {
     }
     const tool = getTool(toolId);
     if (!tool) {
+      continue;
+    }
+    const toolMode = String(tool.mode || "").toLowerCase();
+    if ((toolMode === "docker" || toolMode === "docker-real") && !dockerEnabled) {
       continue;
     }
     if (!allowByWhitelist(toolId)) {

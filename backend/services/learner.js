@@ -149,6 +149,14 @@ function jobIsSuccessful(job) {
   return deriveFindingCollection(job).length > 0;
 }
 
+function shouldSkipPatternOutcome(job) {
+  const status = String(job?.status || "").toLowerCase();
+  if (status !== "blocked") {
+    return false;
+  }
+  return true;
+}
+
 function buildJobSummary(job) {
   const findings = deriveFindingCollection(job);
   return {
@@ -406,7 +414,13 @@ async function runLearningCycle(engagementId) {
   }
 
   const updatedPatterns = [];
+  let skippedOutcomeJobs = 0;
   for (const job of jobs) {
+    if (shouldSkipPatternOutcome(job)) {
+      skippedOutcomeJobs += 1;
+      continue;
+    }
+
     const findings = deriveFindingCollection(job);
     const inferredTags = findings.flatMap((finding) => inferTagsFromFinding(finding));
     const outputTags = Array.isArray(job.output?.applicabilityTags)
@@ -465,6 +479,7 @@ async function runLearningCycle(engagementId) {
   return {
     engagementId,
     processedJobs: jobs.length,
+    skippedOutcomeJobs,
     successfulJobs: successfulJobs.length,
     updatedPatterns,
     newPatternsExtracted: createdPatterns.length,

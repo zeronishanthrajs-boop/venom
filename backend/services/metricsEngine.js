@@ -2,6 +2,7 @@ const { getTool } = require("../tooling/toolRegistry");
 const { deduplicateFindings } = require("../utils/deduplicateFindings");
 
 const TERMINAL_STATUSES = new Set(["success", "failed", "timeout", "blocked"]);
+const DOCKER_TOOL_MODES = new Set(["docker", "docker-real"]);
 
 function toDayKey(date) {
   return date.toISOString().slice(0, 10);
@@ -173,6 +174,25 @@ function computeWindowSuccessRate(jobs, windowStart, windowEnd) {
   return Number((successes / windowJobs.length).toFixed(4));
 }
 
+function isDockerToolDisabledPattern(pattern) {
+  if (process.env.ENABLE_DOCKER_TOOLS === "true") {
+    return false;
+  }
+
+  const patternName = String(pattern?.name || "").trim().toLowerCase();
+  if (!patternName.startsWith("baseline_")) {
+    return false;
+  }
+
+  const toolId = patternName.slice("baseline_".length);
+  const tool = getTool(toolId);
+  if (!tool) {
+    return false;
+  }
+
+  return DOCKER_TOOL_MODES.has(String(tool.mode || "").toLowerCase());
+}
+
 function generateAlerts(jobs, patterns, budgetUsd = 400) {
   const alerts = [];
   const now = new Date();
@@ -200,6 +220,9 @@ function generateAlerts(jobs, patterns, budgetUsd = 400) {
   }
 
   for (const pattern of patterns) {
+    if (isDockerToolDisabledPattern(pattern)) {
+      continue;
+    }
     const outcomes = Array.isArray(pattern.recentOutcomes) ? pattern.recentOutcomes : [];
     if (outcomes.length >= 5) {
       const lastFive = outcomes.slice(-5);

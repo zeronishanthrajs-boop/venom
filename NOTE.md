@@ -2635,3 +2635,29 @@ The current VENOM codebase is **functionally ready for Week 8**, with Weeks 1-7 
    - `/api/reports/:id/email`
    - fresh plan generation (`plannerSource=gemini-api` expected when key + upstream are healthy)
 
+
+## [2026-05-13 20:56:10 +05:30] Week 10/Alert Noise Stabilization (Docker + Pattern Streak)
+
+### Reported Runtime Signals
+1. Pattern failure streaks for:
+   - `baseline_sqlmap_detect`
+   - `baseline_nikto_scan`
+   - `baseline_nmap_tcp_scan`
+2. Week 10 chain halting at docker-required step when Docker is disabled.
+3. CSP missing header finding on target (`www.zeroops.in`) remains valid.
+4. Planner fallback reason now indicates Gemini quota/rate-limit.
+
+### Implemented Fixes
+1. Chain step sanitization now skips Docker-mode tools when `ENABLE_DOCKER_TOOLS` is not `true`.
+   - Prevents avoidable chain halts on Docker-disabled servers.
+2. Learning cycle no longer records `blocked` jobs as pattern success/failure outcomes.
+   - Prevents policy/infrastructure blocks from poisoning baseline pattern outcome streaks.
+3. Metrics alerts now suppress Docker-tool pattern failure streak alerts when Docker is disabled.
+   - Removes false medium-noise alerts for docker-only tools under disabled Docker runtime.
+
+### Validation
+- `node --test tests/chainEngine.test.js tests/learner.test.js` -> **PASS**
+
+### Notes
+- CSP missing header is a target configuration issue (real finding), not scanner noise.
+- Gemini planner fallback now produces actionable reason text; quota/rate limit requires provider-side quota/billing adjustment.
