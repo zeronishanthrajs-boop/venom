@@ -22,6 +22,29 @@ const planPhaseSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const learnedPatternSchema = new mongoose.Schema(
+  {
+    condition: { type: String, default: "" },
+    confidence: { type: Number, min: 0, max: 1, default: 0 },
+    learnedFrom: { type: Number, min: 0, default: 0 },
+    successRate: { type: Number, min: 0, max: 1, default: 0 }
+  },
+  { _id: false }
+);
+
+const learnedRecommendationSchema = new mongoose.Schema(
+  {
+    condition: { type: String, default: "" },
+    tool: { type: String, default: "" },
+    paramAdjustment: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
+    },
+    expectedSuccess: { type: Number, min: 0, max: 1, default: 0 }
+  },
+  { _id: false }
+);
+
 const planSchema = new mongoose.Schema(
   {
     engagementId: {
@@ -46,6 +69,24 @@ const planSchema = new mongoose.Schema(
     fallbackReason: {
       type: String,
       default: ""
+    },
+    rationale: {
+      type: String,
+      default: ""
+    },
+    confidence: {
+      type: Number,
+      min: 0,
+      max: 1,
+      default: 0.5
+    },
+    learnedPatterns: {
+      type: [learnedPatternSchema],
+      default: []
+    },
+    learnedRecommendations: {
+      type: [learnedRecommendationSchema],
+      default: []
     },
     summary: {
       type: String,

@@ -46,6 +46,12 @@ function deriveToolSequenceFromPlan(plan, targetType) {
   }
 
   const sequence = [];
+  const learnedRecommendations = Array.isArray(plan.learnedRecommendations)
+    ? plan.learnedRecommendations
+    : [];
+  const learnedTools = learnedRecommendations
+    .map((item) => normalizeToolId(item?.tool))
+    .filter(Boolean);
   const phaseText = plan.phases
     .map((phase) => `${phase.name || ""} ${phase.goal || ""} ${(phase.checks || []).join(" ")}`)
     .join(" ")
@@ -53,6 +59,9 @@ function deriveToolSequenceFromPlan(plan, targetType) {
 
   // Always start with low-risk baseline probes.
   sequence.push("http_headers_probe", "dns_lookup_probe", "tls_metadata_probe");
+  if (learnedTools.length > 0) {
+    sequence.push(...learnedTools);
+  }
 
   if (/network|port|service|exposed/.test(phaseText)) {
     sequence.push("nmap_tcp_scan");
@@ -129,6 +138,17 @@ async function persistGeneratedPlan(engagement, planningResult, createdBy) {
     promptVersion: planningResult.promptVersion || PROMPT_VERSION,
     plannerSource: planningResult.source || "template",
     model: planningResult.model || "template-planner-v1",
+    rationale: planningResult.rationale || "",
+    confidence:
+      Number.isFinite(Number(planningResult.confidence))
+        ? Number(planningResult.confidence)
+        : 0.5,
+    learnedPatterns: Array.isArray(planningResult.learnedPatterns)
+      ? planningResult.learnedPatterns
+      : [],
+    learnedRecommendations: Array.isArray(planningResult.learnedRecommendations)
+      ? planningResult.learnedRecommendations
+      : [],
     summary: planningResult.plan?.summary || "",
     phases: planningResult.plan?.phases || [],
     riskNotes: planningResult.plan?.riskNotes || [],
@@ -190,7 +210,10 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
     const planningResult = await generatePlanForEngagement(engagement);
     const savedPlan = await persistGeneratedPlan(engagement, planningResult, userId);
     const toolSequence = deriveToolSequenceFromPlan(
-      planningResult.plan,
+      {
+        ...(planningResult.plan || {}),
+        learnedRecommendations: planningResult.learnedRecommendations || []
+      },
       engagement.targetType
     );
 

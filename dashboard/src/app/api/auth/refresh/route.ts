@@ -3,8 +3,7 @@ import { cookies } from "next/headers";
 
 import {
   getAuthRequestContext,
-  refreshAuthTokens,
-  verifyAuthToken
+  refreshAuthTokens
 } from "@/lib/auth";
 import {
   AUTH_COOKIE_MAX_AGE_SECONDS,
@@ -15,23 +14,38 @@ import {
 
 export const runtime = "nodejs";
 
-export async function GET(request: Request) {
+export async function POST(request: Request) {
   const cookieStore = await cookies();
-  const accessToken = cookieStore.get(AUTH_COOKIE_NAME)?.value || null;
-  const context = getAuthRequestContext(new Headers(request.headers));
-  const session = await verifyAuthToken(accessToken, context);
-
-  if (session) {
-    return NextResponse.json({ session }, { status: 200 });
-  }
-
   const refreshToken = cookieStore.get(REFRESH_COOKIE_NAME)?.value || null;
+  const context = getAuthRequestContext(new Headers(request.headers));
   const refreshed = await refreshAuthTokens(refreshToken, context);
   if (!refreshed) {
-    return NextResponse.json({ session: null }, { status: 200 });
+    const response = NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    response.cookies.set({
+      name: AUTH_COOKIE_NAME,
+      value: "",
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      expires: new Date(0)
+    });
+    response.cookies.set({
+      name: REFRESH_COOKIE_NAME,
+      value: "",
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      expires: new Date(0)
+    });
+    return response;
   }
 
-  const response = NextResponse.json({ session: refreshed.session }, { status: 200 });
+  const response = NextResponse.json({
+    ok: true,
+    session: refreshed.session
+  });
   response.cookies.set({
     name: AUTH_COOKIE_NAME,
     value: refreshed.accessToken,
@@ -52,3 +66,4 @@ export async function GET(request: Request) {
   });
   return response;
 }
+

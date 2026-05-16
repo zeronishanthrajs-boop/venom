@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 
 import {
-  createAuthToken,
+  createAuthTokens,
+  getAuthRequestContext,
   normalizeEmail,
-  safeCredentialCompare,
-  verifyAuthToken
+  safeCredentialCompare
 } from "@/lib/auth";
 import {
   AUTH_COOKIE_MAX_AGE_SECONDS,
-  AUTH_COOKIE_NAME
+  AUTH_COOKIE_NAME,
+  REFRESH_COOKIE_MAX_AGE_SECONDS,
+  REFRESH_COOKIE_NAME
 } from "@/lib/authConstants";
 
 export const runtime = "nodejs";
@@ -146,28 +148,39 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid email or password." }, { status: 401 });
   }
 
-  const token = createAuthToken(configured.email);
-  const session = verifyAuthToken(token);
-
-  if (!session) {
-    return NextResponse.json({ error: "Failed to initialize session." }, { status: 500 });
+  const context = getAuthRequestContext(new Headers(request.headers));
+  const tokenPair = await createAuthTokens(configured.email, context).catch(() => null);
+  if (!tokenPair) {
+    return NextResponse.json(
+      { error: "Failed to initialize session." },
+      { status: 500 }
+    );
   }
 
   clearAttempts(clientKey);
 
   const response = NextResponse.json({
     ok: true,
-    session
+    session: tokenPair.session
   });
 
   response.cookies.set({
     name: AUTH_COOKIE_NAME,
-    value: token,
+    value: tokenPair.accessToken,
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
     maxAge: AUTH_COOKIE_MAX_AGE_SECONDS
+  });
+  response.cookies.set({
+    name: REFRESH_COOKIE_NAME,
+    value: tokenPair.refreshToken,
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: REFRESH_COOKIE_MAX_AGE_SECONDS
   });
 
   return response;

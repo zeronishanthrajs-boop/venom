@@ -4,6 +4,7 @@ Week 3 dashboard implementation using Next.js App Router + Tailwind CSS.
 
 ## Features
 - `/login` private credential gate (server-side validated)
+- Access/refresh token auth flow (`15m` access + rotating `7d` refresh)
 - `/onboard` startup-focused guided onboarding (URL -> authorization -> concern -> launch)
 - `/dashboard` engagement list view
 - New engagement creation form
@@ -44,8 +45,10 @@ VENOM_DASHBOARD_SESSION_SECRET=replace-with-long-random-secret
 
 Behavior:
 - Login must match configured email + password.
+- Access token is short-lived and automatically refreshed via `/api/auth/refresh`.
 - Browser never sends backend API key directly; server bridge injects it.
 - `VENOM_BACKEND_BASE_URL` must be reachable from dashboard runtime.
+- For distributed revocation/session persistence, set `VENOM_DASHBOARD_MONGODB_URI`.
 
 ## Backend Requirements
 - Backend `VENOM_API_KEY` must match dashboard `VENOM_BACKEND_API_KEY`.

@@ -9,10 +9,11 @@ import { fetchSession } from "@/lib/session";
 const BOOT_LINES = [
   "[kernel] VENOM secure boot sequence initialized",
   "[auth] loading signed-session validation module",
+  "[session] issuing short-lived access + rotating refresh tokens",
   "[bridge] checking backend proxy channel integrity",
   "[db] probing engagement memory graph via /ready",
-  "[telemetry] 5s auto-refresh daemon armed",
-  "[status] v0.7 stable stack synchronized"
+  "[telemetry] staggered 15s/30s refresh channels armed",
+  "[status] hardened auth stack synchronized"
 ];
 
 type ReadyState = {
@@ -331,7 +332,7 @@ export default function LoginPage() {
       </motion.section>
 
       <div className="fixed bottom-4 right-4 font-mono text-[10px] uppercase tracking-[0.12em] text-slate-600">
-        Version: v0.7 [STABLE]
+        Version: v0.8-auth [STABLE]
       </div>
     </main>
   );

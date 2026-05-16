@@ -57,6 +57,7 @@ import { DecisionBriefPanel } from "@/components/DecisionBrief";
 import { TrustControlPanel } from "@/components/TrustControlPanel";
 import { SecurityTimeline } from "@/components/SecurityTimeline";
 import { FindingAudiencePanel } from "@/components/FindingAudiencePanel";
+import LearningInsights from "@/components/LearningInsights";
 import {
   fetchSession,
   logoutSession,
@@ -2523,6 +2524,11 @@ export default function DashboardPage() {
                         />
 
                         <SecurityTimeline
+                          session={session}
+                          engagementId={engagement._id}
+                        />
+
+                        <LearningInsights
                           session={session}
                           engagementId={engagement._id}
                         />

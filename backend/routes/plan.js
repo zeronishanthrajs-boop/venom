@@ -3,6 +3,7 @@ const Engagement = require("../models/Engagement");
 const Plan = require("../models/Plan");
 const requireDb = require("../middleware/requireDb");
 const { generatePlanForEngagement } = require("../services/planner");
+const { logger } = require("../config/logger");
 
 const router = express.Router();
 
@@ -39,6 +40,15 @@ router.post("/", requireDb, async (req, res, next) => {
       plannerSource: result.source,
       model: result.model,
       fallbackReason: result.fallbackReason || "",
+      rationale: result.rationale || "",
+      confidence:
+        Number.isFinite(Number(result.confidence)) ? Number(result.confidence) : 0.5,
+      learnedPatterns: Array.isArray(result.learnedPatterns)
+        ? result.learnedPatterns
+        : [],
+      learnedRecommendations: Array.isArray(result.learnedRecommendations)
+        ? result.learnedRecommendations
+        : [],
       summary: result.plan.summary,
       phases: result.plan.phases,
       riskNotes: result.plan.riskNotes,
@@ -79,6 +89,68 @@ router.post("/", requireDb, async (req, res, next) => {
     return next(error);
   }
 });
+
+async function handlePlanExplain(req, res, next) {
+  try {
+    const plan = await Plan.findOne({
+      engagementId: req.params.engagementId
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (!plan) {
+      return res.status(404).json({
+        error: "Plan not found"
+      });
+    }
+
+    const learnedPatterns = Array.isArray(plan.learnedPatterns)
+      ? plan.learnedPatterns
+      : [];
+    const learnedRecommendations = Array.isArray(plan.learnedRecommendations)
+      ? plan.learnedRecommendations
+      : [];
+
+    return res.status(200).json({
+      engagementId: req.params.engagementId,
+      plan: learnedRecommendations.map((item) => ({
+        condition: item.condition || "",
+        tool: item.tool || "",
+        paramAdjustment:
+          item.paramAdjustment && typeof item.paramAdjustment === "object"
+            ? item.paramAdjustment
+            : {},
+        expectedSuccess: Number(
+          Number.isFinite(Number(item.expectedSuccess))
+            ? Number(item.expectedSuccess)
+            : 0
+        )
+      })),
+      explanation:
+        plan.rationale ||
+        (learnedPatterns.length > 0
+          ? `Planner applied ${learnedPatterns.length} learned pattern(s).`
+          : "No learned patterns were available for this engagement."),
+      learnedPatterns,
+      confidence:
+        Number.isFinite(Number(plan.confidence)) ? Number(plan.confidence) : 0.5
+    });
+  } catch (error) {
+    if (error?.name === "CastError") {
+      return res.status(400).json({
+        error: "Invalid engagement id"
+      });
+    }
+    logger.error(
+      { error: error?.message || "unknown error" },
+      "Failed to explain plan"
+    );
+    return next(error);
+  }
+}
+
+router.get("/:engagementId/explain", requireDb, handlePlanExplain);
+router.get("/engagement/:engagementId/explain", requireDb, handlePlanExplain);
 
 router.get("/engagement/:engagementId", requireDb, async (req, res, next) => {
   try {

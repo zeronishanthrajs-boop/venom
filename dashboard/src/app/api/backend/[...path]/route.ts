@@ -1,8 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { verifyAuthToken } from "@/lib/auth";
-import { isAuthTokenRevoked } from "@/lib/authRevocation";
-import { AUTH_COOKIE_NAME } from "@/lib/authConstants";
+import {
+  getAuthRequestContext,
+  refreshAuthTokens,
+  verifyAuthToken
+} from "@/lib/auth";
+import {
+  AUTH_COOKIE_MAX_AGE_SECONDS,
+  AUTH_COOKIE_NAME,
+  REFRESH_COOKIE_MAX_AGE_SECONDS,
+  REFRESH_COOKIE_NAME
+} from "@/lib/authConstants";
 
 export const runtime = "nodejs";
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 15000;
@@ -68,11 +76,15 @@ function getUpstreamTimeoutMs(pathSegments: string[]) {
 }
 
 async function proxyRequest(request: NextRequest, context: RouteContext) {
-  const token = request.cookies.get(AUTH_COOKIE_NAME)?.value || null;
-  if (isAuthTokenRevoked(token)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const accessToken = request.cookies.get(AUTH_COOKIE_NAME)?.value || null;
+  const requestContext = getAuthRequestContext(request.headers);
+  let session = await verifyAuthToken(accessToken, requestContext);
+  let refreshed: Awaited<ReturnType<typeof refreshAuthTokens>> = null;
+  if (!session) {
+    const refreshToken = request.cookies.get(REFRESH_COOKIE_NAME)?.value || null;
+    refreshed = await refreshAuthTokens(refreshToken, requestContext);
+    session = refreshed?.session || null;
   }
-  const session = verifyAuthToken(token);
 
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -152,10 +164,31 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
     responseHeaders.set("content-type", contentType);
   }
 
-  return new NextResponse(payload, {
+  const response = new NextResponse(payload, {
     status: upstreamResponse.status,
     headers: responseHeaders
   });
+  if (refreshed) {
+    response.cookies.set({
+      name: AUTH_COOKIE_NAME,
+      value: refreshed.accessToken,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: AUTH_COOKIE_MAX_AGE_SECONDS
+    });
+    response.cookies.set({
+      name: REFRESH_COOKIE_NAME,
+      value: refreshed.refreshToken,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: REFRESH_COOKIE_MAX_AGE_SECONDS
+    });
+  }
+  return response;
 }
 
 export async function GET(request: NextRequest, context: RouteContext) {

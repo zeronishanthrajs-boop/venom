@@ -3,7 +3,8 @@ const assert = require("node:assert/strict");
 
 const {
   issueRealtimeToken,
-  verifyRealtimeToken
+  verifyRealtimeToken,
+  __internal
 } = require("../services/realtimeServer");
 
 test("issueRealtimeToken creates verifiable token", () => {
@@ -34,3 +35,26 @@ test("verifyRealtimeToken rejects tampered signature", () => {
   assert.equal(result.reason, "bad_signature");
 });
 
+test("verifyRealtimeToken rejects missing token", () => {
+  const result = verifyRealtimeToken("");
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, "missing_or_invalid_token");
+});
+
+test("verifyRealtimeToken rejects expired token", () => {
+  const payload = {
+    sub: "owner@example.com",
+    role: "owner",
+    engagementId: null,
+    iat: Date.now() - 120000,
+    exp: Date.now() - 60000
+  };
+  const payloadBase64 = Buffer.from(JSON.stringify(payload), "utf8").toString(
+    "base64url"
+  );
+  const signature = __internal.signPayload(payloadBase64);
+  const token = `${payloadBase64}.${signature}`;
+  const result = verifyRealtimeToken(token);
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, "expired");
+});

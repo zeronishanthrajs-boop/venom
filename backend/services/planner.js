@@ -207,6 +207,173 @@ function appendCveContextToTemplatePlan(plan, recentCves) {
   };
 }
 
+function clamp01(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function extractLearningSignalsFromPatterns(patterns = []) {
+  const scoredByCondition = new Map();
+
+  for (const pattern of Array.isArray(patterns) ? patterns : []) {
+    const conditions = Array.isArray(pattern?.attackGraph?.conditions)
+      ? pattern.attackGraph.conditions
+      : [];
+
+    for (const condition of conditions) {
+      const conditionName = String(condition?.finding || "").trim();
+      if (!conditionName) {
+        continue;
+      }
+
+      const confidence = clamp01(condition?.confidence, 0.5);
+      const learnedFrom = Math.max(0, Number(condition?.learnedFrom || 0));
+      const successRate = clamp01(condition?.successRate, 0.5);
+      const score =
+        confidence * 0.45 +
+        successRate * 0.35 +
+        Math.min(1, learnedFrom / 10) * 0.2;
+
+      const existing = scoredByCondition.get(conditionName);
+      if (!existing || score > existing.score) {
+        scoredByCondition.set(conditionName, {
+          condition: conditionName,
+          confidence: Number(confidence.toFixed(4)),
+          learnedFrom,
+          successRate: Number(successRate.toFixed(4)),
+          score: Number(score.toFixed(4))
+        });
+      }
+    }
+  }
+
+  return [...scoredByCondition.values()]
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 6);
+}
+
+function flattenRecommendationMap(recommendationMap = {}) {
+  const flattened = [];
+  for (const [condition, tools] of Object.entries(recommendationMap || {})) {
+    for (const item of Array.isArray(tools) ? tools : []) {
+      const tool = String(item?.tool || "").trim().toLowerCase();
+      if (!tool) {
+        continue;
+      }
+      flattened.push({
+        condition,
+        tool,
+        paramAdjustment:
+          item?.paramAdjustment && typeof item.paramAdjustment === "object"
+            ? item.paramAdjustment
+            : {},
+        expectedSuccess: Number(clamp01(item?.expectedSuccess, 0.4).toFixed(4))
+      });
+    }
+  }
+
+  return flattened
+    .sort((left, right) => right.expectedSuccess - left.expectedSuccess)
+    .slice(0, 10);
+}
+
+function buildLearningRationale(learnedPatterns, learnedRecommendations) {
+  if (!Array.isArray(learnedPatterns) || learnedPatterns.length === 0) {
+    return "No learned attack patterns matched this engagement yet; planner used standard defensive sequencing.";
+  }
+
+  const patternSummary = learnedPatterns
+    .slice(0, 3)
+    .map(
+      (pattern) =>
+        `${pattern.condition} (${Math.round(clamp01(pattern.confidence) * 100)}% confidence)`
+    )
+    .join(", ");
+
+  if (!Array.isArray(learnedRecommendations) || learnedRecommendations.length === 0) {
+    return `Plan informed by ${learnedPatterns.length} learned pattern(s): ${patternSummary}.`;
+  }
+
+  const topTools = learnedRecommendations
+    .slice(0, 3)
+    .map((item) => item.tool)
+    .join(", ");
+  return `Plan informed by ${learnedPatterns.length} learned pattern(s): ${patternSummary}. Prioritized tools: ${topTools}.`;
+}
+
+function computeLearningConfidence(learnedPatterns, learnedRecommendations) {
+  if (!Array.isArray(learnedPatterns) || learnedPatterns.length === 0) {
+    return 0.68;
+  }
+
+  const avgPatternConfidence =
+    learnedPatterns.reduce((sum, item) => sum + clamp01(item.confidence, 0.5), 0) /
+    learnedPatterns.length;
+  const recommendationBoost = Math.min(
+    0.18,
+    (Array.isArray(learnedRecommendations) ? learnedRecommendations.length : 0) * 0.03
+  );
+  return Number(
+    Math.max(0.6, Math.min(0.97, avgPatternConfidence * 0.82 + 0.12 + recommendationBoost)).toFixed(4)
+  );
+}
+
+function appendLearningContextToPlan(plan, learnedPatterns = []) {
+  if (!Array.isArray(learnedPatterns) || learnedPatterns.length === 0) {
+    return plan;
+  }
+
+  const learningNote = `Learning signals applied: ${learnedPatterns
+    .map(
+      (item) =>
+        `${item.condition} (${Math.round(clamp01(item.successRate) * 100)}% observed success)`
+    )
+    .join("; ")}`;
+
+  const existingNotes = Array.isArray(plan?.riskNotes) ? plan.riskNotes : [];
+  if (existingNotes.includes(learningNote)) {
+    return plan;
+  }
+
+  return {
+    ...plan,
+    riskNotes: [...existingNotes, learningNote]
+  };
+}
+
+async function deriveLearningMetadataFromPlannerContext(plannerContext) {
+  const learnedPatterns = extractLearningSignalsFromPatterns(
+    plannerContext?.rawPatterns || []
+  ).map((item) => ({
+    condition: item.condition,
+    confidence: item.confidence,
+    learnedFrom: item.learnedFrom,
+    successRate: item.successRate
+  }));
+
+  let recommendationMap = {};
+  const conditionKeys = learnedPatterns.map((item) => item.condition);
+  if (conditionKeys.length > 0) {
+    try {
+      const { getRecommendedTools } = require("./attackGraphService");
+      recommendationMap = await getRecommendedTools(conditionKeys);
+    } catch {
+      recommendationMap = {};
+    }
+  }
+
+  const learnedRecommendations = flattenRecommendationMap(recommendationMap);
+  return {
+    learnedPatterns,
+    learnedRecommendations,
+    rationale: buildLearningRationale(learnedPatterns, learnedRecommendations),
+    confidence: computeLearningConfidence(learnedPatterns, learnedRecommendations)
+  };
+}
+
 async function loadSystemPrompt() {
   const promptPath = path.join(__dirname, "..", "prompts", "planning-agent-v2.txt");
   let fallbackText = "";
@@ -241,8 +408,16 @@ async function loadPlannerContext(engagement) {
       targetType: pattern.targetType,
       confidence: pattern.confidence,
       recentSuccessRate: pattern.recentSuccessRate,
-      tags: pattern.tags || []
+      tags: pattern.tags || [],
+      learnedConditions: Array.isArray(pattern.attackGraph?.conditions)
+        ? pattern.attackGraph.conditions.slice(0, 4).map((condition) => ({
+            finding: condition.finding,
+            confidence: condition.confidence,
+            successRate: condition.successRate
+          }))
+        : []
     })),
+    rawPatterns: patterns,
     recentCves: recentCves.map((cve) => ({
       cveId: cve.cveId,
       description: cve.description,
@@ -429,18 +604,24 @@ async function generatePlanForEngagement(engagement) {
   );
 
   const plannerContext = await loadPlannerContext(engagement);
+  const learningMetadata = await deriveLearningMetadataFromPlannerContext(plannerContext);
   if (!hasGeminiKey) {
     logger.warn("No GEMINI_API_KEY configured, using template fallback");
+    const fallbackPlan = appendLearningContextToPlan(
+      appendCveContextToTemplatePlan(
+        normalizePlan(templatePlan(engagement)),
+        plannerContext.recentCves
+      ),
+      learningMetadata.learnedPatterns
+    );
     return {
       source: "template",
       model: "template-planner-v1",
       promptVersion: PROMPT_VERSION,
       fallbackReason: "GEMINI_API_KEY is not configured",
-      plan: appendCveContextToTemplatePlan(
-        normalizePlan(templatePlan(engagement)),
-        plannerContext.recentCves
-      ),
-      rawModelOutput: ""
+      plan: fallbackPlan,
+      rawModelOutput: "",
+      ...learningMetadata
     };
   }
 
@@ -465,23 +646,34 @@ async function generatePlanForEngagement(engagement) {
 
   if (geminiResult) {
     logger.info("Gemini planner request succeeded");
+    const learnedGeminiPlan = appendLearningContextToPlan(
+      geminiResult.plan,
+      learningMetadata.learnedPatterns
+    );
     return {
       ...geminiResult,
-      promptVersion: geminiResult.promptVersion || PROMPT_VERSION
+      promptVersion: geminiResult.promptVersion || PROMPT_VERSION,
+      plan: learnedGeminiPlan,
+      ...learningMetadata
     };
   }
 
+  const fallbackPlan = appendLearningContextToPlan(
+    appendCveContextToTemplatePlan(
+      normalizePlan(templatePlan(engagement)),
+      plannerContext.recentCves
+    ),
+    learningMetadata.learnedPatterns
+  );
   return {
     source: "template",
     model: "template-planner-v1",
     promptVersion: PROMPT_VERSION,
     fallbackReason:
       geminiFailureReason || "Gemini API request failed; template fallback applied",
-    plan: appendCveContextToTemplatePlan(
-      normalizePlan(templatePlan(engagement)),
-      plannerContext.recentCves
-    ),
-    rawModelOutput: ""
+    plan: fallbackPlan,
+    rawModelOutput: "",
+    ...learningMetadata
   };
 }
 

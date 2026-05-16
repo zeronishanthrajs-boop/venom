@@ -1,5 +1,77 @@
 const mongoose = require("mongoose");
 
+const nextToolSchema = new mongoose.Schema(
+  {
+    tool: {
+      type: String,
+      trim: true,
+      default: ""
+    },
+    paramAdjustment: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
+    },
+    expectedSuccess: {
+      type: Number,
+      min: 0,
+      max: 1,
+      default: 0
+    }
+  },
+  { _id: false }
+);
+
+const attackConditionSchema = new mongoose.Schema(
+  {
+    finding: {
+      type: String,
+      trim: true,
+      default: ""
+    },
+    confidence: {
+      type: Number,
+      min: 0,
+      max: 1,
+      default: 0
+    },
+    learnedFrom: {
+      type: Number,
+      min: 0,
+      default: 0
+    },
+    successRate: {
+      type: Number,
+      min: 0,
+      max: 1,
+      default: 0
+    },
+    nextTools: {
+      type: [nextToolSchema],
+      default: []
+    }
+  },
+  { _id: false }
+);
+
+const attackGraphSchema = new mongoose.Schema(
+  {
+    conditions: {
+      type: [attackConditionSchema],
+      default: []
+    },
+    lastUpdated: {
+      type: Date,
+      default: null
+    },
+    engagementsSeen: {
+      type: Number,
+      min: 0,
+      default: 0
+    }
+  },
+  { _id: false }
+);
+
 const patternSchema = new mongoose.Schema(
   {
     name: {
@@ -57,6 +129,14 @@ const patternSchema = new mongoose.Schema(
       type: String,
       default: "system"
     },
+    attackGraph: {
+      type: attackGraphSchema,
+      default: () => ({
+        conditions: [],
+        lastUpdated: null,
+        engagementsSeen: 0
+      })
+    },
     lastUsedAt: Date,
     tags: {
       type: [String],
@@ -67,5 +147,6 @@ const patternSchema = new mongoose.Schema(
 );
 
 patternSchema.index({ targetType: 1, successRate: -1 });
+patternSchema.index({ "attackGraph.conditions.finding": 1 });
 
 module.exports = mongoose.model("Pattern", patternSchema);

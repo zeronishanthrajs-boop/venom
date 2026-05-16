@@ -1,4 +1,4 @@
-import type { VenomSession } from "./session";
+import { refreshSession, type VenomSession } from "./session";
 
 export type Engagement = {
   _id: string;
@@ -27,6 +27,10 @@ export type Plan = {
   plannerSource: "gemini" | "gemini-api" | "claude" | "claude-api" | "template";
   model: string;
   fallbackReason?: string;
+  rationale?: string;
+  confidence?: number;
+  learnedPatterns?: PlanLearnedPattern[];
+  learnedRecommendations?: PlanLearnedRecommendation[];
   summary: string;
   phases: Array<{
     name: string;
@@ -39,6 +43,28 @@ export type Plan = {
   }>;
   riskNotes: string[];
   createdAt: string;
+};
+
+export type PlanLearnedPattern = {
+  condition: string;
+  confidence: number;
+  learnedFrom: number;
+  successRate: number;
+};
+
+export type PlanLearnedRecommendation = {
+  condition: string;
+  tool: string;
+  paramAdjustment: Record<string, unknown>;
+  expectedSuccess: number;
+};
+
+export type PlanExplainResponse = {
+  engagementId: string;
+  plan: PlanLearnedRecommendation[];
+  explanation: string;
+  learnedPatterns: PlanLearnedPattern[];
+  confidence: number;
 };
 
 export type ExecutionJob = {
@@ -640,7 +666,8 @@ const STARTUP_TOOL_WHITELIST = [
 async function apiFetch(
   path: string,
   init: RequestInit,
-  timeoutMs = API_TIMEOUT_MS
+  timeoutMs = API_TIMEOUT_MS,
+  allowRefreshRetry = true
 ): Promise<Response> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -651,6 +678,12 @@ async function apiFetch(
       cache: "no-store",
       signal: controller.signal
     });
+    if (response.status === 401 && allowRefreshRetry) {
+      const refreshed = await refreshSession();
+      if (refreshed) {
+        return apiFetch(path, init, timeoutMs, false);
+      }
+    }
     return response;
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
@@ -875,6 +908,22 @@ export async function fetchPlansForEngagement(
   );
 
   return parseResponse<Plan[]>(response);
+}
+
+export async function fetchPlanExplanation(
+  session: VenomSession,
+  engagementId: string
+): Promise<PlanExplainResponse> {
+  const response = await apiFetch(
+    `/api/plan/${encodeURIComponent(engagementId)}/explain`,
+    {
+      method: "GET",
+      headers: buildHeaders(session),
+      cache: "no-store"
+    }
+  );
+
+  return parseResponse<PlanExplainResponse>(response);
 }
 
 export async function runExecutionJob(

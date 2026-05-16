@@ -94,6 +94,10 @@ Deploy backend to Render and dashboard to Vercel using the newest secure flow:
 - `VENOM_BACKEND_BASE_URL=https://<backend-domain>`
 - `VENOM_BACKEND_API_KEY=<same-value-as-backend-VENOM_API_KEY>`
 - `NEXT_PUBLIC_VENOM_API_BASE_URL=https://<backend-domain>`
+- `VENOM_DASHBOARD_MONGODB_URI=<optional; recommended for distributed session revocation>`
+- `VENOM_DASHBOARD_MONGODB_DB=venom`
+- `VENOM_DASHBOARD_SESSION_COLLECTION=dashboard_sessions`
+- `VENOM_DASHBOARD_BIND_IP=true`
 
 ### Verify dashboard
 1. Open `https://<dashboard-domain>/login`.

@@ -67,6 +67,7 @@ const endpoints = [
   ["post", "/api/orchestrate"],
   ["post", `/api/orchestrate/${validId}`],
   ["post", "/api/plan"],
+  ["get", `/api/plan/${validId}/explain`],
   ["get", `/api/plan/engagement/${validId}`],
   ["get", "/api/execute/tools"],
   ["post", "/api/execute"],

@@ -186,6 +186,27 @@ async function executeEngagementTool({
   await job.save();
   await markEngagementRunningIfDraft(job.engagementId);
 
+  try {
+    const { recordToolOutcome } = require("./attackGraphService");
+    const learningFindings = Array.isArray(job.findings) ? job.findings : [];
+    const learningSuccess =
+      job.status === "success" &&
+      learningFindings.length > 0 &&
+      !job.errorMessage;
+
+    await recordToolOutcome(
+      String(engagement._id),
+      toolId,
+      learningFindings,
+      learningSuccess
+    );
+  } catch (learningError) {
+    logger.warn(
+      { error: learningError?.message || "unknown error", toolId },
+      "Attack graph learning update failed"
+    );
+  }
+
   setImmediate(async () => {
     try {
       if (process.env.AUTO_DECISION_BRIEF_ON_PROBE !== "false") {
