@@ -510,6 +510,10 @@ export default function ReportPage() {
 
     void fetch(`/api/backend/api/orchestrate/${encodeURIComponent(engagementId)}`, {
       method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({}),
       credentials: "include",
       keepalive: true,
       signal: controller.signal
