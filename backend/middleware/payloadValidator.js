@@ -35,14 +35,19 @@ module.exports = function payloadValidator(req, res, next) {
   }
 
   const contentType = String(req.headers["content-type"] || "").toLowerCase();
-  if (!contentType.includes("application/json")) {
+  const contentLengthHeader = req.headers["content-length"];
+  const contentLength = Number.parseInt(String(contentLengthHeader || "0"), 10);
+  const transferEncoding = String(req.headers["transfer-encoding"] || "").trim();
+  const hasPayload =
+    (Number.isFinite(contentLength) && contentLength > 0) ||
+    transferEncoding.length > 0;
+
+  if (hasPayload && !contentType.includes("application/json")) {
     return res.status(415).json({
       error: "Unsupported Media Type. Use application/json."
     });
   }
 
-  const contentLengthHeader = req.headers["content-length"];
-  const contentLength = Number.parseInt(String(contentLengthHeader || "0"), 10);
   if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
     return res.status(413).json({
       error: "Payload Too Large"

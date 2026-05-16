@@ -71,6 +71,42 @@ function mapJobStatusToHttpStatus(status) {
   return 422;
 }
 
+function toInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getToolTimeoutWithBufferMs(tool) {
+  const baseTimeoutMs = Math.max(
+    1000,
+    toInteger(tool?.timeoutSeconds, 60) * 1000
+  );
+  const timeoutBufferMs = Math.max(
+    1000,
+    toInteger(process.env.TOOL_TIMEOUT_BUFFER_MS, 15000)
+  );
+  return baseTimeoutMs + timeoutBufferMs;
+}
+
+function runToolWithHardTimeout(toolId, targetUrl, timeoutMs) {
+  const safeTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 75000;
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const timeoutError = new Error(
+        `Tool ${toolId} timed out after ${safeTimeoutMs}ms`
+      );
+      timeoutError.code = "TOOL_TIMEOUT";
+      reject(timeoutError);
+    }, safeTimeoutMs);
+  });
+
+  return Promise.race([runTool(toolId, targetUrl), timeoutPromise]).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
 async function markEngagementRunningIfDraft(engagementId) {
   await Engagement.findOneAndUpdate(
     {
@@ -148,7 +184,10 @@ async function executeEngagementTool({
   await markEngagementRunningIfDraft(engagement._id);
 
   try {
-    const output = toCamelCaseDeep(await runTool(toolId, targetUrl));
+    const toolTimeoutMs = getToolTimeoutWithBufferMs(tool);
+    const output = toCamelCaseDeep(
+      await runToolWithHardTimeout(toolId, targetUrl, toolTimeoutMs)
+    );
     job.status = "success";
     job.output = output;
     const rawFindings = Array.isArray(output?.findings) ? output.findings : [];
@@ -172,7 +211,7 @@ async function executeEngagementTool({
   } catch (error) {
     if (error?.code === "DOCKER_DISABLED") {
       job.status = "blocked";
-    } else if (/timed out/i.test(error?.message || "")) {
+    } else if (error?.code === "TOOL_TIMEOUT" || /timed out/i.test(error?.message || "")) {
       job.status = "timeout";
     } else {
       job.status = "failed";

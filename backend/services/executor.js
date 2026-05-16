@@ -27,12 +27,63 @@ function getTimeoutSignal(timeoutMs) {
   return undefined;
 }
 
-async function runHttpHeadersProbe(targetUrl, timeoutMs) {
-  const response = await fetch(targetUrl, {
-    method: "GET",
-    redirect: "manual",
-    signal: getTimeoutSignal(timeoutMs)
+function withTimeout(promise, timeoutMs, label) {
+  const safeTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30000;
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`${label} timed out after ${safeTimeoutMs}ms`);
+      error.code = "TOOL_TIMEOUT";
+      reject(error);
+    }, safeTimeoutMs);
   });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
+async function fetchWithTimeout(targetUrl, timeoutMs) {
+  const safeTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30000;
+
+  if (typeof AbortController !== "undefined") {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), safeTimeoutMs);
+    try {
+      return await fetch(targetUrl, {
+        method: "GET",
+        redirect: "manual",
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        const timeoutError = new Error(
+          `HTTP headers probe timed out after ${safeTimeoutMs}ms`
+        );
+        timeoutError.code = "TOOL_TIMEOUT";
+        throw timeoutError;
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  const signal = getTimeoutSignal(safeTimeoutMs);
+  return withTimeout(
+    fetch(targetUrl, {
+      method: "GET",
+      redirect: "manual",
+      signal
+    }),
+    safeTimeoutMs,
+    "HTTP headers probe"
+  );
+}
+
+async function runHttpHeadersProbe(targetUrl, timeoutMs) {
+  const response = await fetchWithTimeout(targetUrl, timeoutMs);
 
   const responseBody = await response.text().catch(() => "");
   const headers = {};
@@ -59,13 +110,15 @@ async function runHttpHeadersProbe(targetUrl, timeoutMs) {
   };
 }
 
-async function runDnsLookupProbe(targetUrl) {
+async function runDnsLookupProbe(targetUrl, timeoutMs) {
   const parsed = new URL(targetUrl);
   const host = parsed.hostname;
+  const safeTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 20000;
   const [lookupAll, resolve4, resolve6] = await Promise.allSettled([
-    dns.lookup(host, { all: true }),
-    dns.resolve4(host),
-    dns.resolve6(host)
+    withTimeout(dns.lookup(host, { all: true }), safeTimeoutMs, "dns.lookup"),
+    withTimeout(dns.resolve4(host), safeTimeoutMs, "dns.resolve4"),
+    withTimeout(dns.resolve6(host), safeTimeoutMs, "dns.resolve6")
   ]);
 
   const lookupPayload =
@@ -197,7 +250,7 @@ async function runTool(toolId, targetUrl) {
   }
 
   if (toolId === "dns_lookup_probe") {
-    return runDnsLookupProbe(targetUrl);
+    return runDnsLookupProbe(targetUrl, timeoutMs);
   }
 
   if (toolId === "zap_baseline_passive") {
