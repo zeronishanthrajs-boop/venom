@@ -33,39 +33,43 @@ export default function LearningInsights({
 
   useEffect(() => {
     if (!session || !engagementId) {
-      setLoading(false);
-      setInsights(null);
       return;
     }
 
     let cancelled = false;
-    setLoading(true);
-    setError("");
-
-    (async () => {
-      try {
-        const response = await fetchPlanExplanation(session, engagementId);
-        if (!cancelled) {
-          setInsights(response);
-        }
-      } catch (requestError) {
-        if (!cancelled) {
-          setInsights(null);
-          setError(
-            requestError instanceof Error
-              ? requestError.message
-              : "Failed to load learning insights."
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+    const runTimer = window.setTimeout(() => {
+      if (cancelled) {
+        return;
       }
-    })();
+      setLoading(true);
+      setError("");
+
+      (async () => {
+        try {
+          const response = await fetchPlanExplanation(session, engagementId);
+          if (!cancelled) {
+            setInsights(response);
+          }
+        } catch (requestError) {
+          if (!cancelled) {
+            setInsights(null);
+            setError(
+              requestError instanceof Error
+                ? requestError.message
+                : "Failed to load learning insights."
+            );
+          }
+        } finally {
+          if (!cancelled) {
+            setLoading(false);
+          }
+        }
+      })();
+    }, 0);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(runTimer);
     };
   }, [engagementId, session]);
 
