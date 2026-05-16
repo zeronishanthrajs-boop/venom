@@ -70,15 +70,18 @@ export default function NewScanPage() {
       });
 
       // Fire-and-forget orchestration so user can move to report view immediately.
-      void fetch(`/api/backend/api/orchestrate/${encodeURIComponent(engagement._id)}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({}),
-        credentials: "include",
-        keepalive: true
-      }).catch(() => undefined);
+      void fetch(
+        `/api/backend/api/orchestrate/${encodeURIComponent(engagement._id)}?async=true`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({}),
+          credentials: "include",
+          keepalive: true
+        }
+      ).catch(() => undefined);
 
       router.push(`/dashboard/report/${engagement._id}`);
     } catch (requestError) {

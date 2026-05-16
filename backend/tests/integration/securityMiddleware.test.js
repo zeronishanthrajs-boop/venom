@@ -39,6 +39,16 @@ test("rejects non-json content type for write endpoints", async () => {
   assert.equal(response.status, 415);
 });
 
+test("allows empty write requests without json content-type header", async () => {
+  const response = await request(app)
+    .post("/api/orchestrate/507f1f77bcf86cd799439011")
+    .set("x-api-key", "test-key")
+    .set("x-user-id", "tester@example.com")
+    .set("x-user-role", "admin");
+
+  assert.notEqual(response.status, 415);
+});
+
 test("rejects NoSQL operator payload keys", async () => {
   const response = await request(app)
     .post("/api/engagements")

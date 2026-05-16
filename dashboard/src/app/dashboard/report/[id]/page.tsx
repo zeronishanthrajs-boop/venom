@@ -505,24 +505,21 @@ export default function ReportPage() {
         : "Starting auto-orchestration for this engagement..."
     );
 
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 2500);
-
-    void fetch(`/api/backend/api/orchestrate/${encodeURIComponent(engagementId)}`, {
+    void fetch(`/api/backend/api/orchestrate/${encodeURIComponent(engagementId)}?async=true`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({}),
       credentials: "include",
-      keepalive: true,
-      signal: controller.signal
+      keepalive: true
     })
       .then(async (response) => {
-        window.clearTimeout(timeout);
         if (response.ok) {
           setKickoffStatus("triggered");
-          setKickoffMessage("Auto-orchestration is running. Report will refresh automatically.");
+          setKickoffMessage(
+            "Auto-orchestration queued. Report will refresh automatically as jobs complete."
+          );
           return;
         }
 
@@ -533,13 +530,7 @@ export default function ReportPage() {
         setKickoffStatus("failed");
         setKickoffMessage(message || "Failed to trigger orchestration. Please retry.");
       })
-      .catch((requestError) => {
-        window.clearTimeout(timeout);
-        if (requestError instanceof DOMException && requestError.name === "AbortError") {
-          setKickoffStatus("triggered");
-          setKickoffMessage("Auto-orchestration was triggered. Waiting for first scan updates...");
-          return;
-        }
+      .catch(() => {
         setKickoffStatus("failed");
         setKickoffMessage("Failed to trigger orchestration. Please retry.");
       });
