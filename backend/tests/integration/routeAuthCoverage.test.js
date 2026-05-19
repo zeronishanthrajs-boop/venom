@@ -37,6 +37,7 @@ const endpoints = [
   ["post", "/api/admin/fix-draft-statuses"],
   ["post", "/api/admin/fix-tool-whitelists"],
   ["post", "/api/admin/fix-orphaned-jobs"],
+  ["post", "/api/admin/fix-stale-running-engagements"],
   ["post", "/api/admin/fix-all"],
   ["get", "/api/admin/health"],
   ["post", "/api/cves/sync"],
@@ -75,7 +76,14 @@ const endpoints = [
   ["get", `/api/execute/${validId}`],
   ["post", "/api/patterns"],
   ["get", "/api/patterns/match"],
-  ["get", "/api/patterns"]
+  ["get", "/api/patterns"],
+  ["post", `/api/secrets/scan/${validId}`],
+  ["get", `/api/secrets/${validId}`],
+  ["post", `/api/supplychain/scan/${validId}`],
+  ["get", `/api/supplychain/${validId}`],
+  ["post", `/api/cloudconfig/scan/${validId}`],
+  ["get", `/api/cloudconfig/${validId}`],
+  ["get", `/api/reports/${validId}/hardened`]
 ];
 
 for (const [method, path] of endpoints) {

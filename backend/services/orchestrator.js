@@ -1,11 +1,17 @@
 const Engagement = require("../models/Engagement");
 const Plan = require("../models/Plan");
+const ExecutionJob = require("../models/ExecutionJob");
 const { generatePlanForEngagement, PROMPT_VERSION } = require("./planner");
 const { executeEngagementTool } = require("./executionService");
 const { runLearningCycle } = require("./learner");
 const { broadcastToRoom } = require("./realtimeServer");
 const { assertExecutionAllowed } = require("./trustControl");
 const { createSnapshot, detectChanges } = require("./changeDetector");
+const secretsDetectionService = require("./secretsDetectionService");
+const supplyChainService = require("./supplyChainService");
+const cloudMisconfigService = require("./cloudMisconfigService");
+const reportGeneratorService = require("./reportGeneratorService");
+const { logger } = require("../config/logger");
 
 const DEFAULT_TOOL_SEQUENCE = {
   website: [
@@ -132,6 +138,213 @@ function createHttpError(statusCode, message) {
   return error;
 }
 
+function toExecutionFinding(finding = {}, index = 0, defaults = {}) {
+  return {
+    id: finding.id || `${defaults.idPrefix || "scan"}-${index + 1}`,
+    severity: finding.severity || defaults.severity || "low",
+    category: finding.category || defaults.category || "Security",
+    title: finding.title || defaults.title || "Scanner finding",
+    description: finding.description || defaults.description || "Scanner finding recorded.",
+    recommendation:
+      finding.recommendation ||
+      finding.remediation ||
+      defaults.recommendation ||
+      "Review and remediate this finding according to security best practices.",
+    source: finding.source || defaults.source || "post_scan",
+    cve: finding.cve || null,
+    cvssScore: Number.isFinite(Number(finding.cvssScore))
+      ? Number(finding.cvssScore)
+      : null,
+    tags: Array.isArray(finding.tags) ? finding.tags : asArray(defaults.tags),
+    metadata: finding.metadata || {}
+  };
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+async function persistScanJob({
+  engagement,
+  toolId,
+  findings = [],
+  output = {},
+  createdBy = "unknown",
+  failed = false,
+  failureMessage = "",
+  findingDefaults = {}
+}) {
+  return ExecutionJob.create({
+    engagementId: engagement._id,
+    toolId,
+    targetUrl: engagement.targetUrl,
+    status: failed ? "failed" : "success",
+    startedAt: new Date(),
+    finishedAt: new Date(),
+    durationMs: 0,
+    output: {
+      findings,
+      ...output
+    },
+    findings: findings.map((finding, index) =>
+      toExecutionFinding(finding, index, findingDefaults)
+    ),
+    errorMessage: failed ? failureMessage : "",
+    createdBy
+  });
+}
+
+async function runPostExecutionScans(engagement, userId) {
+  const engagementId = String(engagement._id);
+  const summaries = [];
+
+  try {
+    const secretsResult = await secretsDetectionService.scanEngagement(engagementId);
+    const secretsFindings = asArray(secretsResult.findings);
+    await persistScanJob({
+      engagement,
+      toolId: "secrets_scan",
+      findings: secretsFindings,
+      output: {
+        source: "secrets_detection",
+        error: secretsResult.error || null
+      },
+      createdBy: userId,
+      failed: Boolean(secretsResult.error) && secretsFindings.length === 0,
+      failureMessage: secretsResult.error || "",
+      findingDefaults: {
+        idPrefix: "secret",
+        severity: "critical",
+        category: "Secrets Exposure",
+        source: "secrets_detection",
+        tags: ["secrets"]
+      }
+    });
+    summaries.push({
+      toolId: "secrets_scan",
+      findings: secretsFindings.length,
+      error: secretsResult.error || null
+    });
+  } catch (error) {
+    logger.warn(
+      { engagementId, error: error?.message || String(error) },
+      "Secrets scan post-step failed"
+    );
+  }
+
+  try {
+    const supplyChainResult = await supplyChainService.scanEngagement(
+      engagementId,
+      engagement.targetUrl
+    );
+    const supplyFindings = asArray(supplyChainResult.findings);
+    await persistScanJob({
+      engagement,
+      toolId: "supply_chain_scan",
+      findings: supplyFindings,
+      output: {
+        source: "supply_chain",
+        vulnerabilities: supplyChainResult.vulnerabilities || [],
+        error: supplyChainResult.error || null
+      },
+      createdBy: userId,
+      failed: Boolean(supplyChainResult.error) && supplyFindings.length === 0,
+      failureMessage: supplyChainResult.error || "",
+      findingDefaults: {
+        idPrefix: "supply",
+        severity: "medium",
+        category: "Supply Chain",
+        source: "supply_chain",
+        tags: ["supply-chain"]
+      }
+    });
+    summaries.push({
+      toolId: "supply_chain_scan",
+      findings: supplyFindings.length,
+      error: supplyChainResult.error || null
+    });
+  } catch (error) {
+    logger.warn(
+      { engagementId, error: error?.message || String(error) },
+      "Supply-chain scan post-step failed"
+    );
+  }
+
+  const hasAwsCredentials = Boolean(
+    String(process.env.AWS_ACCESS_KEY_ID || "").trim() &&
+      String(process.env.AWS_SECRET_ACCESS_KEY || "").trim()
+  );
+  if (hasAwsCredentials) {
+    try {
+      const cloudFindings = await cloudMisconfigService.scanAWSAccount({
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        sessionToken: process.env.AWS_SESSION_TOKEN || "",
+        region: process.env.AWS_REGION || "us-east-1"
+      });
+      await persistScanJob({
+        engagement,
+        toolId: "cloud_misconfig_scan",
+        findings: asArray(cloudFindings),
+        output: {
+          source: "cloud_misconfiguration",
+          scannedRegion: process.env.AWS_REGION || "us-east-1"
+        },
+        createdBy: userId,
+        findingDefaults: {
+          idPrefix: "cloud",
+          severity: "high",
+          category: "Cloud Configuration",
+          source: "cloud_misconfiguration",
+          tags: ["cloud", "aws"]
+        }
+      });
+      summaries.push({
+        toolId: "cloud_misconfig_scan",
+        findings: asArray(cloudFindings).length,
+        error: null
+      });
+    } catch (error) {
+      logger.warn(
+        { engagementId, error: error?.message || String(error) },
+        "Cloud misconfiguration post-step failed"
+      );
+    }
+  } else {
+    summaries.push({
+      toolId: "cloud_misconfig_scan",
+      findings: 0,
+      skipped: true,
+      reason: "AWS credentials not configured"
+    });
+  }
+
+  try {
+    const hardenedReport = await reportGeneratorService.generateReport(engagementId);
+    await persistScanJob({
+      engagement,
+      toolId: "hardened_report_generation",
+      findings: [],
+      output: {
+        source: "hardened_report",
+        report: hardenedReport
+      },
+      createdBy: userId
+    });
+    summaries.push({
+      toolId: "hardened_report_generation",
+      findings: asArray(hardenedReport.findings).length
+    });
+  } catch (error) {
+    logger.warn(
+      { engagementId, error: error?.message || String(error) },
+      "Hardened report generation post-step failed"
+    );
+  }
+
+  return summaries;
+}
+
 async function persistGeneratedPlan(engagement, planningResult, createdBy) {
   return Plan.create({
     engagementId: engagement._id,
@@ -197,6 +410,10 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
 
   const entry = activeOrchestrations.get(engagementId);
   try {
+    logger.info(
+      { engagementId, targetUrl: engagement.targetUrl, userId },
+      "Starting auto-orchestration"
+    );
     broadcastOrchestrationEvent(engagementId, "orchestration_state", {
       state: "planning",
       engagementId
@@ -215,6 +432,15 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
         learnedRecommendations: planningResult.learnedRecommendations || []
       },
       engagement.targetType
+    );
+    logger.info(
+      {
+        engagementId,
+        plannerSource: savedPlan.plannerSource,
+        promptVersion: savedPlan.promptVersion,
+        toolsPlanned: toolSequence.length
+      },
+      "Executing reconnaissance tools"
     );
 
     entry.state = "executing";
@@ -240,6 +466,15 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
         totalSteps: entry.totalSteps,
         toolId
       });
+      logger.info(
+        {
+          engagementId,
+          toolId,
+          step: entry.step,
+          totalSteps: entry.totalSteps
+        },
+        "Executing engagement tool"
+      );
 
       // eslint-disable-next-line no-await-in-loop
       const execution = await executeEngagementTool({
@@ -256,6 +491,18 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
         durationMs: execution.job.durationMs || 0,
         jobId: execution.job._id
       });
+      logger.info(
+        {
+          engagementId,
+          toolId,
+          status: execution.job.status,
+          findingsCount: Array.isArray(execution.job.findings)
+            ? execution.job.findings.length
+            : 0,
+          durationMs: execution.job.durationMs || 0
+        },
+        "Tool execution complete"
+      );
     }
 
     entry.state = "learning";
@@ -264,7 +511,16 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
       state: "learning",
       engagementId
     });
+    logger.info({ engagementId }, "Recording learned patterns");
     const learningResult = await runLearningCycle(String(engagement._id));
+
+    entry.state = "post_scan";
+    entry.lastUpdateAt = new Date().toISOString();
+    broadcastOrchestrationEvent(engagementId, "orchestration_state", {
+      state: "post_scan",
+      engagementId
+    });
+    const postScanResults = await runPostExecutionScans(engagement, userId);
 
     await Engagement.updateOne(
       { _id: engagement._id },
@@ -284,6 +540,13 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
       state: "completed",
       engagementId
     });
+    logger.info(
+      {
+        engagementId,
+        processedJobs: learningResult?.processedJobs || 0
+      },
+      "Auto-orchestration complete"
+    );
     return {
       engagementId: String(engagement._id),
       targetUrl: engagement.targetUrl,
@@ -292,7 +555,8 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
       plannerSource: savedPlan.plannerSource,
       toolSequence,
       executionResults,
-      learningResult
+      learningResult,
+      postScanResults
     };
   } catch (error) {
     await Engagement.updateOne(
@@ -306,6 +570,13 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
       engagementId,
       error: error?.message || "orchestration failed"
     });
+    logger.error(
+      {
+        engagementId,
+        error: error?.message || "unknown error"
+      },
+      "Auto-orchestration failed"
+    );
     throw error;
   } finally {
     setTimeout(() => {

@@ -5,6 +5,14 @@ const { logger } = require("./logger");
 let memoryServer = null;
 let connectionSource = "none";
 
+function toPositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
 function toConnectionStateLabel(state) {
   switch (state) {
     case 0:
@@ -47,7 +55,20 @@ async function connectDB() {
   mongoose.set("strictQuery", true);
 
   if (uri) {
-    await mongoose.connect(uri);
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: toPositiveInteger(
+        process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS,
+        5000
+      ),
+      socketTimeoutMS: toPositiveInteger(
+        process.env.MONGODB_SOCKET_TIMEOUT_MS,
+        45000
+      ),
+      connectTimeoutMS: toPositiveInteger(
+        process.env.MONGODB_CONNECT_TIMEOUT_MS,
+        10000
+      )
+    });
     connectionSource = "external-uri";
     logger.info({ source: "external-uri" }, "MongoDB connected");
     return;

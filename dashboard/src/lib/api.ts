@@ -6,6 +6,7 @@ export type Engagement = {
   description: string;
   targetUrl: string;
   targetType: "website" | "api" | "network";
+  autoOrchestrate?: boolean;
   status: "draft" | "running" | "paused" | "completed" | "failed";
   createdAt: string;
 };
@@ -15,6 +16,7 @@ export type CreateEngagementInput = {
   description: string;
   targetUrl: string;
   targetType: "website" | "api" | "network";
+  autoOrchestrate?: boolean;
   scanProfile?: "startup";
   startupConcern?: string;
   ownershipAssertion?: string;
@@ -854,6 +856,10 @@ export async function createEngagement(
       description: input.description,
       targetUrl: input.targetUrl,
       targetType: input.targetType,
+      autoOrchestrate:
+        typeof input.autoOrchestrate === "boolean"
+          ? input.autoOrchestrate
+          : true,
       scanProfile: input.scanProfile,
       startupConcern: input.startupConcern,
       ownershipAssertion: input.ownershipAssertion,

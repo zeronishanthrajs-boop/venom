@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const requireDb = require("../middleware/requireDb");
 const { requireRole } = require("../middleware/rbac");
 const { STARTUP_SCAN_PROFILE } = require("../profiles/startupScan");
+const { getOrchestratorStatus } = require("../services/orchestrator");
 
 const Engagement = mongoose.model("Engagement");
 const ExecutionJob = mongoose.model("ExecutionJob");
@@ -16,6 +17,7 @@ const TERMINAL_JOB_STATUSES = [
   "timeout",
   "killed"
 ];
+const ACTIVE_JOB_STATUSES = ["queued", "running"];
 
 const FULL_TOOL_WHITELIST = [
   "http_headers_probe",
@@ -155,6 +157,80 @@ async function runFixDraftStatuses() {
   };
 }
 
+function toPositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+async function runFixStaleRunningEngagements() {
+  const staleAfterMinutes = Math.max(
+    5,
+    toPositiveInteger(process.env.STALE_RUNNING_ENGAGEMENT_MINUTES, 20)
+  );
+  const cutoff = new Date(Date.now() - staleAfterMinutes * 60 * 1000);
+  const staleRunning = await Engagement.find({
+    status: "running",
+    updatedAt: { $lt: cutoff }
+  })
+    .select("_id updatedAt")
+    .lean();
+
+  if (staleRunning.length === 0) {
+    return {
+      engagementsFixed: 0,
+      scanned: 0,
+      staleAfterMinutes
+    };
+  }
+
+  const orchestrationStatus = getOrchestratorStatus();
+  const activeOrchestrationIds = new Set(
+    Object.keys(orchestrationStatus?.active || {})
+  );
+
+  let engagementsFixed = 0;
+  let skippedActiveOrchestration = 0;
+  let skippedActiveJobs = 0;
+
+  for (const engagement of staleRunning) {
+    const engagementId = String(engagement._id);
+    if (activeOrchestrationIds.has(engagementId)) {
+      skippedActiveOrchestration += 1;
+      continue;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    const hasActiveJobs = await ExecutionJob.exists({
+      engagementId: engagement._id,
+      status: { $in: ACTIVE_JOB_STATUSES }
+    });
+    if (hasActiveJobs) {
+      skippedActiveJobs += 1;
+      continue;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    const updateResult = await Engagement.updateOne(
+      { _id: engagement._id, status: "running" },
+      { $set: { status: "failed" } }
+    );
+    if ((updateResult.modifiedCount || 0) > 0) {
+      engagementsFixed += 1;
+    }
+  }
+
+  return {
+    engagementsFixed,
+    scanned: staleRunning.length,
+    staleAfterMinutes,
+    skippedActiveOrchestration,
+    skippedActiveJobs
+  };
+}
+
 router.post("/fix-draft-statuses", requireRole("admin", "owner"), requireDb, async (_req, res) => {
   try {
     const result = await runFixDraftStatuses();
@@ -191,6 +267,23 @@ router.post("/fix-orphaned-jobs", requireRole("admin", "owner"), requireDb, asyn
   }
 });
 
+router.post(
+  "/fix-stale-running-engagements",
+  requireRole("admin", "owner"),
+  requireDb,
+  async (_req, res) => {
+    try {
+      const result = await runFixStaleRunningEngagements();
+      return res.json({
+        success: true,
+        ...result
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+);
+
 router.post("/fix-all", requireRole("admin", "owner"), requireDb, async (_req, res) => {
   const results = {};
   try {
@@ -205,6 +298,11 @@ router.post("/fix-all", requireRole("admin", "owner"), requireDb, async (_req, r
     results.draftsFixed = drafts.engagementsFixed;
     results.draftStatusWritten = drafts.statusWritten;
 
+    const staleRunning = await runFixStaleRunningEngagements();
+    results.staleRunningFixed = staleRunning.engagementsFixed;
+    results.staleRunningScanned = staleRunning.scanned;
+    results.staleAfterMinutes = staleRunning.staleAfterMinutes;
+
     return res.json({
       success: true,
       results
@@ -216,7 +314,7 @@ router.post("/fix-all", requireRole("admin", "owner"), requireDb, async (_req, r
 
 router.get("/health", requireRole("admin", "owner"), requireDb, async (_req, res) => {
   try {
-    const [draftCount, runningCount, activeCount, orphanedJobs, engagements] =
+    const [draftCount, runningCount, activeCount, orphanedJobs, activeRunningJobs, engagements] =
       await Promise.all([
         Engagement.countDocuments({ status: { $in: ["draft", "DRAFT"] } }),
         Engagement.countDocuments({ status: "running" }),
@@ -225,6 +323,9 @@ router.get("/health", requireRole("admin", "owner"), requireDb, async (_req, res
         ExecutionJob.countDocuments({
           status: "running",
           startedAt: { $lt: new Date(Date.now() - 10 * 60 * 1000) }
+        }),
+        ExecutionJob.countDocuments({
+          status: { $in: ACTIVE_JOB_STATUSES }
         }),
         Engagement.find({})
           .select("constraints.toolWhitelist toolWhitelist")
@@ -247,6 +348,7 @@ router.get("/health", requireRole("admin", "owner"), requireDb, async (_req, res
         active: activeCount,
         activeEquivalent: runningCount + activeCount
       },
+      activeRunningJobs,
       orphanedJobs,
       emptyWhitelists,
       healthy: draftCount === 0 && orphanedJobs === 0 && emptyWhitelists === 0

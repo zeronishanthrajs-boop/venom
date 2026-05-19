@@ -8,6 +8,8 @@ const engagementConstraints = require("../middleware/engagementConstraints");
 const requireDb = require("../middleware/requireDb");
 const { scorePatternForEngagement } = require("../services/patternEngine");
 const { PROMPT_VERSION } = require("../services/planner");
+const { orchestrateSingle } = require("../services/orchestrator");
+const { logger } = require("../config/logger");
 const { toCamelCaseDeep, toPrettyPrintedJson } = require("../utils/prettyPrint");
 const { STARTUP_SCAN_PROFILE } = require("../profiles/startupScan");
 
@@ -45,6 +47,25 @@ function shouldApplyStartupProfile(body) {
   return explicit || implicit;
 }
 
+function normalizeBoolean(value, fallback = false) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+  return fallback;
+}
+
 const router = express.Router();
 
 function ensureOwnerRole(req, res) {
@@ -55,6 +76,27 @@ function ensureOwnerRole(req, res) {
     error: "Only owner role can perform this action."
   });
   return false;
+}
+
+function scheduleEngagementAutoOrchestration(engagementId, userId) {
+  setImmediate(async () => {
+    logger.info(
+      { engagementId, userId },
+      "Starting auto-orchestration for engagement"
+    );
+    try {
+      await orchestrateSingle(engagementId, userId);
+    } catch (error) {
+      logger.error(
+        {
+          engagementId,
+          userId,
+          error: error?.message || "unknown error"
+        },
+        "Auto-orchestration failed"
+      );
+    }
+  });
 }
 
 async function reconcileDraftStatuses(engagements = []) {
@@ -162,7 +204,8 @@ function toEngagementPayload(body, userId) {
     },
     status: body.status || "draft",
     createdBy: userId,
-    startupProfileApplied: applyStartup
+    startupProfileApplied: applyStartup,
+    autoOrchestrate: normalizeBoolean(body?.autoOrchestrate, true)
   };
 }
 
@@ -422,7 +465,16 @@ router.post("/", engagementConstraints, requireDb, async (req, res, next) => {
     const engagement = await Engagement.create(
       toEngagementPayload(req.body, req.user?.id || "unknown")
     );
-    return res.status(201).json(engagement);
+    const createdPayload = engagement.toObject();
+    res.status(201).json(createdPayload);
+
+    if (createdPayload.autoOrchestrate !== false) {
+      scheduleEngagementAutoOrchestration(
+        String(createdPayload._id),
+        req.user?.id || "unknown"
+      );
+    }
+    return;
   } catch (error) {
     return next(error);
   }

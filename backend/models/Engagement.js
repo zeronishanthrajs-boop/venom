@@ -93,6 +93,10 @@ const engagementSchema = new mongoose.Schema(
       type: Boolean,
       default: false
     },
+    autoOrchestrate: {
+      type: Boolean,
+      default: true
+    },
     completedAt: Date,
     createdBy: {
       type: String,

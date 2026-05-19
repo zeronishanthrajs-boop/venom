@@ -64,24 +64,11 @@ export default function NewScanPage() {
           "Simplified dashboard flow: auto-orchestrated baseline assessment.",
         targetUrl: cleanTarget,
         targetType: "website",
+        autoOrchestrate: true,
         scanProfile: "startup",
         startupConcern: "Routine startup security check",
         ownershipAssertion: "I have written authorization from the domain owner"
       });
-
-      // Fire-and-forget orchestration so user can move to report view immediately.
-      void fetch(
-        `/api/backend/api/orchestrate/${encodeURIComponent(engagement._id)}?async=true`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({}),
-          credentials: "include",
-          keepalive: true
-        }
-      ).catch(() => undefined);
 
       router.push(`/dashboard/report/${engagement._id}`);
     } catch (requestError) {

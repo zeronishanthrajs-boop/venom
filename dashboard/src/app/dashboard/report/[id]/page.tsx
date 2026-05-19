@@ -546,7 +546,8 @@ export default function ReportPage() {
 
     const hasActiveRun = Boolean(orchestratorStatus?.active?.[engagementId]);
     const shouldKickoff =
-      report.engagement.status === "draft" &&
+      (report.engagement.status === "draft" ||
+        report.engagement.status === "running") &&
       jobs.length === 0 &&
       !hasActiveRun;
 
