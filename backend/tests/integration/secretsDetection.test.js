@@ -13,6 +13,7 @@ const { createApp } = require("../../app");
 const { connectDB, stopInMemoryServer } = require("../../config/db");
 const Engagement = require("../../models/Engagement");
 const ExecutionJob = require("../../models/ExecutionJob");
+const ExecutionLog = require("../../models/ExecutionLog");
 const secretsDetectionService = require("../../services/secretsDetectionService");
 
 const app = createApp();
@@ -49,7 +50,11 @@ test.after(async () => {
 });
 
 test.beforeEach(async () => {
-  await Promise.all([Engagement.deleteMany({}), ExecutionJob.deleteMany({})]);
+  await Promise.all([
+    Engagement.deleteMany({}),
+    ExecutionJob.deleteMany({}),
+    ExecutionLog.deleteMany({})
+  ]);
 });
 
 test("matchPatterns detects AWS keys", () => {
@@ -128,6 +133,7 @@ test("POST /api/secrets/scan/:engagementId stores execution job", async () => {
       .set(authHeaders());
     assert.equal(response.status, 200);
     assert.equal(response.body.count, 1);
+    assert.ok(response.body.testId);
 
     const job = await ExecutionJob.findOne({
       engagementId: engagement._id,
@@ -136,6 +142,13 @@ test("POST /api/secrets/scan/:engagementId stores execution job", async () => {
     assert.ok(job);
     assert.equal(job.status, "success");
     assert.equal(job.findings.length, 1);
+
+    const trace = await ExecutionLog.findOne({
+      engagementId: engagement._id,
+      testId: response.body.testId
+    }).lean();
+    assert.ok(trace);
+    assert.equal(trace.result.status, "VULNERABLE");
   } finally {
     secretsDetectionService.scanEngagement = originalScan;
   }

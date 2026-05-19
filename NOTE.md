@@ -90,3 +90,45 @@
 - [2026-05-19 14:32:27 +05:30] Hardened reporting: integrated, tested, passing.
 - [2026-05-19 14:32:27 +05:30] Auto-orchestration integration: post-execution scans and hardened reporting stage active.
 - [2026-05-19 14:32:27 +05:30] Overall outcome: Phase 1 backend execution completed with no unresolved issues found in current test-verified state.
+
+## Phase 1.5 Execution Log (Detailed Execution Transparency)
+
+- [2026-05-19 14:36:00 +05:30] Phase 1.5 intake accepted: objective set to move reports from summary-only output to reproducible execution traces with developer-oriented context and decision visibility.
+- [2026-05-19 14:40:00 +05:30] Architecture decision confirmed: execution traces are stored in a dedicated execution-log collection and linked back to findings through metadata test identifiers, preserving compatibility with existing execution-job storage and hardened report flow.
+- [2026-05-19 14:44:00 +05:30] Data model extension completed: added execution-log persistence model capturing engagement linkage, test identity, tool/category, request parameters, response metadata, result classification, timing, and evidence-safe metadata for audit use.
+- [2026-05-19 14:48:00 +05:30] Core service implementation completed: added execution logger service to record scans, normalize status/severity/confidence, aggregate engagement-level execution summaries, provide per-test detailed traces, and generate deterministic decision-logic plus developer-guidance context.
+- [2026-05-19 14:53:00 +05:30] Report service enhancement completed: hardened report generator extended with a detailed-report mode that includes execution metrics, passed-test visibility, trace-attached findings, developer notes, testing guidance, and reproduction steps.
+- [2026-05-19 14:57:00 +05:30] Report route enhancement completed: added a dedicated API endpoint for detailed report retrieval with execution traces and preserved existing validation/error behavior for invalid IDs and missing engagements.
+- [2026-05-19 15:00:00 +05:30] Orchestration wiring completed: auto-orchestrator now records execution traces for baseline tools and post-execution scanners, and it injects reusable test identifiers into finding metadata so every reportable finding can be traced back to a concrete test run.
+- [2026-05-19 15:03:00 +05:30] Manual scan route wiring completed: secrets, supply-chain, and cloud scan endpoints now generate unique test identifiers, attach trace metadata to findings, and write execution-log records for route-triggered scans in addition to orchestration-triggered scans.
+- [2026-05-19 15:06:00 +05:30] Dashboard integration completed: report page now fetches detailed execution-report payloads and renders a scan execution section showing total tests, pass/fail/blocked counts, execution timeline, and finding-level traceability context for developer review.
+- [2026-05-19 15:08:00 +05:30] API client layer updated: dashboard API module extended with typed detailed-execution-report models and dedicated fetch method to consume the new backend endpoint safely.
+
+## Phase 1.5 Test and Verification Output
+
+- [2026-05-19 15:09:00 +05:30] Backend integration suite executed with `npm.cmd run test:integration`; result: pass, 104 tests passed, 0 failed, duration approximately 13.7s during first validation run.
+- [2026-05-19 15:09:20 +05:30] Backend full suite executed with `npm.cmd test`; result: pass, 162 tests passed, 0 failed, duration approximately 33.0s during first validation run.
+- [2026-05-19 15:09:40 +05:30] Issue detected during initial backend validation: Mongoose deprecation warning emitted from execution logging upsert option usage in execution logger service.
+- [2026-05-19 15:10:00 +05:30] Issue resolved: execution-log upsert options updated to modern return-document behavior; no runtime behavior changed, only warning-causing option removed.
+- [2026-05-19 15:10:20 +05:30] Backend integration suite re-executed after fix with `npm.cmd run test:integration`; result: pass, 104 tests passed, 0 failed, deprecation warning no longer present.
+- [2026-05-19 15:10:35 +05:30] Backend full suite re-executed after fix with `npm.cmd test`; result: pass, 162 tests passed, 0 failed, deprecation warning no longer present.
+- [2026-05-19 15:10:45 +05:30] Dashboard production compile executed with `npm.cmd run build`; result: pass, optimized build completed, TypeScript checks passed, dynamic report route compiled successfully.
+- [2026-05-19 15:10:50 +05:30] Dashboard test suite executed with `npm.cmd test`; result: pass, 9 tests passed, 0 failed, authentication and backend bridge behavior remained intact after report-page changes.
+
+## Phase 1.5 Files Added
+
+- [2026-05-19 15:10:50 +05:30] Added backend model file: `backend/models/ExecutionLog.js` to persist immutable, audit-ready execution-trace records.
+- [2026-05-19 15:10:50 +05:30] Added backend service file: `backend/services/executionLoggerService.js` to centralize trace logging, summary generation, and trace detail retrieval.
+
+## Phase 1.5 Files Updated
+
+- [2026-05-19 15:10:50 +05:30] Updated backend services: orchestrator and hardened report generator to create and consume execution traces.
+- [2026-05-19 15:10:50 +05:30] Updated backend routes: reports, secrets, supply-chain, and cloud-config routes to expose detailed report data and log route-triggered scan traces.
+- [2026-05-19 15:10:50 +05:30] Updated backend integration coverage: report generation, route auth coverage, and feature-route integration tests now verify detailed execution-report and trace persistence behavior.
+- [2026-05-19 15:10:50 +05:30] Updated dashboard report page and API client typing/fetch layer to display and consume execution-detail artifacts without disrupting existing report summary views.
+
+## Phase 1.5 Rebuild Notes (Recovery-Oriented)
+
+- [2026-05-19 15:10:50 +05:30] Rebuild sequence recommendation: create execution-log model first, then execution logger service, then orchestrator trace wiring, then report detailed-mode generation, then detailed report route, then dashboard fetch/render integration, then validation suites.
+- [2026-05-19 15:10:50 +05:30] Trace-linking requirement: every finding-producing scan must assign a stable test identifier and persist that identifier into finding metadata so detailed reports can resolve deterministic trace evidence.
+- [2026-05-19 15:10:50 +05:30] Regression guard requirement: after integration, run backend integration suite, backend full suite, dashboard build, and dashboard tests in that order; release only when all four validations pass with zero failures.

@@ -11,6 +11,7 @@ const secretsDetectionService = require("./secretsDetectionService");
 const supplyChainService = require("./supplyChainService");
 const cloudMisconfigService = require("./cloudMisconfigService");
 const reportGeneratorService = require("./reportGeneratorService");
+const executionLoggerService = require("./executionLoggerService");
 const { logger } = require("../config/logger");
 
 const DEFAULT_TOOL_SEQUENCE = {
@@ -164,6 +165,55 @@ function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function buildExecutionTestId(toolId, phase = "scan") {
+  return `test-${phase}-${String(toolId || "unknown")}-${Date.now()}-${Math.floor(
+    Math.random() * 1000
+  )}`;
+}
+
+function toExecutionCategory(toolId) {
+  const id = String(toolId || "").toLowerCase();
+  if (id.includes("secret")) {
+    return "Secrets";
+  }
+  if (id.includes("supply")) {
+    return "Supply Chain";
+  }
+  if (id.includes("cloud")) {
+    return "Cloud Configuration";
+  }
+  if (id.includes("header") || id.includes("tls") || id.includes("dns")) {
+    return "Security Headers";
+  }
+  if (id.includes("sql") || id.includes("nuclei") || id.includes("nikto")) {
+    return "Injection and Vulnerability";
+  }
+  if (id.includes("nmap")) {
+    return "Network Exposure";
+  }
+  if (id.includes("report")) {
+    return "Reporting";
+  }
+  return "General";
+}
+
+function toExecutionTestName(toolId) {
+  const map = {
+    http_headers_probe: "HTTP Security Headers Check",
+    dns_lookup_probe: "DNS Configuration Probe",
+    tls_metadata_probe: "TLS Metadata Validation",
+    nmap_tcp_scan: "Network Port Exposure Scan",
+    nuclei_scan: "Nuclei Vulnerability Scan",
+    nikto_scan: "Nikto Web Misconfiguration Scan",
+    sqlmap_detect: "SQL Injection Probe",
+    secrets_scan: "Secrets Detection Scan",
+    supply_chain_scan: "Supply Chain Dependency Scan",
+    cloud_misconfig_scan: "Cloud Misconfiguration Scan",
+    hardened_report_generation: "Hardened Report Generation"
+  };
+  return map[String(toolId || "")] || `Execution of ${toolId}`;
+}
+
 async function persistScanJob({
   engagement,
   toolId,
@@ -172,7 +222,8 @@ async function persistScanJob({
   createdBy = "unknown",
   failed = false,
   failureMessage = "",
-  findingDefaults = {}
+  findingDefaults = {},
+  executionMeta = null
 }) {
   return ExecutionJob.create({
     engagementId: engagement._id,
@@ -186,9 +237,22 @@ async function persistScanJob({
       findings,
       ...output
     },
-    findings: findings.map((finding, index) =>
-      toExecutionFinding(finding, index, findingDefaults)
-    ),
+    findings: findings.map((finding, index) => {
+      const normalized = toExecutionFinding(finding, index, findingDefaults);
+      if (!executionMeta) {
+        return normalized;
+      }
+      return {
+        ...normalized,
+        metadata: {
+          ...(normalized.metadata || {}),
+          executionTestId: executionMeta.testId,
+          testId: executionMeta.testId,
+          executionTestName: executionMeta.testName,
+          targetUrl: engagement.targetUrl
+        }
+      };
+    }),
     errorMessage: failed ? failureMessage : "",
     createdBy
   });
@@ -199,9 +263,11 @@ async function runPostExecutionScans(engagement, userId) {
   const summaries = [];
 
   try {
+    const testId = buildExecutionTestId("secrets_scan", "post");
+    const testName = toExecutionTestName("secrets_scan");
     const secretsResult = await secretsDetectionService.scanEngagement(engagementId);
     const secretsFindings = asArray(secretsResult.findings);
-    await persistScanJob({
+    const secretsJob = await persistScanJob({
       engagement,
       toolId: "secrets_scan",
       findings: secretsFindings,
@@ -218,7 +284,24 @@ async function runPostExecutionScans(engagement, userId) {
         category: "Secrets Exposure",
         source: "secrets_detection",
         tags: ["secrets"]
+      },
+      executionMeta: {
+        testId,
+        testName
       }
+    });
+    await executionLoggerService.logExecutionJob({
+      engagementId: String(engagement._id),
+      testId,
+      testName,
+      tool: "secrets_scan",
+      category: toExecutionCategory("secrets_scan"),
+      target: engagement.targetUrl,
+      parameters: {
+        mode: "post-orchestration",
+        source: "secrets_detection"
+      },
+      job: secretsJob.toObject()
     });
     summaries.push({
       toolId: "secrets_scan",
@@ -233,12 +316,14 @@ async function runPostExecutionScans(engagement, userId) {
   }
 
   try {
+    const testId = buildExecutionTestId("supply_chain_scan", "post");
+    const testName = toExecutionTestName("supply_chain_scan");
     const supplyChainResult = await supplyChainService.scanEngagement(
       engagementId,
       engagement.targetUrl
     );
     const supplyFindings = asArray(supplyChainResult.findings);
-    await persistScanJob({
+    const supplyJob = await persistScanJob({
       engagement,
       toolId: "supply_chain_scan",
       findings: supplyFindings,
@@ -256,7 +341,25 @@ async function runPostExecutionScans(engagement, userId) {
         category: "Supply Chain",
         source: "supply_chain",
         tags: ["supply-chain"]
+      },
+      executionMeta: {
+        testId,
+        testName
       }
+    });
+    await executionLoggerService.logExecutionJob({
+      engagementId: String(engagement._id),
+      testId,
+      testName,
+      tool: "supply_chain_scan",
+      category: toExecutionCategory("supply_chain_scan"),
+      target: engagement.targetUrl,
+      parameters: {
+        mode: "post-orchestration",
+        source: "supply_chain",
+        dependencySource: "package_manifest"
+      },
+      job: supplyJob.toObject()
     });
     summaries.push({
       toolId: "supply_chain_scan",
@@ -276,13 +379,15 @@ async function runPostExecutionScans(engagement, userId) {
   );
   if (hasAwsCredentials) {
     try {
+      const testId = buildExecutionTestId("cloud_misconfig_scan", "post");
+      const testName = toExecutionTestName("cloud_misconfig_scan");
       const cloudFindings = await cloudMisconfigService.scanAWSAccount({
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
         sessionToken: process.env.AWS_SESSION_TOKEN || "",
         region: process.env.AWS_REGION || "us-east-1"
       });
-      await persistScanJob({
+      const cloudJob = await persistScanJob({
         engagement,
         toolId: "cloud_misconfig_scan",
         findings: asArray(cloudFindings),
@@ -297,7 +402,24 @@ async function runPostExecutionScans(engagement, userId) {
           category: "Cloud Configuration",
           source: "cloud_misconfiguration",
           tags: ["cloud", "aws"]
+        },
+        executionMeta: {
+          testId,
+          testName
         }
+      });
+      await executionLoggerService.logExecutionJob({
+        engagementId: String(engagement._id),
+        testId,
+        testName,
+        tool: "cloud_misconfig_scan",
+        category: toExecutionCategory("cloud_misconfig_scan"),
+        target: engagement.targetUrl,
+        parameters: {
+          mode: "post-orchestration",
+          region: process.env.AWS_REGION || "us-east-1"
+        },
+        job: cloudJob.toObject()
       });
       summaries.push({
         toolId: "cloud_misconfig_scan",
@@ -320,8 +442,10 @@ async function runPostExecutionScans(engagement, userId) {
   }
 
   try {
+    const testId = buildExecutionTestId("hardened_report_generation", "post");
+    const testName = toExecutionTestName("hardened_report_generation");
     const hardenedReport = await reportGeneratorService.generateReport(engagementId);
-    await persistScanJob({
+    const reportJob = await persistScanJob({
       engagement,
       toolId: "hardened_report_generation",
       findings: [],
@@ -329,7 +453,27 @@ async function runPostExecutionScans(engagement, userId) {
         source: "hardened_report",
         report: hardenedReport
       },
-      createdBy: userId
+      createdBy: userId,
+      executionMeta: {
+        testId,
+        testName
+      }
+    });
+    await executionLoggerService.logExecutionJob({
+      engagementId: String(engagement._id),
+      testId,
+      testName,
+      tool: "hardened_report_generation",
+      category: toExecutionCategory("hardened_report_generation"),
+      target: engagement.targetUrl,
+      parameters: {
+        mode: "post-orchestration",
+        reportType: "hardened"
+      },
+      job: reportJob.toObject(),
+      meta: {
+        reportVersion: hardenedReport.structureVersion || "phase1.v1"
+      }
     });
     summaries.push({
       toolId: "hardened_report_generation",
@@ -483,6 +627,47 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
         requestedTargetUrl: engagement.targetUrl,
         userId
       });
+      const executionTestId = buildExecutionTestId(toolId, "tool");
+      const executionTestName = toExecutionTestName(toolId);
+      const traceEntry = await executionLoggerService.logExecutionJob({
+        engagementId: String(engagement._id),
+        testId: executionTestId,
+        testName: executionTestName,
+        tool: toolId,
+        category: toExecutionCategory(toolId),
+        target: engagement.targetUrl,
+        parameters: {
+          step: entry.step,
+          totalSteps: entry.totalSteps,
+          toolId,
+          targetUrl: engagement.targetUrl
+        },
+        job: execution.job,
+        meta: {
+          orchestrationState: "executing"
+        }
+      });
+      if (traceEntry?.testId && Array.isArray(execution.job.findings)) {
+        const enrichedFindings = execution.job.findings.map((finding) => ({
+          ...finding,
+          metadata: {
+            ...(finding?.metadata || {}),
+            executionTestId: traceEntry.testId,
+            testId: traceEntry.testId,
+            executionTestName: executionTestName,
+            targetUrl: engagement.targetUrl
+          }
+        }));
+        execution.job.findings = enrichedFindings;
+        await ExecutionJob.updateOne(
+          { _id: execution.job._id },
+          {
+            $set: {
+              findings: enrichedFindings
+            }
+          }
+        ).catch(() => {});
+      }
 
       executionResults.push({
         toolId,

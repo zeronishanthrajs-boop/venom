@@ -3,11 +3,21 @@ const Engagement = require("../models/Engagement");
 const ExecutionJob = require("../models/ExecutionJob");
 const requireDb = require("../middleware/requireDb");
 const supplyChainService = require("../services/supplyChainService");
+const executionLoggerService = require("../services/executionLoggerService");
 const { logger } = require("../config/logger");
 
 const router = express.Router();
 
-function toExecutionFinding(finding = {}, index = 0) {
+function buildExecutionMeta() {
+  return {
+    testId: `test-supply-chain-scan-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    testName: "Supply Chain Dependency Scan",
+    category: "Supply Chain",
+    tool: "supply_chain_scan"
+  };
+}
+
+function toExecutionFinding(finding = {}, index = 0, executionMeta = null, targetUrl = "") {
   return {
     id: finding.id || `supply-${index + 1}`,
     severity: finding.severity || "medium",
@@ -24,7 +34,17 @@ function toExecutionFinding(finding = {}, index = 0) {
       ? Number(finding.cvssScore)
       : null,
     tags: Array.isArray(finding.tags) ? finding.tags : ["supply-chain"],
-    metadata: finding.metadata || {}
+    metadata: {
+      ...(finding.metadata || {}),
+      ...(executionMeta
+        ? {
+            executionTestId: executionMeta.testId,
+            testId: executionMeta.testId,
+            executionTestName: executionMeta.testName
+          }
+        : {}),
+      ...(targetUrl ? { targetUrl } : {})
+    }
   };
 }
 
@@ -37,8 +57,12 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
     }
 
     const startedAt = Date.now();
+    const executionMeta = buildExecutionMeta();
     const result = await supplyChainService.scanEngagement(engagementId, engagement.targetUrl);
     const findings = Array.isArray(result.findings) ? result.findings : [];
+    const normalizedFindings = findings.map((finding, index) =>
+      toExecutionFinding(finding, index, executionMeta, engagement.targetUrl)
+    );
     const hasError = Boolean(result.error) && findings.length === 0;
 
     const job = await ExecutionJob.create({
@@ -50,21 +74,39 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
       finishedAt: new Date(),
       durationMs: Date.now() - startedAt,
       output: {
-        findings,
+        findings: normalizedFindings,
         source: "supply_chain",
         vulnerabilities: result.vulnerabilities || [],
         error: result.error || null
       },
-      findings: findings.map((finding, index) => toExecutionFinding(finding, index)),
+      findings: normalizedFindings,
       errorMessage: hasError ? result.error : "",
       createdBy: req.user?.id || "unknown"
+    });
+    await executionLoggerService.logExecutionJob({
+      engagementId: String(engagement._id),
+      testId: executionMeta.testId,
+      testName: executionMeta.testName,
+      tool: executionMeta.tool,
+      category: executionMeta.category,
+      target: engagement.targetUrl,
+      parameters: {
+        mode: "manual-route",
+        endpoint: "/api/supplychain/scan/:engagementId",
+        dependencySource: "package_manifest"
+      },
+      job: job.toObject(),
+      meta: {
+        trigger: "route"
+      }
     });
 
     return res.status(200).json({
       message: "Supply-chain scan complete",
       executionJobId: String(job._id),
-      count: findings.length,
-      findings
+      testId: executionMeta.testId,
+      count: normalizedFindings.length,
+      findings: normalizedFindings
     });
   } catch (error) {
     if (error?.name === "CastError") {

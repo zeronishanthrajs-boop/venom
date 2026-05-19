@@ -185,6 +185,111 @@ export type EngagementReport = {
   executionJobs: ExecutionJob[];
 };
 
+export type ExecutionDecisionStep = {
+  step: number;
+  check: string;
+  result: string;
+  implication: string;
+};
+
+export type ExecutionDeveloperGuidance = {
+  title: string;
+  steps: string[];
+  testing: string;
+  references: string;
+};
+
+export type DetailedExecutionTrace = {
+  test: {
+    id: string;
+    name: string;
+    tool: string;
+    category: string;
+    executedAt?: string;
+  };
+  parameters: Record<string, unknown>;
+  response: {
+    statusCode: number;
+    headers: Record<string, unknown>;
+    bodySize: number;
+  };
+  result: {
+    status: string;
+    confidence: number;
+    reason: string;
+    severity: string;
+  };
+  executionTimeMs: number;
+  decisionTree: ExecutionDecisionStep[];
+  developerGuidance: ExecutionDeveloperGuidance[];
+};
+
+export type DetailedReportFinding = {
+  id: number | string;
+  title: string;
+  severity: string;
+  type: string;
+  what: string;
+  how: string;
+  whatFound: string;
+  why: string;
+  fix: string;
+  metadata?: Record<string, unknown>;
+  executionTrace?: DetailedExecutionTrace | null;
+  developerNotes?: string;
+  testingGuidance?: string;
+  reproductionSteps?: string[];
+};
+
+export type ExecutionTimelineEntry = {
+  testId: string;
+  testName: string;
+  tool: string;
+  category: string;
+  timeMs: number;
+  result: string;
+  findingCount: number;
+  timestamp?: string;
+};
+
+export type DetailedExecutionReport = {
+  structureVersion: string;
+  engagementId: string;
+  target: string;
+  generatedAt: string;
+  findingsSummary: {
+    total: number;
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+    info?: number;
+  };
+  executionDetails: {
+    totalTests: number;
+    passed: number;
+    failed: number;
+    blocked: number;
+    errored: number;
+    successRate: number;
+    totalTimeMs: number;
+    byTool: Record<
+      string,
+      {
+        count: number;
+        passed: number;
+        failed: number;
+        blocked: number;
+        errored: number;
+        timeMs: number;
+      }
+    >;
+    timeline: ExecutionTimelineEntry[];
+  };
+  detailedFindings: DetailedReportFinding[];
+  passedTests: ExecutionTimelineEntry[];
+};
+
 export type PatternMatch = {
   patternId: string;
   patternName: string;
@@ -836,6 +941,22 @@ export async function fetchEngagementReport(
   );
 
   return parseResponse<EngagementReport>(response);
+}
+
+export async function fetchDetailedExecutionReport(
+  session: VenomSession,
+  engagementId: string
+): Promise<DetailedExecutionReport> {
+  const response = await apiFetch(
+    `/api/reports/${encodeURIComponent(engagementId)}/detailed-with-execution`,
+    {
+      method: "GET",
+      headers: buildHeaders(session),
+      cache: "no-store"
+    }
+  );
+
+  return parseResponse<DetailedExecutionReport>(response);
 }
 
 export async function createEngagement(

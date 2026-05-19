@@ -83,7 +83,8 @@ const endpoints = [
   ["get", `/api/supplychain/${validId}`],
   ["post", `/api/cloudconfig/scan/${validId}`],
   ["get", `/api/cloudconfig/${validId}`],
-  ["get", `/api/reports/${validId}/hardened`]
+  ["get", `/api/reports/${validId}/hardened`],
+  ["get", `/api/reports/${validId}/detailed-with-execution`]
 ];
 
 for (const [method, path] of endpoints) {

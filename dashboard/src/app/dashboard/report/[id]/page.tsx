@@ -8,11 +8,13 @@ import {
   downloadBackendMarkdownReport,
   downloadBackendPdfReport,
   fetchComplianceSummary,
+  fetchDetailedExecutionReport,
   fetchDecisionBrief,
   fetchEngagementReport,
   fetchExecutionJobs,
   fetchOrchestratorStatus,
   type ComplianceSummary,
+  type DetailedExecutionReport,
   type DecisionBrief,
   type EngagementReport,
   type ExecutionJob,
@@ -72,6 +74,20 @@ function statusTone(status: string) {
   }
   if (status === "failed") {
     return "border-rose-500/45 bg-rose-500/10 text-rose-100";
+  }
+  return "border-slate-600 bg-slate-700 text-slate-200";
+}
+
+function executionResultTone(status: string) {
+  const normalized = status.toUpperCase();
+  if (normalized === "PASSED") {
+    return "border-lime-500/45 bg-lime-500/10 text-lime-100";
+  }
+  if (normalized === "VULNERABLE") {
+    return "border-rose-500/45 bg-rose-500/10 text-rose-100";
+  }
+  if (normalized === "BLOCKED") {
+    return "border-amber-500/45 bg-amber-500/10 text-amber-100";
   }
   return "border-slate-600 bg-slate-700 text-slate-200";
 }
@@ -373,6 +389,7 @@ export default function ReportPage() {
 
   const [session, setSession] = useState<VenomSession | null>(null);
   const [report, setReport] = useState<EngagementReport | null>(null);
+  const [detailedReport, setDetailedReport] = useState<DetailedExecutionReport | null>(null);
   const [jobs, setJobs] = useState<ExecutionJob[]>([]);
   const [compliance, setCompliance] = useState<ComplianceSummary | null>(null);
   const [brief, setBrief] = useState<DecisionBrief | null>(null);
@@ -442,14 +459,21 @@ export default function ReportPage() {
 
       try {
         const reportPayload = await fetchEngagementReport(activeSession, engagementId);
-        const [jobsPayload, compliancePayload, briefPayload, orchestratorPayload] =
+        const [
+          jobsPayload,
+          compliancePayload,
+          briefPayload,
+          orchestratorPayload,
+          detailedPayload
+        ] =
           await Promise.all([
             fetchExecutionJobs(activeSession, engagementId),
             fetchComplianceSummary(activeSession, engagementId).catch(() => null),
             fetchDecisionBrief(activeSession, engagementId, reportPayload.engagement.status === "completed").catch(
               () => null
             ),
-            fetchOrchestratorStatus(activeSession).catch(() => null)
+            fetchOrchestratorStatus(activeSession).catch(() => null),
+            fetchDetailedExecutionReport(activeSession, engagementId).catch(() => null)
           ]);
 
         if (cancelled) {
@@ -461,6 +485,7 @@ export default function ReportPage() {
         setCompliance(compliancePayload);
         setBrief(briefPayload);
         setOrchestratorStatus(orchestratorPayload);
+        setDetailedReport(detailedPayload);
         setError("");
       } catch (requestError) {
         if (!cancelled) {
@@ -724,6 +749,122 @@ export default function ReportPage() {
               </div>
             </section>
           </div>
+
+          <section className="mt-4 rounded-2xl border border-slate-700 bg-slate-900/80 p-4">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-lime-200">
+              Scan Execution Details
+            </h2>
+
+            {detailedReport?.executionDetails ? (
+              <>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  <div className="rounded-lg border border-slate-700 bg-slate-950/70 px-2 py-2 text-center">
+                    <p className="text-lg font-semibold text-slate-100">
+                      {detailedReport.executionDetails.totalTests}
+                    </p>
+                    <p className="text-[10px] uppercase tracking-wide text-slate-400">Tests Run</p>
+                  </div>
+                  <div className="rounded-lg border border-lime-500/45 bg-lime-500/10 px-2 py-2 text-center">
+                    <p className="text-lg font-semibold text-lime-100">
+                      {detailedReport.executionDetails.passed}
+                    </p>
+                    <p className="text-[10px] uppercase tracking-wide text-lime-200">Passed</p>
+                  </div>
+                  <div className="rounded-lg border border-rose-500/45 bg-rose-500/10 px-2 py-2 text-center">
+                    <p className="text-lg font-semibold text-rose-100">
+                      {detailedReport.executionDetails.failed}
+                    </p>
+                    <p className="text-[10px] uppercase tracking-wide text-rose-200">Vulnerable</p>
+                  </div>
+                  <div className="rounded-lg border border-amber-500/45 bg-amber-500/10 px-2 py-2 text-center">
+                    <p className="text-lg font-semibold text-amber-100">
+                      {detailedReport.executionDetails.blocked + detailedReport.executionDetails.errored}
+                    </p>
+                    <p className="text-[10px] uppercase tracking-wide text-amber-200">Blocked/Error</p>
+                  </div>
+                  <div className="rounded-lg border border-cyan-500/45 bg-cyan-500/10 px-2 py-2 text-center">
+                    <p className="text-lg font-semibold text-cyan-100">
+                      {detailedReport.executionDetails.totalTimeMs}ms
+                    </p>
+                    <p className="text-[10px] uppercase tracking-wide text-cyan-200">Total Time</p>
+                  </div>
+                </div>
+
+                {detailedReport.executionDetails.timeline.length > 0 ? (
+                  <div className="mt-4">
+                    <p className="text-xs uppercase tracking-[0.08em] text-slate-500">
+                      Execution Timeline
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      {detailedReport.executionDetails.timeline.slice(0, 25).map((item) => (
+                        <div
+                          key={item.testId}
+                          className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${executionResultTone(
+                            item.result
+                          )}`}
+                        >
+                          <div>
+                            <p className="font-semibold">{item.testName}</p>
+                            <p className="text-[11px] opacity-80">{item.tool}</p>
+                          </div>
+                          <div className="text-right">
+                            <p>{item.timeMs}ms</p>
+                            <p className="text-[11px] uppercase tracking-wide">{item.result}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {detailedReport.detailedFindings.length > 0 ? (
+                  <div className="mt-4">
+                    <p className="text-xs uppercase tracking-[0.08em] text-slate-500">
+                      Finding Traceability
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      {detailedReport.detailedFindings.slice(0, 12).map((finding) => (
+                        <article
+                          key={`${finding.id}-${finding.title}`}
+                          className="rounded-lg border border-slate-700 bg-slate-950/65 p-3"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full border border-slate-600 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
+                              {finding.severity}
+                            </span>
+                            <p className="text-sm font-semibold text-slate-100">{finding.title}</p>
+                          </div>
+                          <p className="mt-2 text-xs text-slate-300">
+                            {finding.executionTrace?.result?.reason || finding.whatFound}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-slate-400">
+                            <span>
+                              Test: {finding.executionTrace?.test?.name || "not linked"}
+                            </span>
+                            <span>
+                              Confidence: {Math.round((finding.executionTrace?.result?.confidence || 0) * 100)}%
+                            </span>
+                            <span>
+                              Time: {finding.executionTrace?.executionTimeMs || 0}ms
+                            </span>
+                          </div>
+                          {finding.developerNotes ? (
+                            <p className="mt-2 text-xs text-lime-100">
+                              Developer Notes: {finding.developerNotes}
+                            </p>
+                          ) : null}
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <p className="mt-3 text-sm text-slate-400">
+                Detailed execution trace is not available yet.
+              </p>
+            )}
+          </section>
 
           <section className="mt-4 rounded-2xl border border-slate-700 bg-slate-900/80 p-4">
             <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-lime-200">

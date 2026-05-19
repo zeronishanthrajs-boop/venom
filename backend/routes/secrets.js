@@ -3,11 +3,21 @@ const Engagement = require("../models/Engagement");
 const ExecutionJob = require("../models/ExecutionJob");
 const requireDb = require("../middleware/requireDb");
 const secretsDetectionService = require("../services/secretsDetectionService");
+const executionLoggerService = require("../services/executionLoggerService");
 const { logger } = require("../config/logger");
 
 const router = express.Router();
 
-function toExecutionFinding(finding = {}, index = 0) {
+function buildExecutionMeta() {
+  return {
+    testId: `test-secrets-scan-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    testName: "Secrets Detection Scan",
+    category: "Secrets",
+    tool: "secrets_scan"
+  };
+}
+
+function toExecutionFinding(finding = {}, index = 0, executionMeta = null, targetUrl = "") {
   return {
     id: finding.id || `secret-${index + 1}`,
     severity: finding.severity || "critical",
@@ -20,7 +30,17 @@ function toExecutionFinding(finding = {}, index = 0) {
       "Rotate exposed credential and move secrets to secure storage.",
     source: finding.source || "secrets_detection",
     tags: Array.isArray(finding.tags) ? finding.tags : ["secrets"],
-    metadata: finding.metadata || {}
+    metadata: {
+      ...(finding.metadata || {}),
+      ...(executionMeta
+        ? {
+            executionTestId: executionMeta.testId,
+            testId: executionMeta.testId,
+            executionTestName: executionMeta.testName
+          }
+        : {}),
+      ...(targetUrl ? { targetUrl } : {})
+    }
   };
 }
 
@@ -33,9 +53,13 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
     }
 
     const startedAt = Date.now();
+    const executionMeta = buildExecutionMeta();
     logger.info({ engagementId }, "Starting secrets scan route execution");
     const result = await secretsDetectionService.scanEngagement(engagementId);
     const findings = Array.isArray(result.findings) ? result.findings : [];
+    const normalizedFindings = findings.map((finding, index) =>
+      toExecutionFinding(finding, index, executionMeta, engagement.targetUrl)
+    );
     const hasError = Boolean(result.error) && findings.length === 0;
 
     const job = await ExecutionJob.create({
@@ -47,20 +71,37 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
       finishedAt: new Date(),
       durationMs: Date.now() - startedAt,
       output: {
-        findings,
+        findings: normalizedFindings,
         source: "secrets_detection",
         error: result.error || null
       },
-      findings: findings.map((finding, index) => toExecutionFinding(finding, index)),
+      findings: normalizedFindings,
       errorMessage: hasError ? result.error : "",
       createdBy: req.user?.id || "unknown"
+    });
+    await executionLoggerService.logExecutionJob({
+      engagementId: String(engagement._id),
+      testId: executionMeta.testId,
+      testName: executionMeta.testName,
+      tool: executionMeta.tool,
+      category: executionMeta.category,
+      target: engagement.targetUrl,
+      parameters: {
+        mode: "manual-route",
+        endpoint: "/api/secrets/scan/:engagementId"
+      },
+      job: job.toObject(),
+      meta: {
+        trigger: "route"
+      }
     });
 
     return res.status(200).json({
       message: "Secrets scan complete",
       executionJobId: String(job._id),
-      count: findings.length,
-      findings
+      testId: executionMeta.testId,
+      count: normalizedFindings.length,
+      findings: normalizedFindings
     });
   } catch (error) {
     if (error?.name === "CastError") {

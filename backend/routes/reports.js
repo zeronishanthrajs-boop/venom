@@ -105,6 +105,27 @@ router.get("/:engagementId/hardened", requireDb, async (req, res, next) => {
   }
 });
 
+router.get(
+  "/:engagementId/detailed-with-execution",
+  requireDb,
+  async (req, res, next) => {
+    try {
+      const report = await reportGeneratorService.generateDetailedReport(
+        req.params.engagementId
+      );
+      return res.status(200).json(report);
+    } catch (error) {
+      if (error?.name === "CastError") {
+        return res.status(400).json({ error: "Invalid engagement id" });
+      }
+      if (error?.code === "ENGAGEMENT_NOT_FOUND") {
+        return res.status(404).json({ error: "Engagement not found" });
+      }
+      return next(error);
+    }
+  }
+);
+
 router.post("/:engagementId/email", requireDb, async (req, res, next) => {
   try {
     const recipientEmail = req.body?.recipientEmail;

@@ -13,6 +13,7 @@ const { createApp } = require("../../app");
 const { connectDB, stopInMemoryServer } = require("../../config/db");
 const Engagement = require("../../models/Engagement");
 const ExecutionJob = require("../../models/ExecutionJob");
+const ExecutionLog = require("../../models/ExecutionLog");
 const reportGeneratorService = require("../../services/reportGeneratorService");
 
 const app = createApp();
@@ -49,7 +50,11 @@ test.after(async () => {
 });
 
 test.beforeEach(async () => {
-  await Promise.all([Engagement.deleteMany({}), ExecutionJob.deleteMany({})]);
+  await Promise.all([
+    Engagement.deleteMany({}),
+    ExecutionJob.deleteMany({}),
+    ExecutionLog.deleteMany({})
+  ]);
 });
 
 test("generateReport builds What/How/What Found/Why/Fix structure", async () => {
@@ -141,4 +146,129 @@ test("GET /api/reports/:engagementId/hardened returns structured report", async 
   assert.ok(Array.isArray(response.body.findings));
   assert.ok(response.body.findings[0].what);
   assert.ok(response.body.findings[0].fix);
+});
+
+test("generateDetailedReport includes execution summary and trace details", async () => {
+  const engagement = await Engagement.create(buildEngagementPayload("Detailed report service"));
+  const testId = "test-csp-001";
+
+  await ExecutionJob.create({
+    engagementId: engagement._id,
+    toolId: "http_headers_probe",
+    targetUrl: engagement.targetUrl,
+    status: "success",
+    durationMs: 284,
+    findings: [
+      {
+        id: "header-1",
+        severity: "medium",
+        type: "MISCONFIGURATION",
+        category: "Security Headers",
+        title: "Missing Content-Security-Policy Header",
+        description: "Response did not include a CSP header.",
+        recommendation: "Define a least-privilege CSP policy.",
+        source: "http_headers_probe",
+        metadata: {
+          testId,
+          executionTestId: testId,
+          executionTestName: "CSP Header Check",
+          targetUrl: engagement.targetUrl
+        }
+      }
+    ]
+  });
+
+  await ExecutionLog.create({
+    engagementId: engagement._id,
+    testId,
+    testName: "CSP Header Check",
+    tool: "http_headers_probe",
+    category: "Security Headers",
+    target: engagement.targetUrl,
+    parameters: {
+      method: "GET",
+      url: engagement.targetUrl,
+      headers: {
+        "User-Agent": "VENOM/0.8"
+      }
+    },
+    response: {
+      statusCode: 200,
+      headers: {
+        "x-content-type-options": "nosniff"
+      },
+      bodySize: 5120
+    },
+    result: {
+      status: "VULNERABLE",
+      confidence: 0.95,
+      reason: "CSP header absent from response",
+      severity: "medium"
+    },
+    executionTimeMs: 284,
+    findingCount: 1
+  });
+
+  await ExecutionLog.create({
+    engagementId: engagement._id,
+    testId: "test-sqli-001",
+    testName: "SQL Injection Probe",
+    tool: "sqlmap_detect",
+    category: "Injection and Vulnerability",
+    target: engagement.targetUrl,
+    result: {
+      status: "PASSED",
+      confidence: 0.9,
+      reason: "No injectable parameters detected.",
+      severity: "low"
+    },
+    executionTimeMs: 1200,
+    findingCount: 0
+  });
+
+  const report = await reportGeneratorService.generateDetailedReport(engagement._id);
+
+  assert.equal(report.structureVersion, "phase1.5.v1");
+  assert.equal(report.executionDetails.totalTests, 2);
+  assert.equal(report.executionDetails.failed, 1);
+  assert.equal(report.executionDetails.passed, 1);
+  assert.ok(Array.isArray(report.detailedFindings));
+  assert.ok(report.detailedFindings.length >= 1);
+  assert.equal(report.detailedFindings[0].executionTrace.test.id, testId);
+  assert.equal(
+    report.detailedFindings[0].executionTrace.result.status,
+    "VULNERABLE"
+  );
+  assert.ok(Array.isArray(report.detailedFindings[0].reproductionSteps));
+});
+
+test("GET /api/reports/:engagementId/detailed-with-execution returns execution details", async () => {
+  const engagement = await Engagement.create(buildEngagementPayload("Detailed report route"));
+
+  await ExecutionLog.create({
+    engagementId: engagement._id,
+    testId: "test-cors-001",
+    testName: "CORS Misconfiguration Check",
+    tool: "http_headers_probe",
+    category: "Security Headers",
+    target: engagement.targetUrl,
+    result: {
+      status: "PASSED",
+      confidence: 0.92,
+      reason: "Origin restrictions validated.",
+      severity: "low"
+    },
+    executionTimeMs: 320,
+    findingCount: 0
+  });
+
+  const response = await request(app)
+    .get(`/api/reports/${engagement._id}/detailed-with-execution`)
+    .set(authHeaders());
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.structureVersion, "phase1.5.v1");
+  assert.ok(response.body.executionDetails);
+  assert.equal(response.body.executionDetails.totalTests, 1);
+  assert.ok(Array.isArray(response.body.passedTests));
 });
