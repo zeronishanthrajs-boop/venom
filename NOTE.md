@@ -132,3 +132,54 @@
 - [2026-05-19 15:10:50 +05:30] Rebuild sequence recommendation: create execution-log model first, then execution logger service, then orchestrator trace wiring, then report detailed-mode generation, then detailed report route, then dashboard fetch/render integration, then validation suites.
 - [2026-05-19 15:10:50 +05:30] Trace-linking requirement: every finding-producing scan must assign a stable test identifier and persist that identifier into finding metadata so detailed reports can resolve deterministic trace evidence.
 - [2026-05-19 15:10:50 +05:30] Regression guard requirement: after integration, run backend integration suite, backend full suite, dashboard build, and dashboard tests in that order; release only when all four validations pass with zero failures.
+
+## Phase 2 + CI/CD Execution Ledger (Feature 5, 6, 7)
+
+- [2026-05-20 13:05:31 +05:30] Continuity check completed: all previous NOTE.md data was preserved; this section appends Phase 2 and CI/CD details without removing historical Phase 1/1.5 records.
+- [2026-05-20 13:05:31 +05:30] Phase 2 scope executed: backend-only implementation of API Security Testing, Container Security Scanning, Compliance Mapping, and CI/CD automation workflows.
+- [2026-05-20 13:05:31 +05:30] Feature 5 completed: API security scanner service implemented with endpoint discovery (OpenAPI/Swagger + fallback probing), missing-auth checks, BOLA checks, rate-limit checks, POST input-reflection checks, GraphQL introspection checks, normalized findings, and execution trace logging.
+- [2026-05-20 13:05:31 +05:30] Feature 5 route integration completed: `/api/apis/scan/:engagementId` and `/api/apis/:engagementId` added with existing auth pattern, execution-job persistence, and summary response format.
+- [2026-05-20 13:05:31 +05:30] Feature 6 completed: container security scanner service implemented for GitHub repo targets with Dockerfile, docker-compose, and Kubernetes manifest checks, known vulnerable base image map, non-fatal missing-file behavior, and single execution-trace logging per container scan.
+- [2026-05-20 13:05:31 +05:30] Feature 6 route integration completed: `/api/container/scan/:engagementId` and `/api/container/:engagementId` added with existing auth pattern and execution-job persistence.
+- [2026-05-20 13:05:31 +05:30] Feature 7 completed: compliance mapper service implemented with OWASP 2021, PCI-DSS, HIPAA, and CIS control mappings; per-finding `mapFinding` and engagement-level `generateComplianceReport` added.
+- [2026-05-20 13:05:31 +05:30] Engagement persistence completed: `complianceReport` field added to engagement model and populated after orchestration scan stages.
+- [2026-05-20 13:05:31 +05:30] Orchestrator wiring completed: API scan and container scan added to post-scan flow with non-blocking try/catch behavior, then compliance report generation and save to engagement.
+- [2026-05-20 13:05:31 +05:30] Report integration completed: report routes now include compliance section from persisted `engagement.complianceReport`, with on-the-fly generation fallback for legacy engagements.
+
+## Phase 2 + CI/CD Files Added
+
+- [2026-05-20 13:05:31 +05:30] Added backend service: `backend/services/apiSecurityService.js`.
+- [2026-05-20 13:05:31 +05:30] Added backend route: `backend/routes/apis.js`.
+- [2026-05-20 13:05:31 +05:30] Added backend service: `backend/services/containerSecurityService.js`.
+- [2026-05-20 13:05:31 +05:30] Added backend route: `backend/routes/container.js`.
+- [2026-05-20 13:05:31 +05:30] Added backend service: `backend/services/complianceMapperService.js`.
+- [2026-05-20 13:05:31 +05:30] Added backend integration test: `backend/tests/integration/apiSecurity.test.js`.
+- [2026-05-20 13:05:31 +05:30] Added backend integration test: `backend/tests/integration/containerSecurity.test.js`.
+- [2026-05-20 13:05:31 +05:30] Added backend integration test: `backend/tests/integration/complianceMapping.test.js`.
+- [2026-05-20 13:05:31 +05:30] Added workflow: `.github/workflows/ci.yml`.
+- [2026-05-20 13:05:31 +05:30] Added workflow: `.github/workflows/pr-check.yml`.
+
+## Phase 2 + CI/CD Files Updated
+
+- [2026-05-20 13:05:31 +05:30] Updated `backend/app.js` to mount `/api/apis` and `/api/container` route groups.
+- [2026-05-20 13:05:31 +05:30] Updated `backend/services/orchestrator.js` for API scan, container scan, and compliance-report save flow.
+- [2026-05-20 13:05:31 +05:30] Updated `backend/models/Engagement.js` to include `complianceReport` field.
+- [2026-05-20 13:05:31 +05:30] Updated `backend/routes/reports.js` to return compliance section in hardened/detailed reports.
+- [2026-05-20 13:05:31 +05:30] Updated `backend/tests/integration/routeAuthCoverage.test.js` for new `/api/apis` and `/api/container` endpoint auth checks.
+
+## Phase 2 Verification and Release Log
+
+- [2026-05-20 13:05:31 +05:30] Backend full suite executed after Phase 2 integration with `npm.cmd test`; result: pass, 184 tests passed, 0 failed.
+- [2026-05-20 13:05:31 +05:30] Backend integration suite executed after Phase 2 integration with `npm.cmd run test:integration`; result: pass, 126 tests passed, 0 failed.
+- [2026-05-20 13:05:31 +05:30] Final route wiring check completed: `/api/apis` and `/api/container` confirmed mounted in backend app.
+- [2026-05-20 13:05:31 +05:30] Final orchestration check completed: API scan + container scan + compliance report generation confirmed wired with non-blocking error handling.
+- [2026-05-20 13:05:31 +05:30] Local report-shape verification run completed: hardened report returned status 200 with 7 findings and populated OWASP/compliance summary including API + container + existing finding types.
+- [2026-05-20 13:05:31 +05:30] Git commit created: `f49dc92` with message `Phase 2: API Security, Container Security, Compliance Mapping, CI/CD pipeline`.
+- [2026-05-20 13:05:31 +05:30] Git push completed: `origin/main` advanced from `0765bf8` to `f49dc92`.
+
+## Phase 2 Issue and Resolution Log
+
+- [2026-05-20 13:05:31 +05:30] Issue identified: one compliance mapping assertion failed for BOLA due to incomplete type matching condition.
+- [2026-05-20 13:05:31 +05:30] Resolution applied: compliance mapper matching logic expanded to include `AUTHORIZATION` signals for BOLA mappings; full test suites re-run and passed.
+- [2026-05-20 13:05:31 +05:30] Issue identified: transient git staging lock/permission failure during add operation.
+- [2026-05-20 13:05:31 +05:30] Resolution applied: staging retried successfully and commit/push completed without repository state loss.
