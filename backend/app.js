@@ -33,6 +33,8 @@ const adminRouter = require("./routes/admin");
 const secretsRouter = require("./routes/secrets");
 const supplyChainRouter = require("./routes/supplychain");
 const cloudConfigRouter = require("./routes/cloudconfig");
+const apiSecurityRouter = require("./routes/apis");
+const containerSecurityRouter = require("./routes/container");
 
 function getAllowedOrigins() {
   const csv =
@@ -207,6 +209,8 @@ function createApp() {
   app.use("/api/secrets", authMiddleware, activityLogger, secretsRouter);
   app.use("/api/supplychain", authMiddleware, activityLogger, supplyChainRouter);
   app.use("/api/cloudconfig", authMiddleware, activityLogger, cloudConfigRouter);
+  app.use("/api/apis", authMiddleware, activityLogger, apiSecurityRouter);
+  app.use("/api/container", authMiddleware, activityLogger, containerSecurityRouter);
 
   app.use(errorHandler);
   return app;

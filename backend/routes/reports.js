@@ -1,5 +1,6 @@
 const express = require("express");
 const requireDb = require("../middleware/requireDb");
+const Engagement = require("../models/Engagement");
 const { logger } = require("../config/logger");
 const {
   emailReport,
@@ -8,8 +9,17 @@ const {
   generatePdfReport
 } = require("../services/reportGenerator");
 const reportGeneratorService = require("../services/reportGeneratorService");
+const complianceMapperService = require("../services/complianceMapperService");
 
 const router = express.Router();
+
+async function resolveComplianceSection(engagementId, reportFindings = []) {
+  const engagement = await Engagement.findById(engagementId).lean();
+  if (engagement?.complianceReport) {
+    return engagement.complianceReport;
+  }
+  return complianceMapperService.generateComplianceReport(reportFindings);
+}
 
 router.get("/:engagementId/pdf", requireDb, async (req, res) => {
   try {
@@ -93,7 +103,14 @@ router.get("/:engagementId/html", requireDb, async (req, res, next) => {
 router.get("/:engagementId/hardened", requireDb, async (req, res, next) => {
   try {
     const report = await reportGeneratorService.generateReport(req.params.engagementId);
-    return res.status(200).json(report);
+    const compliance = await resolveComplianceSection(
+      req.params.engagementId,
+      report.findings || []
+    );
+    return res.status(200).json({
+      ...report,
+      compliance
+    });
   } catch (error) {
     if (error?.name === "CastError") {
       return res.status(400).json({ error: "Invalid engagement id" });
@@ -113,7 +130,14 @@ router.get(
       const report = await reportGeneratorService.generateDetailedReport(
         req.params.engagementId
       );
-      return res.status(200).json(report);
+      const compliance = await resolveComplianceSection(
+        req.params.engagementId,
+        report.findings || []
+      );
+      return res.status(200).json({
+        ...report,
+        compliance
+      });
     } catch (error) {
       if (error?.name === "CastError") {
         return res.status(400).json({ error: "Invalid engagement id" });

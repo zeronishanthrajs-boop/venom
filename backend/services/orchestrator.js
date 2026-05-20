@@ -10,6 +10,9 @@ const { createSnapshot, detectChanges } = require("./changeDetector");
 const secretsDetectionService = require("./secretsDetectionService");
 const supplyChainService = require("./supplyChainService");
 const cloudMisconfigService = require("./cloudMisconfigService");
+const apiSecurityService = require("./apiSecurityService");
+const containerSecurityService = require("./containerSecurityService");
+const complianceMapperService = require("./complianceMapperService");
 const reportGeneratorService = require("./reportGeneratorService");
 const executionLoggerService = require("./executionLoggerService");
 const { logger } = require("../config/logger");
@@ -165,6 +168,16 @@ function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function flattenJobFindings(jobs = []) {
+  return jobs.flatMap((job) => {
+    const topLevel = asArray(job?.findings);
+    if (topLevel.length > 0) {
+      return topLevel;
+    }
+    return asArray(job?.output?.findings);
+  });
+}
+
 function buildExecutionTestId(toolId, phase = "scan") {
   return `test-${phase}-${String(toolId || "unknown")}-${Date.now()}-${Math.floor(
     Math.random() * 1000
@@ -181,6 +194,12 @@ function toExecutionCategory(toolId) {
   }
   if (id.includes("cloud")) {
     return "Cloud Configuration";
+  }
+  if (id.includes("api_security")) {
+    return "API Security";
+  }
+  if (id.includes("container_security")) {
+    return "Container Security";
   }
   if (id.includes("header") || id.includes("tls") || id.includes("dns")) {
     return "Security Headers";
@@ -209,6 +228,8 @@ function toExecutionTestName(toolId) {
     secrets_scan: "Secrets Detection Scan",
     supply_chain_scan: "Supply Chain Dependency Scan",
     cloud_misconfig_scan: "Cloud Misconfiguration Scan",
+    api_security_scan: "API Security Scan",
+    container_security_scan: "Container Security Scan",
     hardened_report_generation: "Hardened Report Generation"
   };
   return map[String(toolId || "")] || `Execution of ${toolId}`;
@@ -442,6 +463,133 @@ async function runPostExecutionScans(engagement, userId) {
   }
 
   try {
+    const testId = buildExecutionTestId("api_security_scan", "post");
+    const testName = toExecutionTestName("api_security_scan");
+    const apiResult = await apiSecurityService.scanEngagement(
+      engagementId,
+      engagement.targetUrl
+    );
+    const apiFindings = asArray(apiResult.findings);
+    const apiJob = await persistScanJob({
+      engagement,
+      toolId: "api_security_scan",
+      findings: apiFindings,
+      output: {
+        source: "api_security",
+        scannedEndpoints: apiResult.scannedEndpoints || [],
+        endpointCount: apiResult.endpointCount || 0,
+        error: apiResult.error || null
+      },
+      createdBy: userId,
+      failed: Boolean(apiResult.error) && apiFindings.length === 0,
+      failureMessage: apiResult.error || "",
+      findingDefaults: {
+        idPrefix: "api",
+        severity: "medium",
+        category: "API Security",
+        source: "api_security",
+        tags: ["api-security"]
+      },
+      executionMeta: {
+        testId,
+        testName
+      }
+    });
+    await executionLoggerService.logExecutionJob({
+      engagementId: String(engagement._id),
+      testId,
+      testName,
+      tool: "api_security_scan",
+      category: toExecutionCategory("api_security_scan"),
+      target: engagement.targetUrl,
+      parameters: {
+        mode: "post-orchestration",
+        source: "api_security",
+        endpointCount: apiResult.endpointCount || 0
+      },
+      job: apiJob.toObject(),
+      meta: {
+        scanner: "VENOM API Scanner"
+      }
+    });
+    summaries.push({
+      toolId: "api_security_scan",
+      findings: apiFindings.length,
+      error: apiResult.error || null
+    });
+  } catch (error) {
+    logger.warn(
+      { engagementId, error: error?.message || String(error) },
+      "API security post-step failed"
+    );
+  }
+
+  try {
+    const testId = buildExecutionTestId("container_security_scan", "post");
+    const testName = toExecutionTestName("container_security_scan");
+    const containerResult = await containerSecurityService.scanEngagement(
+      engagementId,
+      engagement.targetUrl
+    );
+    const containerFindings = asArray(containerResult.findings);
+    const containerJob = await persistScanJob({
+      engagement,
+      toolId: "container_security_scan",
+      findings: containerFindings,
+      output: {
+        source: "container_security",
+        filesFound: containerResult.filesFound || [],
+        checksRan: containerResult.checksRan || [],
+        skipped: Boolean(containerResult.skipped),
+        reason: containerResult.reason || "",
+        error: containerResult.error || null
+      },
+      createdBy: userId,
+      failed: Boolean(containerResult.error) && containerFindings.length === 0,
+      failureMessage: containerResult.error || "",
+      findingDefaults: {
+        idPrefix: "container",
+        severity: "medium",
+        category: "Container Security",
+        source: "container_security",
+        tags: ["container-security"]
+      },
+      executionMeta: {
+        testId,
+        testName
+      }
+    });
+    await executionLoggerService.logExecutionJob({
+      engagementId: String(engagement._id),
+      testId,
+      testName,
+      tool: "container_security_scan",
+      category: toExecutionCategory("container_security_scan"),
+      target: engagement.targetUrl,
+      parameters: {
+        mode: "post-orchestration",
+        source: "container_security",
+        filesFound: containerResult.filesFound || [],
+        checksRan: containerResult.checksRan || []
+      },
+      job: containerJob.toObject(),
+      meta: {
+        scanner: "VENOM Container Scanner"
+      }
+    });
+    summaries.push({
+      toolId: "container_security_scan",
+      findings: containerFindings.length,
+      error: containerResult.error || null
+    });
+  } catch (error) {
+    logger.warn(
+      { engagementId, error: error?.message || String(error) },
+      "Container security post-step failed"
+    );
+  }
+
+  try {
     const testId = buildExecutionTestId("hardened_report_generation", "post");
     const testName = toExecutionTestName("hardened_report_generation");
     const hardenedReport = await reportGeneratorService.generateReport(engagementId);
@@ -520,6 +668,12 @@ async function persistGeneratedPlan(engagement, planningResult, createdBy) {
     rawModelOutput: planningResult.rawModelOutput || "",
     createdBy
   });
+}
+
+async function buildComplianceReportForEngagement(engagementId) {
+  const jobs = await ExecutionJob.find({ engagementId }).sort({ createdAt: -1 }).lean();
+  const findings = flattenJobFindings(jobs);
+  return complianceMapperService.generateComplianceReport(findings);
 }
 
 async function orchestrateSingle(engagementId, userId = "unknown") {
@@ -706,10 +860,25 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
       engagementId
     });
     const postScanResults = await runPostExecutionScans(engagement, userId);
+    let complianceReport = null;
+    try {
+      complianceReport = await buildComplianceReportForEngagement(String(engagement._id));
+    } catch (error) {
+      logger.warn(
+        { engagementId, error: error?.message || String(error) },
+        "Compliance report generation failed"
+      );
+    }
 
     await Engagement.updateOne(
       { _id: engagement._id },
-      { $set: { status: "completed", completedAt: new Date() } }
+      {
+        $set: {
+          status: "completed",
+          completedAt: new Date(),
+          complianceReport
+        }
+      }
     );
 
     await createSnapshot(
@@ -741,7 +910,8 @@ async function orchestrateSingle(engagementId, userId = "unknown") {
       toolSequence,
       executionResults,
       learningResult,
-      postScanResults
+      postScanResults,
+      complianceReport
     };
   } catch (error) {
     await Engagement.updateOne(

@@ -97,6 +97,10 @@ const engagementSchema = new mongoose.Schema(
       type: Boolean,
       default: true
     },
+    complianceReport: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null
+    },
     completedAt: Date,
     createdBy: {
       type: String,

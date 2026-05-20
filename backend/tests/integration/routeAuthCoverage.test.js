@@ -83,6 +83,10 @@ const endpoints = [
   ["get", `/api/supplychain/${validId}`],
   ["post", `/api/cloudconfig/scan/${validId}`],
   ["get", `/api/cloudconfig/${validId}`],
+  ["post", `/api/apis/scan/${validId}`],
+  ["get", `/api/apis/${validId}`],
+  ["post", `/api/container/scan/${validId}`],
+  ["get", `/api/container/${validId}`],
   ["get", `/api/reports/${validId}/hardened`],
   ["get", `/api/reports/${validId}/detailed-with-execution`]
 ];
