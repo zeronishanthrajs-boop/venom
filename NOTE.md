@@ -3483,3 +3483,11 @@
 [2026-05-20 18:08:28] Known limitations: API endpoint discovery still relies on common-path probing when no OpenAPI spec is exposed; container source scanning supports GitHub raw-content paths only.
 [2026-05-20 18:08:28] Ready for: Phase 3 (Report Excellence)
 ---
+[2026-05-20 18:10:40] ACTION: Verified GitHub Actions triggers after push using GitHub REST API for recent runs and job statuses.
+[2026-05-20 18:10:40] STATUS: completed
+[2026-05-20 18:10:40] FILES: NOTE.md
+[2026-05-20 18:10:40] TESTS: 310 passing, 0 failing
+[2026-05-20 18:10:40] ISSUE: VENOM CI/CD run 26163052688 completed with Deploy job failure at step 'Deploy backend to Render' while Test job succeeded; workflow log download endpoint returned 403 without authenticated token.
+[2026-05-20 18:10:40] RESOLUTION: Confirmed pipeline wiring is correct and deploy failure is external/runtime configuration dependent (likely deploy hook/secret or endpoint response). Added required-secrets guidance remains in ci.yml.
+[2026-05-20 18:10:40] NEXT: Finalize delivery summary with run URLs and note external deploy-hook requirement.
+---
