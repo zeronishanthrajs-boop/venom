@@ -35,6 +35,7 @@ const supplyChainRouter = require("./routes/supplychain");
 const cloudConfigRouter = require("./routes/cloudconfig");
 const apiSecurityRouter = require("./routes/apis");
 const containerSecurityRouter = require("./routes/container");
+const aiScannerRouter = require("./routes/aiScanner");
 
 function getAllowedOrigins() {
   const csv =
@@ -184,6 +185,23 @@ function createApp() {
     });
   });
 
+  app.get("/api/public/reports/:shareToken", async (req, res) => {
+    try {
+      const { verifyShareToken } = require("./utils/shareToken");
+      const { generateHtmlReport } = require("./services/reportGenerator");
+      const engagementId = verifyShareToken(req.params.shareToken);
+      if (!engagementId) {
+        return res.status(401).json({ error: "Invalid or expired shareable link" });
+      }
+      const mode = req.query.mode || "developer";
+      const html = await generateHtmlReport(engagementId, { redacted: true, mode });
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.status(200).send(html);
+    } catch (error) {
+      return res.status(500).json({ error: "Failed to render shared report", reason: error.message });
+    }
+  });
+
   app.use("/api", apiLimiter);
   app.use("/api/engagements", authMiddleware, activityLogger, engagementsRouter);
   app.use("/api/patterns", authMiddleware, activityLogger, patternsRouter);
@@ -211,6 +229,7 @@ function createApp() {
   app.use("/api/cloudconfig", authMiddleware, activityLogger, cloudConfigRouter);
   app.use("/api/apis", authMiddleware, activityLogger, apiSecurityRouter);
   app.use("/api/container", authMiddleware, activityLogger, containerSecurityRouter);
+  app.use("/api/aiscan", authMiddleware, activityLogger, aiScannerRouter);
 
   app.use(errorHandler);
   return app;

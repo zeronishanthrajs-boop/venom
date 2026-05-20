@@ -11,6 +11,7 @@ const ExecutionJob = require("../models/ExecutionJob");
 const Plan = require("../models/Plan");
 const { generateComplianceSummary } = require("./complianceMapper");
 const { deduplicateFindings } = require("../utils/deduplicateFindings");
+const { callGeminiText } = require("./geminiClient");
 
 const TEMPLATE_PATH = path.join(__dirname, "../templates/report.html");
 
@@ -161,6 +162,179 @@ function buildExecutionSummary(jobs = []) {
   };
 }
 
+// Handlebars helpers registration
+if (!handlebars.helpers.eq) {
+  handlebars.registerHelper("eq", function (a, b) {
+    return a === b;
+  });
+}
+if (!handlebars.helpers.gt) {
+  handlebars.registerHelper("gt", function (a, b) {
+    return Number(a) > Number(b);
+  });
+}
+
+function generateHeuristicAttackNarrative(findings, targetUrl) {
+  if (!findings || findings.length === 0) {
+    return "No significant security vulnerabilities were identified. The application posture is currently clean, presenting a minimal attack surface.";
+  }
+
+  const criticals = findings.filter(f => String(f.severity).toLowerCase() === "critical");
+  const highs = findings.filter(f => String(f.severity).toLowerCase() === "high");
+  const mediums = findings.filter(f => String(f.severity).toLowerCase() === "medium");
+
+  const narrativeParts = [];
+
+  if (criticals.length > 0) {
+    narrativeParts.push(`An attacker targeting ${targetUrl} would likely begin by exploiting the critical vulnerabilities discovered, such as ${criticals[0].title}. By targeting these high-impact endpoints or flaws, the threat actor could gain unauthorized administrative access, execute remote commands, or bypass core authentication systems.`);
+  }
+
+  if (highs.length > 0) {
+    const context = criticals.length > 0 ? "Following initial access, the" : "An attacker targeting the application would leverage the";
+    narrativeParts.push(`${context} high-severity issues (e.g., ${highs[0].title}) to escalate privileges, extract sensitive database schemas, or pivot into backend systems. This allows the attacker to maintain persistent control over the infrastructure.`);
+  }
+
+  if (mediums.length > 0) {
+    const context = (criticals.length > 0 || highs.length > 0) ? "To reinforce control or exfiltrate credentials, the attacker could exploit" : "The attacker would exploit";
+    narrativeParts.push(`${context} medium-severity gaps like ${mediums[0].title} to perform lateral movement, intercept communication, or gain internal infrastructure insights.`);
+  }
+
+  if (narrativeParts.length === 0) {
+    narrativeParts.push("The scan identified low-severity and informational hygiene findings. While these do not present immediate compromise vectors, they weaken defense-in-depth and should be hardened to prevent information leakage or reconnaissance scanning.");
+  }
+
+  return narrativeParts.join(" ");
+}
+
+async function generateAttackNarrative(findings, targetUrl) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || process.env.ENABLE_ATTACK_NARRATIVE_AI === "false" || process.env.NODE_ENV === "test") {
+    return generateHeuristicAttackNarrative(findings, targetUrl);
+  }
+
+  const prompt = `You are a Lead Penetration Tester. Review the following security findings for target ${targetUrl}:
+${JSON.stringify(findings.map(f => ({ title: f.title, severity: f.severity, category: f.category, description: f.description })), null, 2)}
+
+Provide a concise, plain English narrative (2-3 paragraphs) of how an attacker would chain these findings to compromise the target application. Be realistic, highlight the business risk, and keep it readable for non-technical leadership. Do not write generic text. Output only the paragraphs.`;
+
+  try {
+    const response = await callGeminiText({
+      apiKey,
+      model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+      userPrompt: prompt,
+      maxOutputTokens: 500,
+      temperature: 0.3
+    });
+    return response.text.trim();
+  } catch (error) {
+    return generateHeuristicAttackNarrative(findings, targetUrl);
+  }
+}
+
+async function generateAiExecutiveSummary(context) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const targetUrl = context.engagement.targetUrl;
+  const findingsSummary = `${context.severity.critical} Critical, ${context.severity.high} High, ${context.severity.medium} Medium, ${context.severity.low} Low.`;
+  
+  if (!apiKey || process.env.ENABLE_EXEC_SUMMARY_AI === "false" || process.env.NODE_ENV === "test") {
+    return `Security assessment for ${targetUrl} identified ${findingsSummary} findings. The overall posture requires attention to mitigate potential exploit vectors in production.`;
+  }
+
+  const prompt = `You are a Lead Security Auditor. Write a professional, unique, 1-paragraph Executive Summary (max 120 words) for a security scan of ${targetUrl}. 
+Scan stats: ${findingsSummary} findings detected.
+The summary should highlight the overall posture, key concerns, and high-level recommendation. Output only the paragraph.`;
+
+  try {
+    const response = await callGeminiText({
+      apiKey,
+      model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+      userPrompt: prompt,
+      maxOutputTokens: 300,
+      temperature: 0.3
+    });
+    return response.text.trim();
+  } catch (error) {
+    return `Security assessment for ${targetUrl} identified ${findingsSummary} findings. The overall posture requires attention to mitigate potential exploit vectors in production.`;
+  }
+}
+
+function computeEPSAndROI(findings) {
+  let totalFixEffortHours = 0;
+  let totalBreachCostSaved = 0;
+
+  const mappedFindings = findings.map(finding => {
+    const severity = String(finding.severity || "low").toLowerCase();
+    
+    let eps = 10;
+    if (severity === "critical") eps = 85;
+    else if (severity === "high") eps = 65;
+    else if (severity === "medium") eps = 40;
+    else if (severity === "low") eps = 20;
+
+    if (finding.cve) {
+      eps += 15;
+    }
+    if (finding.exploitationPotential && String(finding.exploitationPotential).toLowerCase().includes("easy")) {
+      eps += 10;
+    }
+    eps = Math.min(eps, 99);
+
+    let fixEffortHours = 2;
+    if (severity === "critical") fixEffortHours = 8;
+    else if (severity === "high") fixEffortHours = 6;
+    else if (severity === "medium") fixEffortHours = 4;
+
+    totalFixEffortHours += fixEffortHours;
+
+    let breachCost = 1500;
+    if (severity === "critical") breachCost = 45000;
+    else if (severity === "high") breachCost = 15000;
+    else if (severity === "medium") breachCost = 5000;
+
+    totalBreachCostSaved += breachCost;
+
+    return {
+      ...finding,
+      eps,
+      fixEffortHours,
+      breachCost
+    };
+  });
+
+  const overallEps = findings.length > 0 
+    ? Math.round(mappedFindings.reduce((sum, f) => sum + f.eps, 0) / findings.length)
+    : 0;
+
+  const riskReductionPercent = findings.length > 0 ? Math.round(90 - (10 / (findings.length + 1))) : 100;
+
+  return {
+    findings: mappedFindings,
+    overallEps,
+    totalFixEffortHours,
+    totalBreachCostSaved,
+    riskReductionPercent
+  };
+}
+
+function computeFixRoadmap(findings) {
+  const week1 = [];
+  const month1 = [];
+  const quarter = [];
+
+  for (const f of findings) {
+    const sev = String(f.severity || "low").toLowerCase();
+    if (sev === "critical" || sev === "high") {
+      week1.push(f);
+    } else if (sev === "medium") {
+      month1.push(f);
+    } else {
+      quarter.push(f);
+    }
+  }
+
+  return { week1, month1, quarter };
+}
+
 async function loadReportContext(engagementId) {
   const engagement = await Engagement.findById(engagementId).lean();
   if (!engagement) {
@@ -179,14 +353,46 @@ async function loadReportContext(engagementId) {
   const execution = buildExecutionSummary(jobs);
   const compliance = generateComplianceSummary(findings);
 
+  // Compute intelligence layer
+  const {
+    findings: enrichedFindings,
+    overallEps,
+    totalFixEffortHours,
+    totalBreachCostSaved,
+    riskReductionPercent
+  } = computeEPSAndROI(findings);
+
+  const roadmap = computeFixRoadmap(enrichedFindings);
+  const attackNarrative = await generateAttackNarrative(enrichedFindings, engagement.targetUrl);
+  const aiExecutiveSummary = await generateAiExecutiveSummary({ engagement, severity });
+
+  // Compute Evidence SHA-256 hash
+  const rawDataForHash = JSON.stringify({
+    engagementId: String(engagement._id),
+    targetUrl: engagement.targetUrl,
+    findingsCount: enrichedFindings.length,
+    findingsKeys: enrichedFindings.map(f => `${f.title}:${f.severity}`)
+  });
+  const evidenceHash = crypto.createHash("sha256").update(rawDataForHash).digest("hex");
+
   return {
     engagement,
     plans,
     jobs,
-    findings,
+    findings: enrichedFindings,
     severity,
     execution,
-    compliance
+    compliance,
+    intelligence: {
+      overallEps,
+      totalFixEffortHours,
+      totalBreachCostSaved,
+      riskReductionPercent,
+      attackNarrative,
+      aiExecutiveSummary,
+      roadmap,
+      evidenceHash
+    }
   };
 }
 
@@ -255,6 +461,9 @@ function buildMarkdownReport(context) {
 
 function toTemplateData(context, options = {}) {
   const redacted = Boolean(options.redacted);
+  const managerMode = options.mode === "manager";
+  const developerMode = !managerMode;
+
   const generatedAt = new Date().toLocaleString("en-IN", {
     timeZone: "Asia/Kolkata"
   });
@@ -275,7 +484,18 @@ function toTemplateData(context, options = {}) {
       }))
     : [];
 
+  const executionTimeline = Array.isArray(context.jobs)
+    ? context.jobs.map(job => ({
+        tool: job.toolId || "scan",
+        type: job.type || "Automated Probe",
+        status: job.status || "completed",
+        durationMs: Number(job.durationMs || 100)
+      }))
+    : [];
+
   return {
+    managerMode,
+    developerMode,
     engagementName: context.engagement.name || "Unnamed",
     targetUrl: redacted
       ? redactTargetUrl(context.engagement.targetUrl)
@@ -304,19 +524,57 @@ function toTemplateData(context, options = {}) {
     totalJobs: context.execution.totalJobs,
     avgDurationMs: context.execution.avgDurationMs,
 
-    findings: context.findings.map((finding) => ({
-      ...finding,
-      severity: String(finding.severity || "info").toUpperCase(),
-      severityClass:
-        SEVERITY_CLASS[String(finding.severity || "INFO").toUpperCase()] || "info",
-      tagsStr: Array.isArray(finding.tags) ? finding.tags.join(", ") : "",
-      tool: finding.tool || finding._toolId || "",
-      recommendation: finding.recommendation || finding.remediation || "",
-      count: Number(finding.count || 0) > 1 ? Number(finding.count) : null
-    })),
+    findings: context.findings.map((finding, idx) => {
+      const severity = String(finding.severity || "info").toUpperCase();
+      
+      const what = finding.description || finding.what || "No description provided.";
+      const how = finding.evidence || finding.how || "Automated check signature matched.";
+      const whatFound = finding.evidence || finding.whatFound || "No evidence snippet recorded.";
+      const why = finding.why || `This presents a potential vector for security compromise in ${finding.category || "the system"}.`;
+      const fix = finding.recommendation || finding.remediation || finding.fix || "Remediate according to standard hardening guidelines.";
+
+      const reproductionSteps = Array.isArray(finding.reproductionSteps)
+        ? finding.reproductionSteps
+        : [
+            `Navigate/target: ${context.engagement.targetUrl || "application root"}`,
+            `Trigger condition/payload: ${finding.evidence || "Use standard scanner trigger."}`,
+            `Verify response shows vulnerability.`
+          ];
+
+      return {
+        ...finding,
+        id: idx + 1,
+        title: finding.title || "Untitled finding",
+        severity,
+        severityClass: SEVERITY_CLASS[severity] || "info",
+        tagsStr: Array.isArray(finding.tags) ? finding.tags.join(", ") : "",
+        tool: finding.tool || finding._toolId || "",
+        recommendation: fix,
+        count: Number(finding.count || 0) > 1 ? Number(finding.count) : null,
+        eps: finding.eps,
+        fixEffortHours: finding.fixEffortHours,
+        breachCost: finding.breachCost,
+        what,
+        how,
+        whatFound,
+        why,
+        fix,
+        reproductionSteps
+      };
+    }),
     owaspItems,
     planSummary: latestPlan?.summary || "",
-    planPhases
+    planPhases,
+
+    // Intelligence properties
+    execSummaryText: context.intelligence.aiExecutiveSummary,
+    attackNarrative: context.intelligence.attackNarrative,
+    totalFixEffortHours: context.intelligence.totalFixEffortHours,
+    totalBreachCostSaved: context.intelligence.totalBreachCostSaved,
+    riskReductionPercent: context.intelligence.riskReductionPercent,
+    roadmap: context.intelligence.roadmap,
+    evidenceHash: context.intelligence.evidenceHash,
+    executionTimeline
   };
 }
 
@@ -407,9 +665,9 @@ async function renderPdfFromTemplate(templateData) {
   return Promise.race([pdfPromise, timeoutPromise]);
 }
 
-async function generatePdfReport(engagementId) {
+async function generatePdfReport(engagementId, options = {}) {
   const context = await loadReportContext(engagementId);
-  const templateData = toTemplateData(context, { redacted: false });
+  const templateData = toTemplateData(context, { redacted: false, ...options });
   return await renderPdfFromTemplate(templateData);
 }
 
@@ -421,7 +679,8 @@ async function generateMarkdownReport(engagementId) {
 async function generateHtmlReport(engagementId, options = {}) {
   const context = await loadReportContext(engagementId);
   const templateData = toTemplateData(context, {
-    redacted: options.redacted !== false
+    redacted: options.redacted !== false,
+    ...options
   });
   return renderHtmlFromTemplate(templateData);
 }
@@ -538,6 +797,7 @@ async function emailReport(engagementId, recipientEmail) {
 module.exports = {
   flattenFindings,
   computeSeverityBreakdown,
+  loadReportContext,
   generatePdfReport,
   generateHtmlReport,
   generateMarkdownReport,

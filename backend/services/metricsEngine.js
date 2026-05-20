@@ -376,6 +376,98 @@ function computeEngagementProgress({ engagement, plans, jobs }) {
   };
 }
 
+function computeSecurityTrends(jobs) {
+  const categoryCounts = {};
+  const severityCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  const dailyTrends = {};
+  const targetScores = {};
+  let aiRiskPoints = 0;
+  let aiScansCount = 0;
+
+  for (const job of jobs) {
+    const jobFindings = collectRawFindings(job);
+    const jobDate = job.createdAt ? new Date(job.createdAt) : new Date();
+    const dateKey = jobDate.toISOString().slice(0, 10);
+
+    if (job.toolId === "ai_app_scan") {
+      aiScansCount += 1;
+    }
+
+    if (!dailyTrends[dateKey]) {
+      dailyTrends[dateKey] = {
+        date: dateKey,
+        critical: 0,
+        high: 0,
+        medium: 0,
+        low: 0,
+        info: 0,
+        findingsCount: 0
+      };
+    }
+
+    for (const finding of jobFindings) {
+      const severity = String(finding.severity || "low").toLowerCase();
+      const category = String(finding.category || "General");
+      
+      categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+      if (severityCounts[severity] !== undefined) {
+        severityCounts[severity] += 1;
+      } else {
+        severityCounts.low += 1;
+      }
+
+      dailyTrends[dateKey].findingsCount += 1;
+      if (dailyTrends[dateKey][severity] !== undefined) {
+        dailyTrends[dateKey][severity] += 1;
+      } else {
+        dailyTrends[dateKey].low += 1;
+      }
+
+      const target = String(job.targetUrl || "unknown");
+      if (!targetScores[target]) {
+        targetScores[target] = { target, critical: 0, high: 0, medium: 0, low: 0, score: 0 };
+      }
+      if (severity === "critical") {
+        targetScores[target].critical += 1;
+        targetScores[target].score += 10;
+      } else if (severity === "high") {
+        targetScores[target].high += 1;
+        targetScores[target].score += 5;
+      } else if (severity === "medium") {
+        targetScores[target].medium += 1;
+        targetScores[target].score += 2;
+      } else {
+        targetScores[target].low += 1;
+        targetScores[target].score += 1;
+      }
+
+      const isAiCategory = category.includes("AI") || (finding.tags && finding.tags.includes("ai"));
+      if (isAiCategory) {
+        if (severity === "critical") aiRiskPoints += 10;
+        else if (severity === "high") aiRiskPoints += 5;
+        else if (severity === "medium") aiRiskPoints += 2;
+        else aiRiskPoints += 1;
+      }
+    }
+  }
+
+  const vulnerableTargets = Object.values(targetScores)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+
+  const aiRiskIndex = aiScansCount === 0
+    ? Math.min(100, aiRiskPoints * 2)
+    : Math.min(100, Math.round((aiRiskPoints / aiScansCount) * 10));
+
+  return {
+    categoryCounts,
+    severityCounts,
+    dailyTrends: Object.values(dailyTrends).sort((a, b) => a.date.localeCompare(b.date)),
+    vulnerableTargets,
+    aiRiskIndex
+  };
+}
+
 module.exports = {
   estimateJobCostUsd,
   extractFindingCount,
@@ -383,5 +475,6 @@ module.exports = {
   computeDailyTrend,
   computeWindowSuccessRate,
   generateAlerts,
-  computeEngagementProgress
+  computeEngagementProgress,
+  computeSecurityTrends
 };

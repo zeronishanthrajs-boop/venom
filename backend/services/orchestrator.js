@@ -15,6 +15,7 @@ const containerSecurityService = require("./containerSecurityService");
 const complianceMapperService = require("./complianceMapperService");
 const reportGeneratorService = require("./reportGeneratorService");
 const executionLoggerService = require("./executionLoggerService");
+const aiAppScannerService = require("./aiAppScannerService");
 const { logger } = require("../config/logger");
 
 const DEFAULT_TOOL_SEQUENCE = {
@@ -189,6 +190,9 @@ function toExecutionCategory(toolId) {
   if (id.includes("secret")) {
     return "Secrets";
   }
+  if (id.includes("ai")) {
+    return "AI & LLM Security";
+  }
   if (id.includes("supply")) {
     return "Supply Chain";
   }
@@ -230,6 +234,7 @@ function toExecutionTestName(toolId) {
     cloud_misconfig_scan: "Cloud Misconfiguration Scan",
     api_security_scan: "API Security Scan",
     container_security_scan: "Container Security Scan",
+    ai_app_scan: "AI-App Security Scan",
     hardened_report_generation: "Hardened Report Generation"
   };
   return map[String(toolId || "")] || `Execution of ${toolId}`;
@@ -588,6 +593,59 @@ async function runPostExecutionScans(engagement, userId) {
     logger.warn(
       { engagementId, error: error?.message || String(error) },
       "Container security post-step failed"
+    );
+  }
+
+  try {
+    const testId = buildExecutionTestId("ai_app_scan", "post");
+    const testName = toExecutionTestName("ai_app_scan");
+    const aiResult = await aiAppScannerService.scanEngagement(engagementId);
+    const aiFindings = asArray(aiResult.findings);
+    const aiJob = await persistScanJob({
+      engagement,
+      toolId: "ai_app_scan",
+      findings: aiFindings,
+      output: {
+        source: "ai_app_scanner",
+        error: aiResult.error || null
+      },
+      createdBy: userId,
+      failed: Boolean(aiResult.error) && aiFindings.length === 0,
+      failureMessage: aiResult.error || "",
+      findingDefaults: {
+        idPrefix: "ai",
+        severity: "medium",
+        category: "AI & LLM Security",
+        source: "ai_scanner",
+        tags: ["ai"]
+      },
+      executionMeta: {
+        testId,
+        testName
+      }
+    });
+    await executionLoggerService.logExecutionJob({
+      engagementId: String(engagement._id),
+      testId,
+      testName,
+      tool: "ai_app_scan",
+      category: toExecutionCategory("ai_app_scan"),
+      target: engagement.targetUrl,
+      parameters: {
+        mode: "post-orchestration",
+        source: "ai_app_scanner"
+      },
+      job: aiJob.toObject()
+    });
+    summaries.push({
+      toolId: "ai_app_scan",
+      findings: aiFindings.length,
+      error: aiResult.error || null
+    });
+  } catch (error) {
+    logger.warn(
+      { engagementId, error: error?.message || String(error) },
+      "AI-App security post-step failed"
     );
   }
 

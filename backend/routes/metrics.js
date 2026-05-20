@@ -9,7 +9,8 @@ const {
   computeDailyTrend,
   computeWindowSuccessRate,
   generateAlerts,
-  computeEngagementProgress
+  computeEngagementProgress,
+  computeSecurityTrends
 } = require("../services/metricsEngine");
 
 const router = express.Router();
@@ -184,6 +185,16 @@ router.get("/progress", requireDb, async (_req, res, next) => {
     );
 
     return res.status(200).json(progress);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/security-trends", requireDb, async (req, res, next) => {
+  try {
+    const jobs = await ExecutionJob.find().lean();
+    const trends = computeSecurityTrends(jobs);
+    return res.status(200).json(trends);
   } catch (error) {
     return next(error);
   }
