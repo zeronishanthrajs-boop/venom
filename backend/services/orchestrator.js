@@ -538,6 +538,7 @@ async function runPostExecutionScans(engagement, userId) {
       findings: containerFindings,
       output: {
         source: "container_security",
+        attemptedFiles: containerResult.attemptedFiles || [],
         filesFound: containerResult.filesFound || [],
         checksRan: containerResult.checksRan || [],
         skipped: Boolean(containerResult.skipped),
@@ -569,6 +570,7 @@ async function runPostExecutionScans(engagement, userId) {
       parameters: {
         mode: "post-orchestration",
         source: "container_security",
+        attemptedFiles: containerResult.attemptedFiles || [],
         filesFound: containerResult.filesFound || [],
         checksRan: containerResult.checksRan || []
       },

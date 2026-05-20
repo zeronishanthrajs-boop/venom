@@ -72,7 +72,7 @@ test("BOLA finding maps to OWASP A01:2021 and PCI-DSS 7.2", () => {
   assert.ok(mapped.compliance.pciDss.some((item) => item.requirement === "7.2"));
 });
 
-test("SECRET_FOUND maps to A02:2021, PCI-DSS 3.5, and HIPAA §164.312", () => {
+test("SECRET_FOUND maps to A02:2021, PCI-DSS 3.5, and HIPAA 164.312 safeguards", () => {
   const mapped = complianceMapperService.mapFinding({
     type: "SECRET_FOUND",
     title: "Exposed API secret in config",
@@ -81,7 +81,7 @@ test("SECRET_FOUND maps to A02:2021, PCI-DSS 3.5, and HIPAA §164.312", () => {
   assert.ok(mapped.compliance.owasp.some((item) => item.code === "A02:2021"));
   assert.ok(mapped.compliance.pciDss.some((item) => item.requirement === "3.5"));
   assert.ok(
-    mapped.compliance.hipaa.some((item) => String(item.reference || "").startsWith("§164.312"))
+    mapped.compliance.hipaa.some((item) => String(item.reference || "").startsWith("164.312"))
   );
 });
 

@@ -443,6 +443,7 @@ class ContainerSecurityService {
     engagementId,
     targetUrl,
     findings,
+    attemptedFiles,
     filesFound,
     checksRan,
     durationMs,
@@ -459,6 +460,7 @@ class ContainerSecurityService {
       category: "Container Security",
       target: targetUrl,
       parameters: {
+        attemptedFiles,
         filesFound,
         checksRan
       },
@@ -467,6 +469,7 @@ class ContainerSecurityService {
         headers: {},
         bodySize: JSON.stringify({
           findings: findings.length,
+          attemptedFiles,
           filesFound
         }).length
       },
@@ -505,6 +508,7 @@ class ContainerSecurityService {
           engagementId: String(engagement._id),
           targetUrl,
           findings: [],
+          attemptedFiles: [],
           filesFound: [],
           checksRan: [],
           durationMs: Date.now() - startedAt,
@@ -512,6 +516,7 @@ class ContainerSecurityService {
         });
         return {
           findings: [],
+          attemptedFiles: [],
           filesFound: [],
           checksRan: [],
           skipped: true,
@@ -523,8 +528,10 @@ class ContainerSecurityService {
       const authToken = String(process.env.GITHUB_TOKEN || "").trim();
       const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
       const findings = [];
+      const attemptedFiles = [];
       const filesFound = [];
       const checksRan = new Set();
+      attemptedFiles.push("Dockerfile");
 
       const dockerfile = await this.fetchRawFile({
         owner,
@@ -541,6 +548,7 @@ class ContainerSecurityService {
         logger.warn({ owner, repo }, "Dockerfile not found for container scan");
       }
 
+      attemptedFiles.push("docker-compose.yml");
       const compose = await this.fetchRawFile({
         owner,
         repo,
@@ -558,6 +566,7 @@ class ContainerSecurityService {
 
       let k8sFile = null;
       for (const candidate of K8S_PATHS) {
+        attemptedFiles.push(candidate);
         // eslint-disable-next-line no-await-in-loop
         k8sFile = await this.fetchRawFile({
           owner,
@@ -582,6 +591,7 @@ class ContainerSecurityService {
         engagementId: String(engagement._id),
         targetUrl,
         findings,
+        attemptedFiles,
         filesFound,
         checksRan: [...checksRan],
         durationMs: Date.now() - startedAt
@@ -589,6 +599,7 @@ class ContainerSecurityService {
 
       return {
         findings,
+        attemptedFiles,
         filesFound,
         checksRan: [...checksRan]
       };
@@ -599,6 +610,7 @@ class ContainerSecurityService {
       );
       return {
         findings: [],
+        attemptedFiles: [],
         filesFound: [],
         checksRan: [],
         error: error?.message || "Container security scan failed"

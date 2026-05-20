@@ -20,36 +20,28 @@ const OWASP = {
 
 const PCI_REQUIREMENTS = {
   "1.3": { requirement: "1.3", control: "Restrict unauthorized network access" },
-  "3.5": { requirement: "3.5", control: "Protect cryptographic keys and secrets" },
+  "3.5": { requirement: "3.5", control: "Protect stored data, keys, and secrets" },
   "6.2.4": { requirement: "6.2.4", control: "Address known vulnerabilities promptly" },
-  "6.3.3": { requirement: "6.3.3", control: "Secure coding and input validation" },
-  "7.2": { requirement: "7.2", control: "Enforce least-privilege access controls" },
-  "8.2": { requirement: "8.2", control: "Strong identification and authentication" }
+  "6.3.3": { requirement: "6.3.3", control: "Prevent injection in custom code" },
+  "7.2": { requirement: "7.2", control: "Enforce least-privilege access control" },
+  "8.2": { requirement: "8.2", control: "Strong user identification and authentication" }
 };
 
 const HIPAA_CONTROLS = {
-  "164.308(a)(1)(ii)(A)": {
-    reference: "§164.308(a)(1)(ii)(A)",
-    safeguard: "Risk analysis"
-  },
-  "164.308(a)(1)(ii)(B)": {
-    reference: "§164.308(a)(1)(ii)(B)",
-    safeguard: "Risk management"
-  },
   "164.312(a)(1)": {
-    reference: "§164.312(a)(1)",
+    reference: "164.312(a)(1)",
     safeguard: "Access control"
   },
   "164.312(c)(1)": {
-    reference: "§164.312(c)(1)",
-    safeguard: "Integrity safeguards"
+    reference: "164.312(c)(1)",
+    safeguard: "Integrity"
   },
   "164.312(d)": {
-    reference: "§164.312(d)",
+    reference: "164.312(d)",
     safeguard: "Person or entity authentication"
   },
   "164.312(e)(1)": {
-    reference: "§164.312(e)(1)",
+    reference: "164.312(e)(1)",
     safeguard: "Transmission security"
   }
 };
@@ -76,154 +68,145 @@ function normalizeSeverity(value) {
   return "low";
 }
 
+function normalizeType(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+}
+
+function includesAny(value, checks = []) {
+  return checks.some((entry) => value.includes(entry));
+}
+
 class ComplianceMapperService {
   inferFindingType(finding = {}) {
-    const explicit = String(finding?.type || finding?.metadata?.findingType || "")
-      .trim()
-      .toUpperCase();
+    const explicit = normalizeType(finding?.type || finding?.metadata?.findingType || "");
     if (explicit) {
       return explicit;
     }
-    const text = `${asString(finding.title)} ${asString(finding.category)} ${asString(
-      finding.description
-    )}`.toUpperCase();
-    if (text.includes("BOLA") || text.includes("BROKEN OBJECT LEVEL")) {
+
+    const title = normalizeType(asString(finding?.title));
+    const description = normalizeType(asString(finding?.description));
+    const combined = `${title} ${description}`;
+
+    if (includesAny(combined, ["BOLA", "BROKEN_OBJECT_LEVEL_AUTHORIZATION"])) {
       return "API_BROKEN_OBJECT_LEVEL_AUTHORIZATION";
     }
-    if (text.includes("UNAUTHENTICATED") || text.includes("AUTHENTICATION")) {
+    if (includesAny(combined, ["UNAUTHENTICATED", "MISSING_AUTHENTICATION"])) {
       return "API_MISSING_AUTHENTICATION";
     }
-    if (text.includes("RATE LIMIT")) {
+    if (includesAny(combined, ["RATE_LIMIT", "THROTTL"])) {
       return "API_MISSING_RATE_LIMIT";
     }
-    if (text.includes("SECRET") || text.includes("TOKEN") || text.includes("PASSWORD")) {
-      return "SECRET_FOUND";
-    }
-    if (text.includes("SQL") || text.includes("INJECTION")) {
+    if (includesAny(combined, ["SQL_INJECTION", "SSTI", "XSS", "INJECTION"])) {
       return "SQL_INJECTION";
     }
-    if (text.includes("VULNERABLE") || text.includes("CVE") || text.includes("DEPENDENCY")) {
+    if (includesAny(combined, ["SECRET", "HARDCODED_CREDENTIAL", "TOKEN", "PASSWORD"])) {
+      return "SECRET_FOUND";
+    }
+    if (includesAny(combined, ["DEPENDENCY", "VULNERABLE_BASE_IMAGE", "CVE"])) {
       return "VULNERABLE_DEPENDENCY";
     }
-    if (text.includes("MISCONFIG") || text.includes("HEADER") || text.includes("GRAPHQL")) {
+    if (includesAny(combined, ["MISCONFIG", "GRAPHQL_INTROSPECTION", "HEADER"])) {
       return "SECURITY_MISCONFIGURATION";
     }
     return "UNMAPPED";
   }
 
-  resolveMappings(type, finding = {}) {
-    const t = String(type || "").toUpperCase();
-    const titleText = asString(finding?.title).toUpperCase();
-    const descriptionText = asString(finding?.description).toUpperCase();
-    const combined = `${titleText} ${descriptionText} ${t}`;
+  resolveMappings(type = "") {
+    const normalizedType = normalizeType(type);
 
-    const add = (state, { owasp = [], pci = [], hipaa = [], cis = [] }) => {
-      owasp.forEach((item) => state.owasp.add(item));
-      pci.forEach((item) => state.pci.add(item));
-      hipaa.forEach((item) => state.hipaa.add(item));
-      cis.forEach((item) => state.cis.add(item));
+    const mapping = {
+      owasp: [],
+      pciDss: [],
+      hipaa: [],
+      cisControls: []
     };
 
-    const state = {
-      owasp: new Set(),
-      pci: new Set(),
-      hipaa: new Set(),
-      cis: new Set()
+    if (includesAny(normalizedType, ["SQL_INJECTION", "API_INPUT_VALIDATION_MISSING", "SSTI", "XSS"])) {
+      mapping.owasp.push(OWASP.A03);
+      mapping.pciDss.push(PCI_REQUIREMENTS["6.3.3"]);
+      mapping.hipaa.push(HIPAA_CONTROLS["164.312(c)(1)"]);
+      mapping.cisControls.push("CIS-4", "CIS-7");
+    }
+
+    if (includesAny(normalizedType, ["API_BROKEN_OBJECT_LEVEL_AUTHORIZATION", "ACCESS_CONTROL"])) {
+      mapping.owasp.push(OWASP.A01);
+      mapping.pciDss.push(PCI_REQUIREMENTS["7.2"]);
+      mapping.hipaa.push(HIPAA_CONTROLS["164.312(a)(1)"]);
+      mapping.cisControls.push("CIS-6", "CIS-5");
+    }
+
+    if (includesAny(normalizedType, ["API_MISSING_AUTHENTICATION", "AUTHENTICATION_FAILURE"])) {
+      mapping.owasp.push(OWASP.A07);
+      mapping.pciDss.push(PCI_REQUIREMENTS["8.2"]);
+      mapping.hipaa.push(HIPAA_CONTROLS["164.312(d)"]);
+      mapping.cisControls.push("CIS-5");
+    }
+
+    if (includesAny(normalizedType, ["SECRET_FOUND", "HARDCODED", "EXPOSED_SECRET"])) {
+      mapping.owasp.push(OWASP.A02);
+      mapping.pciDss.push(PCI_REQUIREMENTS["3.5"]);
+      mapping.hipaa.push(HIPAA_CONTROLS["164.312(c)(1)"], HIPAA_CONTROLS["164.312(e)(1)"]);
+      mapping.cisControls.push("CIS-3");
+    }
+
+    if (includesAny(normalizedType, ["MISCONFIG", "GRAPHQL_INTROSPECTION", "HEADER"])) {
+      mapping.owasp.push(OWASP.A05);
+      mapping.pciDss.push(PCI_REQUIREMENTS["1.3"]);
+      mapping.hipaa.push(HIPAA_CONTROLS["164.312(a)(1)"]);
+      mapping.cisControls.push("CIS-4");
+    }
+
+    if (includesAny(normalizedType, ["VULNERABLE_DEPENDENCY", "VULNERABLE_BASE_IMAGE", "OUTDATED_COMPONENT"])) {
+      mapping.owasp.push(OWASP.A06);
+      mapping.pciDss.push(PCI_REQUIREMENTS["6.2.4"]);
+      mapping.hipaa.push(HIPAA_CONTROLS["164.312(c)(1)"]);
+      mapping.cisControls.push("CIS-2", "CIS-7");
+    }
+
+    if (includesAny(normalizedType, ["API_MISSING_RATE_LIMIT", "RATE_LIMIT"])) {
+      mapping.owasp.push(OWASP.A04);
+      mapping.pciDss.push(PCI_REQUIREMENTS["1.3"]);
+      mapping.hipaa.push(HIPAA_CONTROLS["164.312(a)(1)"]);
+      mapping.cisControls.push("CIS-4");
+    }
+
+    const uniqueByKey = (items, key) => {
+      const seen = new Set();
+      const unique = [];
+      for (const item of items) {
+        if (!item || seen.has(item[key])) {
+          continue;
+        }
+        unique.push(item);
+        seen.add(item[key]);
+      }
+      return unique;
     };
-
-    if (t.includes("SQL") || t.includes("INJECTION")) {
-      add(state, {
-        owasp: ["A03"],
-        pci: ["6.3.3"],
-        hipaa: ["164.308(a)(1)(ii)(A)", "164.308(a)(1)(ii)(B)"],
-        cis: ["CIS-4", "CIS-7"]
-      });
-    }
-
-    if (
-      t.includes("BOLA") ||
-      t.includes("AUTHORIZATION") ||
-      t.includes("AUTHENTICATION") ||
-      combined.includes("UNAUTHENTICATED")
-    ) {
-      add(state, {
-        owasp: ["A01", "A07"],
-        pci: ["7.2", "8.2"],
-        hipaa: ["164.312(a)(1)", "164.312(d)"],
-        cis: ["CIS-5", "CIS-6"]
-      });
-    }
-
-    if (
-      t.includes("SECRET") ||
-      t.includes("HARDCODED") ||
-      combined.includes("PASSWORD") ||
-      combined.includes("TOKEN")
-    ) {
-      add(state, {
-        owasp: ["A02"],
-        pci: ["3.5"],
-        hipaa: ["164.312(c)(1)", "164.312(e)(1)"],
-        cis: ["CIS-3"]
-      });
-    }
-
-    if (t.includes("MISCONFIG") || t.includes("GRAPHQL") || combined.includes("HEADER")) {
-      add(state, {
-        owasp: ["A05"],
-        pci: ["1.3"],
-        hipaa: ["164.308(a)(1)(ii)(B)"],
-        cis: ["CIS-4"]
-      });
-    }
-
-    if (
-      t.includes("VULNERABLE_DEPENDENCY") ||
-      t.includes("VULNERABLE_BASE_IMAGE") ||
-      combined.includes("BASE IMAGE") ||
-      combined.includes("DEPENDENCY")
-    ) {
-      add(state, {
-        owasp: ["A06"],
-        pci: ["6.2.4"],
-        hipaa: ["164.308(a)(1)(ii)(B)"],
-        cis: ["CIS-2", "CIS-7"]
-      });
-    }
-
-    if (t.includes("RATE_LIMIT")) {
-      add(state, {
-        owasp: ["A04"],
-        pci: ["1.3"],
-        hipaa: ["164.308(a)(1)(ii)(B)"],
-        cis: ["CIS-4"]
-      });
-    }
 
     return {
-      owasp: [...state.owasp].map((code) => OWASP[code]).filter(Boolean),
-      pciDss: [...state.pci].map((code) => PCI_REQUIREMENTS[code]).filter(Boolean),
-      hipaa: [...state.hipaa].map((code) => HIPAA_CONTROLS[code]).filter(Boolean),
-      cisControls: CIS_CONTROLS.filter((control) => state.cis.has(control.id))
+      owasp: uniqueByKey(mapping.owasp, "code"),
+      pciDss: uniqueByKey(mapping.pciDss, "requirement"),
+      hipaa: uniqueByKey(mapping.hipaa, "reference"),
+      cisControls: CIS_CONTROLS.filter((control) => mapping.cisControls.includes(control.id))
     };
   }
 
   mapFinding(finding = {}) {
-    const type = this.inferFindingType(finding);
-    const mapped = this.resolveMappings(type, finding);
-    const hasMappings =
-      mapped.owasp.length > 0 || mapped.pciDss.length > 0 || mapped.hipaa.length > 0;
+    const findingType = this.inferFindingType(finding);
+    const mapped = this.resolveMappings(findingType);
 
     return {
       ...finding,
-      compliance: hasMappings
-        ? {
-            owasp: mapped.owasp,
-            pciDss: mapped.pciDss,
-            hipaa: mapped.hipaa,
-            cisControls: mapped.cisControls
-          }
-        : null
+      type: findingType,
+      compliance: {
+        owasp: mapped.owasp.length > 0 ? mapped.owasp : null,
+        pciDss: mapped.pciDss.length > 0 ? mapped.pciDss : null,
+        hipaa: mapped.hipaa.length > 0 ? mapped.hipaa : null,
+        cisControls: mapped.cisControls.length > 0 ? mapped.cisControls : null
+      }
     };
   }
 
@@ -249,14 +232,16 @@ class ComplianceMapperService {
     const owaspGroups = {};
     const pciGroups = {};
     const hipaaGroups = {};
-    const failedCisControls = new Set();
+    const failedControls = new Set();
 
     for (const finding of mappedFindings) {
-      if (!finding.compliance) {
-        continue;
-      }
+      const compliance = finding.compliance || {};
+      const owaspMappings = Array.isArray(compliance.owasp) ? compliance.owasp : [];
+      const pciMappings = Array.isArray(compliance.pciDss) ? compliance.pciDss : [];
+      const hipaaMappings = Array.isArray(compliance.hipaa) ? compliance.hipaa : [];
+      const cisMappings = Array.isArray(compliance.cisControls) ? compliance.cisControls : [];
 
-      for (const owasp of finding.compliance.owasp || []) {
+      for (const owasp of owaspMappings) {
         if (!owaspGroups[owasp.code]) {
           owaspGroups[owasp.code] = {
             code: owasp.code,
@@ -267,55 +252,51 @@ class ComplianceMapperService {
         owaspGroups[owasp.code].count += 1;
       }
 
-      for (const pci of finding.compliance.pciDss || []) {
+      for (const pci of pciMappings) {
         if (!pciGroups[pci.requirement]) {
           pciGroups[pci.requirement] = {
             requirement: pci.requirement,
             control: pci.control,
-            findings: []
+            affectedFindings: []
           };
         }
-        pciGroups[pci.requirement].findings.push({
-          title: finding.title || "Untitled finding",
-          severity: String(finding.severity || "low").toUpperCase()
-        });
+        pciGroups[pci.requirement].affectedFindings.push(finding.title || "Untitled finding");
       }
 
-      for (const hipaa of finding.compliance.hipaa || []) {
+      for (const hipaa of hipaaMappings) {
         if (!hipaaGroups[hipaa.reference]) {
           hipaaGroups[hipaa.reference] = {
             reference: hipaa.reference,
             safeguard: hipaa.safeguard,
-            findings: []
+            affectedFindings: []
           };
         }
-        hipaaGroups[hipaa.reference].findings.push({
-          title: finding.title || "Untitled finding",
-          severity: String(finding.severity || "low").toUpperCase()
-        });
+        hipaaGroups[hipaa.reference].affectedFindings.push(
+          finding.title || "Untitled finding"
+        );
       }
 
-      for (const cisControl of finding.compliance.cisControls || []) {
-        failedCisControls.add(cisControl.id);
+      for (const cis of cisMappings) {
+        failedControls.add(cis.id);
       }
     }
 
     const totalControls = CIS_CONTROLS.length;
-    const failedCount = failedCisControls.size;
-    const passedCount = Math.max(0, totalControls - failedCount);
+    const failedControlsCount = failedControls.size;
+    const passedControls = Math.max(0, totalControls - failedControlsCount);
     const scorePercent =
-      totalControls === 0 ? 100 : Number(((passedCount / totalControls) * 100).toFixed(0));
+      totalControls === 0 ? 100 : Number(((passedControls / totalControls) * 100).toFixed(0));
     const overallRisk = this.computeOverallRisk(mappedFindings);
     const summary =
       mappedFindings.length === 0
-        ? "No findings were detected; current compliance posture appears healthy."
-        : `Detected ${mappedFindings.length} finding(s), with overall compliance risk rated ${overallRisk}.`;
+        ? "Compliance posture is currently healthy with no mapped security findings."
+        : `Compliance posture indicates ${overallRisk} risk with ${mappedFindings.length} mapped finding(s) requiring remediation.`;
 
     return {
       generatedAt: new Date().toISOString(),
+      totalFindings: mappedFindings.length,
       overallRisk,
       summary,
-      totalFindings: mappedFindings.length,
       owasp: Object.values(owaspGroups).sort((a, b) => a.code.localeCompare(b.code)),
       pciDss: Object.values(pciGroups).sort((a, b) =>
         String(a.requirement).localeCompare(String(b.requirement))
@@ -323,13 +304,11 @@ class ComplianceMapperService {
       hipaa: Object.values(hipaaGroups).sort((a, b) => a.reference.localeCompare(b.reference)),
       cis: {
         totalControls,
-        passedControls: passedCount,
-        failedControls: failedCount,
+        passedControls,
+        failedControls: failedControlsCount,
         scorePercent,
-        passingControlIds: CIS_CONTROLS.filter((item) => !failedCisControls.has(item.id)).map(
-          (item) => item.id
-        ),
-        failingControlIds: [...failedCisControls]
+        passingControls: CIS_CONTROLS.filter((item) => !failedControls.has(item.id)),
+        failingControls: CIS_CONTROLS.filter((item) => failedControls.has(item.id))
       },
       mappedFindings
     };

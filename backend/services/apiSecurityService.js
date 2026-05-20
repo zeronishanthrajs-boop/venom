@@ -13,7 +13,7 @@ const COMMON_API_PATHS = [
   "/api/login"
 ];
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
-const PII_HINTS = ["email", "phone", "password", "token", "ssn"];
+const PII_HINTS = ["email", "phone", "password", "token", "ssn", "address", "dob"];
 
 function asObject(value) {
   return value && typeof value === "object" ? value : {};
@@ -215,10 +215,15 @@ class ApiSecurityService {
 
   incrementEndpointId(path) {
     const materialized = this.materializePath(path);
-    if (!/\d+/.test(materialized)) {
-      return null;
+    const segments = materialized.split("/");
+    for (let index = segments.length - 1; index >= 0; index -= 1) {
+      if (!/^\d+$/.test(segments[index])) {
+        continue;
+      }
+      segments[index] = String(Number.parseInt(segments[index], 10) + 1);
+      return segments.join("/");
     }
-    return materialized.replace(/\d+/, (value) => String(Number.parseInt(value, 10) + 1));
+    return null;
   }
 
   containsSensitiveData(body) {
@@ -339,7 +344,9 @@ class ApiSecurityService {
       endpoint: joinUrl(targetUrl, requestPath),
       method: endpoint.method,
       parameters: {
-        check: "missing_authentication"
+        check: "missing_authentication",
+        headersSent: "none",
+        credentialsSent: "none"
       },
       response,
       finding,
@@ -399,38 +406,49 @@ class ApiSecurityService {
   async runRateLimitTest(targetUrl, endpoint, engagementId) {
     const requestPath = this.materializePath(endpoint.path);
     const requestMethod = endpoint.method === "HEAD" ? "GET" : endpoint.method;
+    const requestCount = 20;
+    const responses = [];
     const startedAt = Date.now();
-    const responses = await Promise.all(
-      Array.from({ length: 20 }).map(() =>
-        this.safeRequest({
-          url: joinUrl(targetUrl, requestPath),
-          method: requestMethod
-        })
-      )
-    );
+    for (let index = 0; index < requestCount; index += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const response = await this.safeRequest({
+        url: joinUrl(targetUrl, requestPath),
+        method: requestMethod
+      });
+      responses.push(response);
+    }
     const totalDuration = Date.now() - startedAt;
-    const saw429 = responses.some((item) => item.status === 429);
+    const first429Index = responses.findIndex((item) => item.status === 429);
+    const successfulResponses = responses.filter(
+      (item) => item.status >= 200 && item.status < 300
+    ).length;
+    const successfulBeforeThrottle =
+      first429Index === -1
+        ? successfulResponses
+        : responses
+            .slice(0, first429Index)
+            .filter((item) => item.status >= 200 && item.status < 300).length;
     const representative = responses[0] || {
       status: 0,
       body: null,
       headers: {},
       durationMs: totalDuration
     };
-    const finding = saw429
-      ? null
-      : this.buildFinding({
+    const finding =
+      first429Index === -1 && successfulResponses === requestCount
+        ? this.buildFinding({
           type: "API_MISSING_RATE_LIMIT",
           title: `No rate limiting detected on ${requestPath}`,
-          description:
-            "20 rapid requests were accepted without any 429 responses.",
+          description: `${requestCount} sequential rapid requests were accepted without throttling.`,
           severity: "high",
           endpoint: requestPath,
           methodTested: requestMethod,
-          testPerformed: "Executed 20 rapid unauthenticated requests.",
-          responseObserved: `No HTTP 429 responses in ${totalDuration}ms.`,
+          testPerformed: `Executed ${requestCount} sequential rapid unauthenticated requests.`,
+          responseObserved: `No HTTP 429 responses. ${requestCount}/${requestCount} requests succeeded in ${totalDuration}ms.`,
           remediation:
-            "Apply express-rate-limit with thresholds such as 100/min for public endpoints and 20/min for authentication endpoints."
-        });
+            "Apply request throttling (for example: 60 requests/minute for public endpoints and 20 requests/minute for authenticated/session endpoints)."
+        })
+        : null;
 
     await this.logApiTest({
       engagementId,
@@ -439,7 +457,10 @@ class ApiSecurityService {
       method: requestMethod,
       parameters: {
         check: "rate_limit",
-        requestCount: 20
+        requestCount,
+        successfulResponses,
+        successfulBeforeThrottle,
+        first429AtRequest: first429Index === -1 ? null : first429Index + 1
       },
       response: representative,
       finding,
@@ -447,16 +468,19 @@ class ApiSecurityService {
     });
 
     if (finding) {
-      finding.metadata.requestCount = 20;
+      finding.metadata.requestCount = requestCount;
       finding.metadata.totalDurationMs = totalDuration;
-      finding.responseObserved = `No HTTP 429 responses in ${totalDuration}ms across 20 requests.`;
+      finding.metadata.successfulBeforeThrottle = successfulBeforeThrottle;
+      finding.metadata.first429AtRequest = first429Index === -1 ? null : first429Index + 1;
+      finding.responseObserved = `No HTTP 429 responses. ${requestCount}/${requestCount} requests succeeded in ${totalDuration}ms.`;
     }
 
     return finding;
   }
 
   async runInputValidationTest(targetUrl, endpoint, engagementId) {
-    if (String(endpoint.method || "").toUpperCase() !== "POST") {
+    const methodToTest = String(endpoint.method || "").toUpperCase();
+    if (!["POST", "PUT"].includes(methodToTest)) {
       return [];
     }
 
@@ -481,7 +505,7 @@ class ApiSecurityService {
       // eslint-disable-next-line no-await-in-loop
       const response = await this.safeRequest({
         url: joinUrl(targetUrl, requestPath),
-        method: "POST",
+        method: methodToTest,
         headers: {
           "Content-Type": "application/json"
         },
@@ -498,7 +522,7 @@ class ApiSecurityService {
               "Potential unsafe input handling: test payload was reflected in response without sanitization.",
             severity: "high",
             endpoint: requestPath,
-            methodTested: "POST",
+            methodTested: methodToTest,
             testPerformed: `Sent malicious payload variant (${payload.key}).`,
             responseObserved: `Payload reflected in HTTP ${response.status} response.`,
             remediation:
@@ -511,7 +535,7 @@ class ApiSecurityService {
         engagementId,
         testName: "Input Validation Check",
         endpoint: joinUrl(targetUrl, requestPath),
-        method: "POST",
+        method: methodToTest,
         parameters: {
           check: "input_validation",
           payloadType: payload.key

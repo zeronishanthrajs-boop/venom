@@ -111,6 +111,7 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
       output: {
         findings: normalizedFindings,
         source: "container_security",
+        attemptedFiles: result.attemptedFiles || [],
         filesFound: result.filesFound || [],
         checksRan: result.checksRan || [],
         skipped: Boolean(result.skipped),
@@ -132,6 +133,7 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
       parameters: {
         mode: "manual-route",
         endpoint: "/api/container/scan/:engagementId",
+        attemptedFiles: result.attemptedFiles || [],
         filesFound: result.filesFound || [],
         checksRan: result.checksRan || []
       },

@@ -1,6 +1,7 @@
 const Engagement = require("../models/Engagement");
 const ExecutionJob = require("../models/ExecutionJob");
 const executionLoggerService = require("./executionLoggerService");
+const complianceMapperService = require("./complianceMapperService");
 const { deduplicateFindings } = require("../utils/deduplicateFindings");
 const { logger } = require("../config/logger");
 
@@ -62,6 +63,8 @@ class ReportGeneratorService {
     const findings = deduplicateFindings(rawFindings);
     const summary = countBySeverity(findings);
     const detailedFindings = this.formatFindings(findings);
+    const complianceReport =
+      engagement.complianceReport || complianceMapperService.generateComplianceReport(findings);
 
     logger.info(
       {
@@ -72,7 +75,7 @@ class ReportGeneratorService {
     );
 
     return {
-      structureVersion: "phase1.v1",
+      structureVersion: "phase2.v1",
       engagementId: String(engagement._id),
       target: engagement.targetUrl,
       generatedAt: new Date().toISOString(),
@@ -81,7 +84,7 @@ class ReportGeneratorService {
       findingsSummary: summary,
       findings: detailedFindings,
       riskAnalysis: this.generateRiskAnalysis(findings, summary),
-      compliance: this.mapCompliance(findings),
+      compliance: complianceReport,
       recommendations: this.generateRecommendations(findings),
       evidence: {
         chainOfCustody: true,
@@ -234,6 +237,14 @@ class ReportGeneratorService {
   formatFindings(findings = []) {
     return findings.map((finding, index) => {
       const normalizedType = this.normalizeType(finding);
+      const mapped = complianceMapperService.mapFinding({
+        ...finding,
+        type: normalizedType
+      });
+      const mappedCompliance = mapped.compliance || {};
+      const owaspTags = Array.isArray(mappedCompliance.owasp)
+        ? mappedCompliance.owasp.map((item) => item.code)
+        : [];
       const recommendation =
         finding?.recommendation ||
         finding?.remediation ||
@@ -250,10 +261,12 @@ class ReportGeneratorService {
         whatFound: finding?.evidence || this.buildWhatFoundFallback(finding),
         why: this.getWhyItMatters(normalizedType),
         fix: recommendation,
+        owaspTags,
+        compliance: mappedCompliance,
         metadata: {
           toolId: finding?._toolId || null,
           jobId: finding?._jobId || null,
-          tags: asArray(finding?.tags)
+          tags: Array.from(new Set([...asArray(finding?.tags), ...owaspTags]))
         }
       };
     });
@@ -273,7 +286,9 @@ class ReportGeneratorService {
   }
 
   normalizeType(finding) {
-    const explicit = String(finding?.type || "").trim();
+    const explicit = String(
+      finding?.type || finding?.metadata?.findingType || ""
+    ).trim();
     if (explicit) {
       return explicit;
     }
@@ -333,30 +348,6 @@ class ReportGeneratorService {
       riskLevel,
       impactStatement,
       affectedSystems
-    };
-  }
-
-  mapCompliance(findings = []) {
-    const count = (predicate) => findings.filter(predicate).length;
-    return {
-      owaspTop10: {
-        A01: count((f) => this.normalizeType(f).includes("ACCESS_CONTROL")),
-        A02: count((f) => this.normalizeType(f).includes("CRYPTO")),
-        A03: count((f) => this.normalizeType(f).includes("INJECTION")),
-        A04: count((f) => this.normalizeType(f).includes("INSECURE_DESIGN")),
-        A05: count((f) => this.normalizeType(f).includes("MISCONFIG")),
-        A06: count((f) => this.normalizeType(f).includes("VULNERABLE_DEPENDENCY"))
-      },
-      controls: {
-        secretExposureFindings: count((f) => this.normalizeType(f) === "SECRET_FOUND"),
-        cloudMisconfigFindings: count(
-          (f) => this.normalizeType(f) === "CLOUD_MISCONFIGURATION"
-        ),
-        supplyChainFindings: count(
-          (f) => this.normalizeType(f) === "VULNERABLE_DEPENDENCY"
-        )
-      },
-      compliance: ["OWASP", "CIS", "PCI-DSS"]
     };
   }
 
