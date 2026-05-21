@@ -672,7 +672,9 @@ class ApiSecurityService {
     remediation,
     evidence = null,
     discoveryVector = "",
-    reproductionSteps = []
+    reproductionSteps = [],
+    detectionConfidence = "strong signal",
+    exploitConfidence = "weak signal"
   }) {
     const normalizedReproductionSteps = Array.isArray(reproductionSteps)
       ? reproductionSteps.filter((step) => String(step || "").trim().length > 0)
@@ -709,6 +711,8 @@ class ApiSecurityService {
         normalizedReproductionSteps.length > 0
           ? normalizedReproductionSteps
           : ["Evidence capture failed — reproduction steps were not generated for this finding."],
+      detectionConfidence,
+      exploitConfidence,
       tags: ["api-security", String(type || "").toLowerCase()],
       metadata: {
         findingType: type,

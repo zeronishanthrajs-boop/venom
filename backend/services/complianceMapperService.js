@@ -178,9 +178,9 @@ function assessProbeCoverage({ jobs = [], requiredTools = [], violations = [] })
   }
 
   return {
-    status: "PASSED",
+    status: "POTENTIALLY_RELEVANT",
     explanation:
-      "Relevant probes ran successfully and no mapped violations were found.",
+      "Relevant probes ran successfully. This identifies potentially related control areas but is not a formal compliance audit.",
     requiredProbes: requiredTools,
     incompleteProbes: [],
     successfulProbes: [...successfulTools]
@@ -417,13 +417,14 @@ class ComplianceMapperService {
     const overallRisk = this.computeOverallRisk(mappedFindings);
     const summary =
       mappedFindings.length === 0 && !cisInsufficient
-        ? "Compliance posture is currently healthy with no mapped security findings."
+        ? "Compliance posture is currently healthy with no mapped security findings. This is not a formal compliance audit."
         : mappedFindings.length === 0
           ? "Compliance posture cannot be determined because relevant probes did not complete."
-        : `Compliance posture indicates ${overallRisk} risk with ${mappedFindings.length} mapped finding(s) requiring remediation.`;
+        : `Compliance posture indicates ${overallRisk} risk with ${mappedFindings.length} mapped finding(s) requiring remediation. This is not a formal compliance audit.`;
 
     return {
       generatedAt: new Date().toISOString(),
+      disclaimer: "This is not a formal compliance audit.",
       totalFindings: mappedFindings.length,
       overallRisk,
       summary,

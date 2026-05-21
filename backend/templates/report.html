@@ -661,28 +661,7 @@
         <p style="color: #475569; font-size: 12.5px; white-space: pre-line;">{{attackNarrative}}</p>
       </div>
 
-      <!-- ROI Box -->
-      <div class="roi-card">
-        <h3>Remediation ROI</h3>
-        <p style="color: #64748b; font-size: 12px; margin-bottom: 12px;">
-          Security optimization based on vulnerability statistics & threat landscape data (CERT-In).
-        </p>
-        <div style="display: flex; flex-direction: column; gap: 8px;">
-          <div style="background: #f1f5f9; padding: 10px; border-radius: 6px;">
-            <span style="font-size: 10px; color: #64748b; display: block; text-transform: uppercase;">Estimated Fix Effort</span>
-            <span style="font-size: 16px; font-weight: 700; color: #0f172a;">{{totalFixEffortHours}} Hours</span>
-          </div>
-          <div style="background: #f1f5f9; padding: 10px; border-radius: 6px;">
-            <span style="font-size: 10px; color: #64748b; display: block; text-transform: uppercase;">Potential Breach Cost Saved</span>
-            <span style="font-size: 16px; font-weight: 700; color: #0f172a;">${{totalBreachCostSaved}} USD</span>
-          </div>
-        </div>
 
-        <div class="roi-stat-box">
-          <span class="highlight">Fix in {{totalFixEffortHours}}h to reduce risk by {{riskReductionPercent}}%</span>
-          <span>Saves up to ${{totalBreachCostSaved}} in breach mitigation</span>
-        </div>
-      </div>
     </div>
   </div>
 
@@ -784,7 +763,6 @@
               {{/if}}
             </div>
           </div>
-          <span style="font-size: 11px; font-weight: 600; color: #64748b;">Effort: {{fixEffortHours}}h</span>
         </div>
 
         <div class="finding-section">
@@ -797,7 +775,7 @@
           <div class="finding-section">
             <div class="finding-section-title">Business Impact & Risk</div>
             <div class="finding-section-content" style="color: #dc2626; font-weight: 600;">
-              {{why}} Critical startup exposure estimated up to ${{breachCost}} USD recovery value.
+              {{why}}
             </div>
           </div>
         {{else}}

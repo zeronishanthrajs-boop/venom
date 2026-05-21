@@ -61,6 +61,16 @@ const executionJobSchema = new mongoose.Schema(
             type: [String],
             default: []
           },
+          detectionConfidence: {
+            type: String,
+            enum: ["informational", "weak signal", "strong signal", "confirmed"],
+            default: "strong signal"
+          },
+          exploitConfidence: {
+            type: String,
+            enum: ["informational", "weak signal", "strong signal", "confirmed"],
+            default: "weak signal"
+          },
           exploitationPotential: { type: String, default: "" },
           cve: { type: String, default: null },
           source: { type: String, default: "" },

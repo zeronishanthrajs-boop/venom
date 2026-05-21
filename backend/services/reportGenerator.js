@@ -383,9 +383,6 @@ The summary should highlight the overall posture, key concerns, and high-level r
 }
 
 function computeEPSAndROI(findings) {
-  let totalFixEffortHours = 0;
-  let totalBreachCostSaved = 0;
-
   const mappedFindings = findings.map(finding => {
     const severity = String(finding.severity || "low").toLowerCase();
     
@@ -403,25 +400,9 @@ function computeEPSAndROI(findings) {
     }
     eps = Math.min(eps, 99);
 
-    let fixEffortHours = 2;
-    if (severity === "critical") fixEffortHours = 8;
-    else if (severity === "high") fixEffortHours = 6;
-    else if (severity === "medium") fixEffortHours = 4;
-
-    totalFixEffortHours += fixEffortHours;
-
-    let breachCost = 1500;
-    if (severity === "critical") breachCost = 45000;
-    else if (severity === "high") breachCost = 15000;
-    else if (severity === "medium") breachCost = 5000;
-
-    totalBreachCostSaved += breachCost;
-
     return {
       ...finding,
-      eps,
-      fixEffortHours,
-      breachCost
+      eps
     };
   });
 
@@ -429,14 +410,9 @@ function computeEPSAndROI(findings) {
     ? Math.round(mappedFindings.reduce((sum, f) => sum + f.eps, 0) / findings.length)
     : 0;
 
-  const riskReductionPercent = findings.length > 0 ? Math.round(90 - (10 / (findings.length + 1))) : 100;
-
   return {
     findings: mappedFindings,
-    overallEps,
-    totalFixEffortHours,
-    totalBreachCostSaved,
-    riskReductionPercent
+    overallEps
   };
 }
 
@@ -481,10 +457,7 @@ async function loadReportContext(engagementId) {
   // Compute intelligence layer
   const {
     findings: enrichedFindings,
-    overallEps,
-    totalFixEffortHours,
-    totalBreachCostSaved,
-    riskReductionPercent
+    overallEps
   } = computeEPSAndROI(findings);
 
   const roadmap = computeFixRoadmap(enrichedFindings);
@@ -511,9 +484,6 @@ async function loadReportContext(engagementId) {
     securityScore,
     intelligence: {
       overallEps,
-      totalFixEffortHours,
-      totalBreachCostSaved,
-      riskReductionPercent,
       attackNarrative,
       aiExecutiveSummary,
       roadmap,
@@ -693,8 +663,6 @@ function toTemplateData(context, options = {}) {
         recommendation: fix,
         count: Number(finding.count || 0) > 1 ? Number(finding.count) : null,
         eps: finding.eps,
-        fixEffortHours: finding.fixEffortHours,
-        breachCost: finding.breachCost,
         what,
         how,
         whatFound,
@@ -710,9 +678,6 @@ function toTemplateData(context, options = {}) {
     // Intelligence properties
     execSummaryText: context.intelligence.aiExecutiveSummary,
     attackNarrative: context.intelligence.attackNarrative,
-    totalFixEffortHours: context.intelligence.totalFixEffortHours,
-    totalBreachCostSaved: context.intelligence.totalBreachCostSaved,
-    riskReductionPercent: context.intelligence.riskReductionPercent,
     roadmap: context.intelligence.roadmap,
     evidenceHash: context.intelligence.evidenceHash,
     executionTimeline
