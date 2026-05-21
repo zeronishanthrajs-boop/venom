@@ -759,7 +759,7 @@ function buildHeaders(session: VenomSession) {
   };
 }
 
-const API_TIMEOUT_MS = 15000;
+const API_TIMEOUT_MS = 60000;
 const STARTUP_TOOL_WHITELIST = [
   "http_headers_probe",
   "tls_metadata_probe",

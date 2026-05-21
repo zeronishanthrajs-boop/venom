@@ -13,7 +13,7 @@ import {
 } from "@/lib/authConstants";
 
 export const runtime = "nodejs";
-const DEFAULT_UPSTREAM_TIMEOUT_MS = 15000;
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 60000;
 const LONG_RUNNING_TIMEOUT_MS = 120000;
 const ORCHESTRATION_TIMEOUT_MS = 300000;
 const REPORT_PDF_TIMEOUT_MS = 90000;
