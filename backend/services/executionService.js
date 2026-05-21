@@ -9,6 +9,12 @@ const { broadcastToolResult, broadcastFinding } = require("./realtimeServer");
 const { translateAllFindings } = require("./translator");
 const { assertExecutionAllowed } = require("./trustControl");
 const { logger } = require("../config/logger");
+const {
+  classifyError,
+  createStructuredError,
+  logError,
+  logWarn
+} = require("../utils/scanErrors");
 
 function createHttpError(statusCode, message) {
   const error = new Error(message);
@@ -68,6 +74,12 @@ function mapJobStatusToHttpStatus(status) {
   if (status === "timeout") {
     return 504;
   }
+  if (status === "not_applicable") {
+    return 200;
+  }
+  if (status === "tool_not_installed") {
+    return 424;
+  }
   return 422;
 }
 
@@ -77,6 +89,12 @@ function toInteger(value, fallback) {
 }
 
 function getToolTimeoutWithBufferMs(tool) {
+  if (tool?.id === "http_headers_probe") {
+    return 20000;
+  }
+  if (tool?.id === "tls_metadata_probe") {
+    return 10000;
+  }
   const baseTimeoutMs = Math.max(
     1000,
     toInteger(tool?.timeoutSeconds, 60) * 1000
@@ -188,7 +206,15 @@ async function executeEngagementTool({
     const output = toCamelCaseDeep(
       await runToolWithHardTimeout(toolId, targetUrl, toolTimeoutMs)
     );
-    job.status = "success";
+    if (output?.status === "NOT_APPLICABLE") {
+      job.status = "not_applicable";
+    } else if (output?.status === "TOOL_NOT_INSTALLED") {
+      job.status = "tool_not_installed";
+    } else if (output?.status === "ERROR") {
+      job.status = "failed";
+    } else {
+      job.status = "success";
+    }
     job.output = output;
     const rawFindings = Array.isArray(output?.findings) ? output.findings : [];
     job.findings = rawFindings;
@@ -209,15 +235,23 @@ async function executeEngagementTool({
       job.rawOutput = output.rawOutput;
     }
   } catch (error) {
-    if (error?.code === "DOCKER_DISABLED") {
-      job.status = "blocked";
+    const structuredError = createStructuredError(error);
+    if (structuredError.errorCode === "TOOL_NOT_INSTALLED") {
+      job.status = "tool_not_installed";
     } else if (error?.code === "TOOL_TIMEOUT" || /timed out/i.test(error?.message || "")) {
       job.status = "timeout";
+    } else if (error?.code === "DOCKER_DISABLED") {
+      job.status = "tool_not_installed";
     } else {
       job.status = "failed";
     }
-    job.errorMessage = error?.message || "Execution failed";
+    job.errorMessage = structuredError.failureReason || error?.message || "Execution failed";
+    job.output = {
+      ...structuredError,
+      classifiedAs: classifyError(error)
+    };
     job.findings = [];
+    logError(logger, { engagementId, toolId, targetUrl, jobStatus: job.status }, "Tool execution failed", error);
   }
 
   job.finishedAt = new Date();
@@ -240,10 +274,7 @@ async function executeEngagementTool({
       learningSuccess
     );
   } catch (learningError) {
-    logger.warn(
-      { error: learningError?.message || "unknown error", toolId },
-      "Attack graph learning update failed"
-    );
+    logWarn(logger, { toolId }, "Attack graph learning update failed", learningError);
   }
 
   setImmediate(async () => {
@@ -253,10 +284,7 @@ async function executeEngagementTool({
         await generateDecisionBrief(String(job.engagementId));
       }
     } catch (error) {
-      logger.error(
-        { error: error?.message || "unknown error" },
-        "Auto decision brief failed"
-      );
+      logError(logger, { engagementId: String(job.engagementId) }, "Auto decision brief failed", error);
     }
   });
 
@@ -271,10 +299,7 @@ async function executeEngagementTool({
         );
       }
     } catch (error) {
-      logger.error(
-        { error: error?.message || "unknown error" },
-        "Auto snapshot failed"
-      );
+      logError(logger, { engagementId: String(job.engagementId) }, "Auto snapshot failed", error);
     }
   });
 
@@ -297,19 +322,13 @@ async function executeEngagementTool({
       });
     }
   } catch (realtimeError) {
-    logger.warn(
-      { error: realtimeError.message },
-      "Realtime broadcast of tool result failed"
-    );
+    logWarn(logger, { engagementId: String(engagement._id), toolId }, "Realtime broadcast of tool result failed", realtimeError);
   }
 
   try {
     await recordExecutionEvidence(jobObject, userId);
   } catch (evidenceError) {
-    logger.warn(
-      { error: evidenceError.message },
-      "Execution evidence persistence failed"
-    );
+    logWarn(logger, { engagementId: String(job.engagementId), toolId }, "Execution evidence persistence failed", evidenceError);
   }
 
   try {
@@ -319,10 +338,7 @@ async function executeEngagementTool({
       findings: jobObject.findings
     });
   } catch (notifyError) {
-    logger.warn(
-      { error: notifyError.message },
-      "Critical findings notification dispatch failed"
-    );
+    logWarn(logger, { engagementId: String(engagement._id), toolId }, "Critical findings notification dispatch failed", notifyError);
   }
 
   return {

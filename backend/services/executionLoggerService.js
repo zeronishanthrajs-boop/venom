@@ -1,5 +1,17 @@
 const ExecutionLog = require("../models/ExecutionLog");
 const { logger } = require("../config/logger");
+const { buildFailureReason } = require("../utils/scanErrors");
+
+const RESULT_STATUSES = new Set([
+  "PASSED",
+  "VULNERABLE",
+  "BLOCKED",
+  "FAILED",
+  "TIMEOUT",
+  "ERROR",
+  "NOT_APPLICABLE",
+  "TOOL_NOT_INSTALLED"
+]);
 
 function asObject(value) {
   if (!value || typeof value !== "object") {
@@ -49,6 +61,15 @@ class ExecutionLoggerService {
       );
       const result = asObject(testData.result);
       const status = String(result.status || "PASSED").toUpperCase();
+      const errorCode = String(result.errorCode || testData.errorCode || "").trim();
+      const reason = String(result.reason || "").trim();
+      const failureReason = String(
+        result.failureReason ||
+          testData.failureReason ||
+          (["PASSED", "VULNERABLE"].includes(status)
+            ? ""
+            : buildFailureReason(errorCode || status || "FAILED", reason || "No reason recorded."))
+      ).trim();
 
       const payload = {
         engagementId: testData.engagementId,
@@ -67,11 +88,13 @@ class ExecutionLoggerService {
           bodySize
         },
         result: {
-          status: ["PASSED", "VULNERABLE", "BLOCKED", "FAILED"].includes(status)
+          status: RESULT_STATUSES.has(status)
             ? status
             : "FAILED",
           confidence: clampConfidence(result.confidence, 0.5),
-          reason: String(result.reason || "").trim(),
+          reason,
+          failureReason,
+          errorCode,
           severity: this.normalizeSeverity(result.severity)
         },
         executionTimeMs: toPositiveNumber(testData.executionTimeMs, 0),
@@ -109,7 +132,7 @@ class ExecutionLoggerService {
       return logEntry;
     } catch (error) {
       logger.error(
-        { error: error?.message || String(error) },
+        { error: error?.message || String(error), stack: error?.stack || "" },
         "Failed to log test execution"
       );
       return null;
@@ -130,8 +153,20 @@ class ExecutionLoggerService {
       const findingCount = Array.isArray(job.findings) ? job.findings.length : 0;
       return findingCount > 0 ? "VULNERABLE" : "PASSED";
     }
-    if (status === "blocked" || status === "timeout") {
+    if (status === "blocked") {
       return "BLOCKED";
+    }
+    if (status === "timeout") {
+      return "TIMEOUT";
+    }
+    if (status === "not_applicable") {
+      return "NOT_APPLICABLE";
+    }
+    if (status === "tool_not_installed") {
+      return "TOOL_NOT_INSTALLED";
+    }
+    if (status === "error") {
+      return "ERROR";
     }
     return "FAILED";
   }
@@ -144,7 +179,48 @@ class ExecutionLoggerService {
     if (mapped === "VULNERABLE") {
       return `${Array.isArray(job.findings) ? job.findings.length : 0} finding(s) recorded.`;
     }
-    return String(job.errorMessage || "Tool execution failed or was blocked.");
+    return String(
+      job.errorMessage ||
+        job.output?.failureReason ||
+        job.output?.reason ||
+        "Tool execution did not complete successfully."
+    );
+  }
+
+  getDefaultErrorCode(job = {}) {
+    const status = String(job.status || "").toLowerCase();
+    if (job.output?.errorCode) {
+      return String(job.output.errorCode);
+    }
+    if (status === "timeout") {
+      return "NETWORK_TIMEOUT";
+    }
+    if (status === "blocked") {
+      return "BLOCKED";
+    }
+    if (status === "not_applicable") {
+      return "NOT_APPLICABLE";
+    }
+    if (status === "tool_not_installed") {
+      return "TOOL_NOT_INSTALLED";
+    }
+    if (status === "failed" || status === "error") {
+      return "EXECUTION_FAILED";
+    }
+    return "";
+  }
+
+  getFailureReason(job = {}) {
+    const mapped = this.getStatusForExecutionJob(job);
+    if (mapped === "PASSED" || mapped === "VULNERABLE") {
+      return "";
+    }
+    const errorCode = this.getDefaultErrorCode(job) || mapped;
+    const reason = this.getDefaultReason(job);
+    if (String(reason || "").startsWith(`${errorCode}:`)) {
+      return reason;
+    }
+    return buildFailureReason(errorCode, reason || "Execution did not complete successfully.");
   }
 
   async logExecutionJob({
@@ -184,6 +260,8 @@ class ExecutionLoggerService {
         status: this.getStatusForExecutionJob(job),
         confidence: findings.length > 0 ? 0.9 : 0.8,
         reason: this.getDefaultReason(job),
+        failureReason: this.getFailureReason(job),
+        errorCode: this.getDefaultErrorCode(job),
         severity
       },
       executionTimeMs: toPositiveNumber(job.durationMs, 0),
@@ -207,6 +285,15 @@ class ExecutionLoggerService {
     if (normalized === "timeout") {
       return 504;
     }
+    if (normalized === "not_applicable") {
+      return 204;
+    }
+    if (normalized === "tool_not_installed") {
+      return 424;
+    }
+    if (normalized === "error") {
+      return 500;
+    }
     if (normalized === "failed") {
       return 422;
     }
@@ -219,8 +306,12 @@ class ExecutionLoggerService {
       const totalTests = logs.length;
       const passed = logs.filter((item) => item.result?.status === "PASSED").length;
       const failed = logs.filter((item) => item.result?.status === "VULNERABLE").length;
-      const blocked = logs.filter((item) => item.result?.status === "BLOCKED").length;
-      const errored = logs.filter((item) => item.result?.status === "FAILED").length;
+      const blocked = logs.filter((item) =>
+        ["BLOCKED", "NOT_APPLICABLE", "TOOL_NOT_INSTALLED"].includes(item.result?.status)
+      ).length;
+      const errored = logs.filter((item) =>
+        ["FAILED", "ERROR", "TIMEOUT"].includes(item.result?.status)
+      ).length;
       const totalTimeMs = logs.reduce(
         (sum, item) => sum + toPositiveNumber(item.executionTimeMs, 0),
         0
@@ -243,13 +334,20 @@ class ExecutionLoggerService {
           category: item.category,
           timeMs: toPositiveNumber(item.executionTimeMs, 0),
           result: item.result?.status || "FAILED",
+          reason: item.result?.reason || "",
+          failureReason: item.result?.failureReason || "",
+          errorCode: item.result?.errorCode || "",
           findingCount: toPositiveNumber(item.findingCount, 0),
           timestamp: item.timestamp
         }))
       };
     } catch (error) {
       logger.error(
-        { error: error?.message || String(error), engagementId: String(engagementId || "") },
+        {
+          error: error?.message || String(error),
+          stack: error?.stack || "",
+          engagementId: String(engagementId || "")
+        },
         "Failed to get execution summary"
       );
       return null;
@@ -282,6 +380,8 @@ class ExecutionLoggerService {
           status: log.result?.status || "FAILED",
           confidence: clampConfidence(log.result?.confidence, 0.5),
           reason: log.result?.reason || "",
+          failureReason: log.result?.failureReason || "",
+          errorCode: log.result?.errorCode || "",
           severity: this.normalizeSeverity(log.result?.severity)
         },
         executionTimeMs: toPositiveNumber(log.executionTimeMs, 0),
@@ -290,7 +390,11 @@ class ExecutionLoggerService {
       };
     } catch (error) {
       logger.error(
-        { error: error?.message || String(error), testId: String(testId || "") },
+        {
+          error: error?.message || String(error),
+          stack: error?.stack || "",
+          testId: String(testId || "")
+        },
         "Failed to get detailed trace"
       );
       return null;
@@ -415,6 +519,10 @@ class ExecutionLoggerService {
       } else if (status === "VULNERABLE") {
         grouped[tool].failed += 1;
       } else if (status === "BLOCKED") {
+        grouped[tool].blocked += 1;
+      } else if (status === "TIMEOUT") {
+        grouped[tool].errored += 1;
+      } else if (status === "TOOL_NOT_INSTALLED" || status === "NOT_APPLICABLE") {
         grouped[tool].blocked += 1;
       } else {
         grouped[tool].errored += 1;

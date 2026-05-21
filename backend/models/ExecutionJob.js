@@ -19,7 +19,17 @@ const executionJobSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["queued", "running", "success", "failed", "blocked", "timeout"],
+      enum: [
+        "queued",
+        "running",
+        "success",
+        "failed",
+        "blocked",
+        "timeout",
+        "not_applicable",
+        "tool_not_installed",
+        "error"
+      ],
       default: "queued"
     },
     startedAt: Date,

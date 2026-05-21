@@ -9,7 +9,7 @@ const TOOL_REGISTRY = {
     category: "web",
     mode: "internal",
     destructive: false,
-    timeoutSeconds: 45,
+    timeoutSeconds: 15,
     estimatedCostUsd: 0.01
   },
   tls_metadata_probe: {
@@ -20,7 +20,7 @@ const TOOL_REGISTRY = {
     category: "web",
     mode: "internal",
     destructive: false,
-    timeoutSeconds: 45,
+    timeoutSeconds: 10,
     estimatedCostUsd: 0.015
   },
   dns_lookup_probe: {

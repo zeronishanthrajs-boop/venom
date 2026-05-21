@@ -1,6 +1,12 @@
 const axios = require("axios");
 const Engagement = require("../models/Engagement");
 const { logger } = require("../config/logger");
+const {
+  createNotApplicableResult,
+  createStructuredError,
+  logError,
+  logWarn
+} = require("../utils/scanErrors");
 
 function looksLikeHttpUrl(value) {
   if (!value) {
@@ -79,8 +85,23 @@ class SupplyChainService {
 
       const targetUrl = String(targetUrlInput || engagement.targetUrl || "").trim();
       logger.info({ engagementId, targetUrl }, "Starting supply-chain scan");
+      const gitTarget = parseGitHubTarget(targetUrl);
+      if (!gitTarget) {
+        return {
+          ...createNotApplicableResult({
+            reason:
+              "Source code analysis requires a GitHub repository URL. Supply chain scans were not applicable for this target type.",
+            requiredTarget: "a GitHub repository URL",
+            note: "The supply-chain scan was intentionally skipped rather than failing."
+          }),
+          vulnerabilities: [],
+          attemptedFiles: [],
+          filesFound: []
+        };
+      }
 
-      const npmVulns = await this.scanNpmDependencies(targetUrl);
+      const packageResult = await this.fetchPackageJson(targetUrl);
+      const npmVulns = await this.scanNpmDependencies(packageResult.packageJson);
       const advisoryVulns = await this.checkGitHubAdvisories(targetUrl);
       const nvdVulns = await this.checkNVDDatabase(npmVulns);
 
@@ -94,24 +115,27 @@ class SupplyChainService {
       );
 
       return {
+        status: "SUCCESS",
         findings,
-        vulnerabilities: deduped
+        vulnerabilities: deduped,
+        attemptedFiles: packageResult.attemptedFiles,
+        filesFound: packageResult.filesFound
       };
     } catch (error) {
-      logger.error(
-        { engagementId, error: error?.message || String(error) },
-        "Supply-chain scan failed"
-      );
+      logError(logger, { engagementId }, "Supply-chain scan failed", error);
+      const structuredError = createStructuredError(error);
       return {
+        ...structuredError,
         findings: [],
         vulnerabilities: [],
-        error: error?.message || "Supply-chain scan failed"
+        attemptedFiles: [],
+        filesFound: [],
+        error: structuredError.message
       };
     }
   }
 
-  async scanNpmDependencies(targetUrl) {
-    const packageJson = await this.fetchPackageJson(targetUrl);
+  async scanNpmDependencies(packageJson) {
     if (!packageJson) {
       return [];
     }
@@ -134,37 +158,22 @@ class SupplyChainService {
 
   async fetchPackageJson(targetUrl) {
     if (!targetUrl) {
-      return null;
-    }
-
-    if (looksLikeHttpUrl(targetUrl)) {
-      const normalized = targetUrl.replace(/\/+$/, "");
-      const pathsToTry = ["/package.json", "/app/package.json", "/src/package.json"];
-      for (const pathName of pathsToTry) {
-        try {
-          const response = await this.httpClient.get(`${normalized}${pathName}`, {
-            timeout: 5000
-          });
-          const parsed = parsePackageJson(response.data);
-          if (parsed) {
-            return parsed;
-          }
-        } catch {
-          // Try next path.
-        }
-      }
+      return { packageJson: null, attemptedFiles: [], filesFound: [] };
     }
 
     const gitTarget = parseGitHubTarget(targetUrl);
     if (!gitTarget) {
-      return null;
+      return { packageJson: null, attemptedFiles: [], filesFound: [] };
     }
 
     const { owner, repo } = gitTarget;
     const authToken = String(process.env.GITHUB_TOKEN || "").trim();
     const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
     const branches = ["main", "master"];
+    const attemptedFiles = [];
+    const filesFound = [];
     for (const branch of branches) {
+      attemptedFiles.push(`${branch}/package.json`);
       try {
         const response = await this.httpClient.get(
           `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/package.json`,
@@ -175,14 +184,21 @@ class SupplyChainService {
         );
         const parsed = parsePackageJson(response.data);
         if (parsed) {
-          return parsed;
+          filesFound.push(`${branch}/package.json`);
+          return { packageJson: parsed, attemptedFiles, filesFound };
         }
-      } catch {
+      } catch (error) {
+        logWarn(
+          logger,
+          { owner, repo, branch, filePath: "package.json" },
+          "Supply-chain scanner could not fetch GitHub package.json",
+          error
+        );
         // Try next branch.
       }
     }
 
-    return null;
+    return { packageJson: null, attemptedFiles, filesFound };
   }
 
   async checkNpmAdvisory(packageName, version) {
@@ -327,10 +343,7 @@ class SupplyChainService {
           source: "github-advisories"
         }));
     } catch (error) {
-      logger.warn(
-        { error: error?.message || String(error) },
-        "GitHub advisory query failed"
-      );
+      logWarn(logger, { targetUrl }, "GitHub advisory query failed", error);
       return [];
     }
   }

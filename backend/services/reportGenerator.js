@@ -162,6 +162,97 @@ function buildExecutionSummary(jobs = []) {
   };
 }
 
+function normalizeJobStatus(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function collectJobFindings(job = {}) {
+  if (Array.isArray(job.findings) && job.findings.length > 0) {
+    return job.findings;
+  }
+  return Array.isArray(job.output?.findings) ? job.output.findings : [];
+}
+
+function jobFailureReason(job = {}) {
+  const status = normalizeJobStatus(job.status).toUpperCase() || "FAILED";
+  return (
+    job.output?.failureReason ||
+    job.errorMessage ||
+    job.output?.reason ||
+    `${status}: Probe did not complete successfully.`
+  );
+}
+
+function riskFromScore(score) {
+  if (score >= 85) return "LOW";
+  if (score >= 65) return "MEDIUM";
+  if (score >= 40) return "HIGH";
+  return "CRITICAL";
+}
+
+function calculateSecurityScore(findings = [], jobs = []) {
+  const deductions = { critical: 25, high: 15, medium: 8, low: 3, info: 0 };
+  let score = 100;
+  const bySeverity = computeSeverityBreakdown(findings);
+
+  for (const [severity, deduction] of Object.entries(deductions)) {
+    score -= (bySeverity[severity] || 0) * deduction;
+  }
+
+  const failedJobs = jobs.filter((job) => ["failed", "error"].includes(normalizeJobStatus(job.status)));
+  const timeoutJobs = jobs.filter((job) => normalizeJobStatus(job.status) === "timeout");
+  const blockedJobs = jobs.filter((job) => normalizeJobStatus(job.status) === "blocked");
+  const toolMissingJobs = jobs.filter((job) => normalizeJobStatus(job.status) === "tool_not_installed");
+
+  score -= failedJobs.filter((job) => job.output?.errorCode !== "TOOL_NOT_INSTALLED").length * 5;
+  score -= timeoutJobs.length * 2;
+  score += blockedJobs.length * 3;
+
+  const cleanCategories = new Set();
+  for (const job of jobs) {
+    if (normalizeJobStatus(job.status) === "success" && collectJobFindings(job).length === 0) {
+      cleanCategories.add(job.toolId || "scan");
+    }
+  }
+  score += Math.min(5, cleanCategories.size);
+
+  const reliabilityJobs = jobs.filter(
+    (job) =>
+      ["success", "failed", "error", "timeout"].includes(normalizeJobStatus(job.status)) &&
+      !toolMissingJobs.some((missingJob) => String(missingJob._id) === String(job._id))
+  );
+  const failedOrTimedOut = reliabilityJobs.filter((job) =>
+    ["failed", "error", "timeout"].includes(normalizeJobStatus(job.status))
+  );
+  const unreliable =
+    reliabilityJobs.length > 0 && failedOrTimedOut.length > reliabilityJobs.length / 2;
+  const finalScore = Math.max(0, Math.min(100, Math.round(score)));
+
+  return {
+    score: finalScore,
+    maxScore: 100,
+    riskRating: unreliable ? "UNRELIABLE" : riskFromScore(finalScore),
+    reliable: !unreliable,
+    unreliableReason: unreliable
+      ? "Score could not be accurately calculated because too many scan probes failed. Address probe failures to get an accurate score."
+      : ""
+  };
+}
+
+function buildScanLimitations(jobs = []) {
+  return jobs
+    .filter((job) =>
+      ["failed", "blocked", "timeout", "not_applicable", "tool_not_installed", "error"].includes(
+        normalizeJobStatus(job.status)
+      )
+    )
+    .map((job) => ({
+      tool: job.toolId || "scan",
+      status: normalizeJobStatus(job.status).toUpperCase(),
+      reason: jobFailureReason(job)
+    }));
+}
+
 // Handlebars helpers registration
 if (!handlebars.helpers.eq) {
   handlebars.registerHelper("eq", function (a, b) {

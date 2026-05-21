@@ -50,7 +50,16 @@ const executionLogSchema = new mongoose.Schema(
     result: {
       status: {
         type: String,
-        enum: ["PASSED", "VULNERABLE", "BLOCKED", "FAILED"],
+        enum: [
+          "PASSED",
+          "VULNERABLE",
+          "BLOCKED",
+          "FAILED",
+          "TIMEOUT",
+          "ERROR",
+          "NOT_APPLICABLE",
+          "TOOL_NOT_INSTALLED"
+        ],
         default: "PASSED"
       },
       confidence: {
@@ -58,6 +67,14 @@ const executionLogSchema = new mongoose.Schema(
         default: 0.5
       },
       reason: {
+        type: String,
+        default: ""
+      },
+      failureReason: {
+        type: String,
+        default: ""
+      },
+      errorCode: {
         type: String,
         default: ""
       },

@@ -34,6 +34,14 @@ function flattenJobFindings(jobs = []) {
   return findings;
 }
 
+function collectJobFindings(job = {}) {
+  const topLevel = asArray(job?.findings);
+  if (topLevel.length > 0) {
+    return topLevel;
+  }
+  return asArray(job?.output?.findings);
+}
+
 function countBySeverity(findings = []) {
   const summary = {
     total: findings.length,
@@ -47,6 +55,78 @@ function countBySeverity(findings = []) {
     summary[normalizeSeverity(finding?.severity)] += 1;
   }
   return summary;
+}
+
+const SCORE_DEDUCTIONS = {
+  critical: 25,
+  high: 15,
+  medium: 8,
+  low: 3,
+  info: 0
+};
+
+function normalizeJobStatus(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getJobErrorCode(job = {}) {
+  const explicit = job.output?.errorCode || job.output?.status || "";
+  const normalized = String(explicit || "").toUpperCase();
+  if (normalized) {
+    return normalized;
+  }
+  const status = normalizeJobStatus(job.status);
+  if (status === "timeout") {
+    return "NETWORK_TIMEOUT";
+  }
+  if (status === "not_applicable") {
+    return "NOT_APPLICABLE";
+  }
+  if (status === "tool_not_installed") {
+    return "TOOL_NOT_INSTALLED";
+  }
+  if (status === "blocked") {
+    return "BLOCKED";
+  }
+  if (status === "failed" || status === "error") {
+    return "EXECUTION_FAILED";
+  }
+  return "";
+}
+
+function getJobFailureReason(job = {}) {
+  const errorCode = getJobErrorCode(job);
+  const reason =
+    job.output?.failureReason ||
+    job.errorMessage ||
+    job.output?.reason ||
+    job.output?.message ||
+    "";
+  if (!errorCode && !reason) {
+    return "";
+  }
+  if (reason && errorCode && String(reason).startsWith(`${errorCode}:`)) {
+    return String(reason);
+  }
+  return `${errorCode || "FAILED"}: ${reason || "Probe did not complete successfully."}`;
+}
+
+function isTerminalForReliability(job = {}) {
+  const status = normalizeJobStatus(job.status);
+  return ["success", "failed", "blocked", "timeout", "error"].includes(status);
+}
+
+function deriveRiskRating(score) {
+  if (score >= 85) {
+    return "LOW";
+  }
+  if (score >= 65) {
+    return "MEDIUM";
+  }
+  if (score >= 40) {
+    return "HIGH";
+  }
+  return "CRITICAL";
 }
 
 class ReportGeneratorService {
@@ -64,7 +144,10 @@ class ReportGeneratorService {
     const summary = countBySeverity(findings);
     const detailedFindings = this.formatFindings(findings);
     const complianceReport =
-      engagement.complianceReport || complianceMapperService.generateComplianceReport(findings);
+      engagement.complianceReport ||
+      complianceMapperService.generateComplianceReport(findings, { jobs });
+    const securityScore = this.calculateSecurityScore(findings, jobs);
+    const scanLimitations = this.generateScanLimitations(jobs);
 
     logger.info(
       {
@@ -83,8 +166,14 @@ class ReportGeneratorService {
       scope: this.generateScope(engagement),
       findingsSummary: summary,
       findings: detailedFindings,
-      riskAnalysis: this.generateRiskAnalysis(findings, summary),
+      securityScore,
+      scoreFormula: securityScore.formula,
+      riskAnalysis: this.generateRiskAnalysis(findings, summary, securityScore),
       compliance: complianceReport,
+      scanLimitations,
+      narrativeSections: {
+        scanLimitations: this.buildScanLimitationsNarrative(scanLimitations)
+      },
       recommendations: this.generateRecommendations(findings),
       evidence: {
         chainOfCustody: true,
@@ -312,14 +401,165 @@ class ReportGeneratorService {
     return categoryRaw.toUpperCase().replace(/\s+/g, "_");
   }
 
-  generateRiskAnalysis(findings = [], summary = {}) {
+  calculateSecurityScore(findings = [], jobs = []) {
+    let score = 100;
+    const formula = {
+      startsAt: 100,
+      severityDeductions: [],
+      probeDeductions: [],
+      bonuses: [],
+      clamp: "0-100"
+    };
+
+    const severityCounts = countBySeverity(findings);
+    for (const [severity, deduction] of Object.entries(SCORE_DEDUCTIONS)) {
+      const count = severityCounts[severity] || 0;
+      if (count <= 0 || deduction <= 0) {
+        continue;
+      }
+      const total = count * deduction;
+      score -= total;
+      formula.severityDeductions.push({ severity: severity.toUpperCase(), count, deduction, total });
+    }
+
+    const failedJobs = jobs.filter((job) => ["failed", "error"].includes(normalizeJobStatus(job.status)));
+    const timeoutJobs = jobs.filter((job) => normalizeJobStatus(job.status) === "timeout");
+    const blockedJobs = jobs.filter((job) => normalizeJobStatus(job.status) === "blocked");
+    const toolUnavailableJobs = jobs.filter(
+      (job) =>
+        normalizeJobStatus(job.status) === "tool_not_installed" ||
+        getJobErrorCode(job) === "TOOL_NOT_INSTALLED"
+    );
+
+    for (const job of failedJobs) {
+      if (getJobErrorCode(job) === "TOOL_NOT_INSTALLED") {
+        continue;
+      }
+      score -= 5;
+      formula.probeDeductions.push({
+        toolId: job.toolId,
+        status: "FAILED",
+        deduction: 5,
+        reason: getJobFailureReason(job)
+      });
+    }
+
+    for (const job of timeoutJobs) {
+      score -= 2;
+      formula.probeDeductions.push({
+        toolId: job.toolId,
+        status: "TIMEOUT",
+        deduction: 2,
+        reason: getJobFailureReason(job)
+      });
+    }
+
+    for (const job of blockedJobs) {
+      score += 3;
+      formula.bonuses.push({
+        toolId: job.toolId,
+        status: "BLOCKED",
+        bonus: 3,
+        reason: getJobFailureReason(job) || "Target actively blocked the probe."
+      });
+    }
+
+    const successfulCleanCategories = new Set();
+    for (const job of jobs) {
+      if (normalizeJobStatus(job.status) !== "success") {
+        continue;
+      }
+      const jobFindings = collectJobFindings(job);
+      if (jobFindings.length > 0) {
+        continue;
+      }
+      successfulCleanCategories.add(String(job.toolId || "unknown"));
+    }
+    const successBonus = Math.min(5, successfulCleanCategories.size);
+    if (successBonus > 0) {
+      score += successBonus;
+      formula.bonuses.push({
+        type: "clean_categories",
+        categories: [...successfulCleanCategories].slice(0, 5),
+        bonus: successBonus
+      });
+    }
+
+    const reliabilityJobs = jobs.filter(
+      (job) =>
+        isTerminalForReliability(job) &&
+        normalizeJobStatus(job.status) !== "blocked" &&
+        !toolUnavailableJobs.some((item) => String(item._id) === String(job._id))
+    );
+    const failedOrTimedOut = reliabilityJobs.filter((job) =>
+      ["failed", "error", "timeout"].includes(normalizeJobStatus(job.status))
+    );
+    const unreliable =
+      reliabilityJobs.length > 0 && failedOrTimedOut.length > reliabilityJobs.length / 2;
+
+    const finalScore = Math.max(0, Math.min(100, Math.round(score)));
+    return {
+      score: finalScore,
+      maxScore: 100,
+      riskRating: unreliable ? "UNRELIABLE" : deriveRiskRating(finalScore),
+      reliable: !unreliable,
+      reliabilityStatus: unreliable ? "UNRELIABLE" : "RELIABLE",
+      unreliableReason: unreliable
+        ? "Score could not be accurately calculated because too many scan probes failed. Address probe failures to get an accurate score."
+        : "",
+      failedProbeCount: failedJobs.length,
+      timeoutProbeCount: timeoutJobs.length,
+      blockedProbeCount: blockedJobs.length,
+      toolUnavailableCount: toolUnavailableJobs.length,
+      formula
+    };
+  }
+
+  generateScanLimitations(jobs = []) {
+    return jobs
+      .filter((job) => {
+        const status = normalizeJobStatus(job.status);
+        return [
+          "failed",
+          "blocked",
+          "timeout",
+          "not_applicable",
+          "tool_not_installed",
+          "error"
+        ].includes(status);
+      })
+      .map((job) => ({
+        toolId: job.toolId || "unknown",
+        status: normalizeJobStatus(job.status).toUpperCase(),
+        errorCode: getJobErrorCode(job),
+        reason: getJobFailureReason(job),
+        durationMs: Number(job.durationMs || 0)
+      }));
+  }
+
+  buildScanLimitationsNarrative(scanLimitations = []) {
+    if (!scanLimitations.length) {
+      return "";
+    }
+    const lines = ["Scan Limitations"];
+    for (const limitation of scanLimitations) {
+      lines.push(
+        `${limitation.toolId}: ${limitation.reason || `${limitation.status}: Probe did not complete.`}`
+      );
+    }
+    return lines.join("\n");
+  }
+
+  generateRiskAnalysis(findings = [], summary = {}, securityScore = null) {
     const criticalCount = summary.critical || 0;
     const highCount = summary.high || 0;
-    let riskLevel = "LOW";
+    let riskLevel = securityScore?.riskRating || "LOW";
     let impactStatement =
       "Current posture indicates low immediate risk, with routine hardening recommended.";
 
-    if (criticalCount > 0) {
+    if (securityScore?.riskRating === "UNRELIABLE") {
+      impactStatement = securityScore.unreliableReason;
+    } else if (criticalCount > 0) {
       riskLevel = "CRITICAL";
       impactStatement =
         "Critical findings expose credible compromise paths and should be remediated immediately.";
@@ -346,6 +586,9 @@ class ReportGeneratorService {
 
     return {
       riskLevel,
+      score: securityScore?.score ?? null,
+      maxScore: securityScore?.maxScore ?? 100,
+      reliabilityStatus: securityScore?.reliabilityStatus || "UNKNOWN",
       impactStatement,
       affectedSystems
     };

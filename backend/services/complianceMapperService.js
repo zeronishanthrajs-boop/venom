@@ -46,6 +46,32 @@ const HIPAA_CONTROLS = {
   }
 };
 
+const STANDARD_PROBES = {
+  pciDss: [
+    "http_headers_probe",
+    "tls_metadata_probe",
+    "api_security_scan",
+    "nmap_tcp_scan",
+    "secrets_scan",
+    "supply_chain_scan"
+  ],
+  hipaa: [
+    "http_headers_probe",
+    "tls_metadata_probe",
+    "api_security_scan",
+    "secrets_scan"
+  ],
+  cis: [
+    "http_headers_probe",
+    "dns_lookup_probe",
+    "tls_metadata_probe",
+    "api_security_scan",
+    "container_security_scan",
+    "supply_chain_scan",
+    "secrets_scan"
+  ]
+};
+
 function asString(value) {
   if (typeof value === "string") {
     return value;
@@ -77,6 +103,83 @@ function normalizeType(value) {
 
 function includesAny(value, checks = []) {
   return checks.some((entry) => value.includes(entry));
+}
+
+function normalizeJobStatus(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getProbeReason(job = {}) {
+  const status = normalizeJobStatus(job.status).toUpperCase() || "MISSING";
+  return (
+    job.output?.failureReason ||
+    job.errorMessage ||
+    job.output?.reason ||
+    `${status}: Probe did not complete successfully.`
+  );
+}
+
+function assessProbeCoverage({ jobs = [], requiredTools = [], violations = [] }) {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    return {
+      status: "INSUFFICIENT_DATA",
+      explanation:
+        "Relevant probes did not run, so compliance cannot be determined.",
+      requiredProbes: requiredTools,
+      incompleteProbes: requiredTools.map((toolId) => ({
+        toolId,
+        status: "MISSING",
+        reason: "MISSING: Probe did not run."
+      }))
+    };
+  }
+
+  const incompleteProbes = [];
+  const successfulTools = new Set();
+  for (const toolId of requiredTools) {
+    const matchingJobs = jobs.filter((job) => String(job.toolId || "") === toolId);
+    const successful = matchingJobs.some((job) => normalizeJobStatus(job.status) === "success");
+    if (successful) {
+      successfulTools.add(toolId);
+      continue;
+    }
+    const latest = matchingJobs[0] || null;
+    incompleteProbes.push({
+      toolId,
+      status: latest ? normalizeJobStatus(latest.status).toUpperCase() : "MISSING",
+      reason: latest ? getProbeReason(latest) : "MISSING: Probe did not run."
+    });
+  }
+
+  if (violations.length > 0) {
+    return {
+      status: "FAILED",
+      explanation: `${violations.length} mapped violation(s) were found.`,
+      requiredProbes: requiredTools,
+      incompleteProbes,
+      successfulProbes: [...successfulTools]
+    };
+  }
+
+  if (incompleteProbes.length > 0) {
+    return {
+      status: "INSUFFICIENT_DATA",
+      explanation:
+        "Relevant probes did not run, failed, were blocked, timed out, or were not applicable, so compliance cannot be determined.",
+      requiredProbes: requiredTools,
+      incompleteProbes,
+      successfulProbes: [...successfulTools]
+    };
+  }
+
+  return {
+    status: "PASSED",
+    explanation:
+      "Relevant probes ran successfully and no mapped violations were found.",
+    requiredProbes: requiredTools,
+    incompleteProbes: [],
+    successfulProbes: [...successfulTools]
+  };
 }
 
 class ComplianceMapperService {
@@ -224,10 +327,11 @@ class ComplianceMapperService {
     return "LOW";
   }
 
-  generateComplianceReport(findings = []) {
+  generateComplianceReport(findings = [], context = {}) {
     const mappedFindings = (Array.isArray(findings) ? findings : []).map((finding) =>
       this.mapFinding(finding)
     );
+    const jobs = Array.isArray(context.jobs) ? context.jobs : [];
 
     const owaspGroups = {};
     const pciGroups = {};
@@ -284,12 +388,33 @@ class ComplianceMapperService {
     const totalControls = CIS_CONTROLS.length;
     const failedControlsCount = failedControls.size;
     const passedControls = Math.max(0, totalControls - failedControlsCount);
-    const scorePercent =
-      totalControls === 0 ? 100 : Number(((passedControls / totalControls) * 100).toFixed(0));
+    const pciAssessment = assessProbeCoverage({
+      jobs,
+      requiredTools: STANDARD_PROBES.pciDss,
+      violations: Object.values(pciGroups)
+    });
+    const hipaaAssessment = assessProbeCoverage({
+      jobs,
+      requiredTools: STANDARD_PROBES.hipaa,
+      violations: Object.values(hipaaGroups)
+    });
+    const cisCoverage = assessProbeCoverage({
+      jobs,
+      requiredTools: STANDARD_PROBES.cis,
+      violations: CIS_CONTROLS.filter((item) => failedControls.has(item.id))
+    });
+    const cisInsufficient = cisCoverage.status === "INSUFFICIENT_DATA";
+    const scorePercent = cisInsufficient
+      ? null
+      : totalControls === 0
+        ? 100
+        : Number(((passedControls / totalControls) * 100).toFixed(0));
     const overallRisk = this.computeOverallRisk(mappedFindings);
     const summary =
-      mappedFindings.length === 0
+      mappedFindings.length === 0 && !cisInsufficient
         ? "Compliance posture is currently healthy with no mapped security findings."
+        : mappedFindings.length === 0
+          ? "Compliance posture cannot be determined because relevant probes did not complete."
         : `Compliance posture indicates ${overallRisk} risk with ${mappedFindings.length} mapped finding(s) requiring remediation.`;
 
     return {
@@ -301,12 +426,17 @@ class ComplianceMapperService {
       pciDss: Object.values(pciGroups).sort((a, b) =>
         String(a.requirement).localeCompare(String(b.requirement))
       ),
+      pciDssAssessment: pciAssessment,
       hipaa: Object.values(hipaaGroups).sort((a, b) => a.reference.localeCompare(b.reference)),
+      hipaaAssessment,
       cis: {
+        status: cisCoverage.status,
+        explanation: cisCoverage.explanation,
         totalControls,
-        passedControls,
+        passedControls: cisInsufficient ? null : passedControls,
         failedControls: failedControlsCount,
         scorePercent,
+        incompleteProbes: cisCoverage.incompleteProbes,
         passingControls: CIS_CONTROLS.filter((item) => !failedControls.has(item.id)),
         failingControls: CIS_CONTROLS.filter((item) => failedControls.has(item.id))
       },

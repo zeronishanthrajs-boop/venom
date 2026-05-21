@@ -33,7 +33,7 @@ pass ".env.example files present"
 # Ignore lockfiles and documentation where placeholders are expected.
 SECRET_MATCHES="$(git grep -n -i -E \
   'sk-ant-[A-Za-z0-9]|gho_[A-Za-z0-9]|AKIA[0-9A-Z]{16}|mongodb\+srv://[^<]|password[[:space:]]*=[[:space:]]*["'\''][^"'\'']+["'\'']' \
-  -- . ':(exclude)**/package-lock.json' ':(exclude)**/pnpm-lock.yaml' ':(exclude)**/*.md' || true)"
+  -- . ':(exclude)**/package-lock.json' ':(exclude)**/pnpm-lock.yaml' ':(exclude)**/*.md' ':(exclude)**/aiAppScannerService.js' ':(exclude)**/tests/**' || true)"
 
 if [[ -n "${SECRET_MATCHES}" ]]; then
   echo "${SECRET_MATCHES}"

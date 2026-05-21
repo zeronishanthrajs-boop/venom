@@ -17,6 +17,11 @@ const reportGeneratorService = require("./reportGeneratorService");
 const executionLoggerService = require("./executionLoggerService");
 const aiAppScannerService = require("./aiAppScannerService");
 const { logger } = require("../config/logger");
+const {
+  createStructuredError,
+  logError,
+  logWarn
+} = require("../utils/scanErrors");
 
 const DEFAULT_TOOL_SEQUENCE = {
   website: [
@@ -119,8 +124,8 @@ function serializeActiveOrchestration(entry) {
 function broadcastOrchestrationEvent(engagementId, event, payload) {
   try {
     broadcastToRoom(engagementId, event, payload);
-  } catch {
-    // no-op for orchestrator control flow
+  } catch (error) {
+    logWarn(logger, { engagementId, event }, "Realtime orchestration broadcast failed", error);
   }
 }
 
@@ -248,6 +253,8 @@ async function persistScanJob({
   createdBy = "unknown",
   failed = false,
   failureMessage = "",
+  status = "",
+  durationMs = 0,
   findingDefaults = {},
   executionMeta = null
 }) {
@@ -255,10 +262,10 @@ async function persistScanJob({
     engagementId: engagement._id,
     toolId,
     targetUrl: engagement.targetUrl,
-    status: failed ? "failed" : "success",
+    status: status || (failed ? "failed" : "success"),
     startedAt: new Date(),
     finishedAt: new Date(),
-    durationMs: 0,
+    durationMs,
     output: {
       findings,
       ...output
@@ -284,6 +291,76 @@ async function persistScanJob({
   });
 }
 
+function getPostScanJobStatus(result = {}, findings = []) {
+  const status = String(result.status || "").toUpperCase();
+  if (status === "NOT_APPLICABLE") {
+    return "not_applicable";
+  }
+  if (status === "TOOL_NOT_INSTALLED") {
+    return "tool_not_installed";
+  }
+  if (status === "ERROR") {
+    return "failed";
+  }
+  if (result.error && findings.length === 0) {
+    return "failed";
+  }
+  return "success";
+}
+
+function getPostScanFailureMessage(result = {}) {
+  return (
+    result.failureReason ||
+    result.error ||
+    result.message ||
+    result.reason ||
+    ""
+  );
+}
+
+async function persistFailedPostScan({
+  engagement,
+  userId,
+  toolId,
+  error,
+  testId,
+  testName
+}) {
+  const structuredError = createStructuredError(error);
+  const failedJob = await persistScanJob({
+    engagement,
+    toolId,
+    findings: [],
+    output: {
+      source: toolId,
+      ...structuredError
+    },
+    createdBy: userId,
+    failed: true,
+    failureMessage: structuredError.failureReason,
+    status: "failed",
+    executionMeta: { testId, testName }
+  });
+  await executionLoggerService.logExecutionJob({
+    engagementId: String(engagement._id),
+    testId,
+    testName,
+    tool: toolId,
+    category: toExecutionCategory(toolId),
+    target: engagement.targetUrl,
+    parameters: {
+      mode: "post-orchestration",
+      source: toolId
+    },
+    job: failedJob.toObject(),
+    meta: {
+      scanner: toolId,
+      errorCode: structuredError.errorCode
+    }
+  });
+  return structuredError;
+}
+
 async function runPostExecutionScans(engagement, userId) {
   const engagementId = String(engagement._id);
   const summaries = [];
@@ -293,17 +370,26 @@ async function runPostExecutionScans(engagement, userId) {
     const testName = toExecutionTestName("secrets_scan");
     const secretsResult = await secretsDetectionService.scanEngagement(engagementId);
     const secretsFindings = asArray(secretsResult.findings);
+    const secretsStatus = getPostScanJobStatus(secretsResult, secretsFindings);
     const secretsJob = await persistScanJob({
       engagement,
       toolId: "secrets_scan",
       findings: secretsFindings,
       output: {
         source: "secrets_detection",
+        status: secretsResult.status || "SUCCESS",
+        reason: secretsResult.reason || "",
+        failureReason: secretsResult.failureReason || "",
+        errorCode: secretsResult.errorCode || "",
+        attemptedFiles: secretsResult.attemptedFiles || [],
+        filesFound: secretsResult.filesFound || [],
         error: secretsResult.error || null
       },
       createdBy: userId,
-      failed: Boolean(secretsResult.error) && secretsFindings.length === 0,
-      failureMessage: secretsResult.error || "",
+      failed: secretsStatus === "failed",
+      failureMessage: getPostScanFailureMessage(secretsResult),
+      status: secretsStatus,
+      durationMs: secretsResult.durationMs || 0,
       findingDefaults: {
         idPrefix: "secret",
         severity: "critical",
@@ -331,14 +417,21 @@ async function runPostExecutionScans(engagement, userId) {
     });
     summaries.push({
       toolId: "secrets_scan",
+      status: secretsStatus,
       findings: secretsFindings.length,
-      error: secretsResult.error || null
+      error: secretsResult.error || null,
+      reason: getPostScanFailureMessage(secretsResult)
     });
   } catch (error) {
-    logger.warn(
-      { engagementId, error: error?.message || String(error) },
-      "Secrets scan post-step failed"
-    );
+    logError(logger, { engagementId, toolId: "secrets_scan" }, "Secrets scan post-step failed", error);
+    await persistFailedPostScan({
+      engagement,
+      userId,
+      toolId: "secrets_scan",
+      error,
+      testId: buildExecutionTestId("secrets_scan", "post-error"),
+      testName: toExecutionTestName("secrets_scan")
+    });
   }
 
   try {
@@ -349,18 +442,27 @@ async function runPostExecutionScans(engagement, userId) {
       engagement.targetUrl
     );
     const supplyFindings = asArray(supplyChainResult.findings);
+    const supplyStatus = getPostScanJobStatus(supplyChainResult, supplyFindings);
     const supplyJob = await persistScanJob({
       engagement,
       toolId: "supply_chain_scan",
       findings: supplyFindings,
       output: {
         source: "supply_chain",
+        status: supplyChainResult.status || "SUCCESS",
         vulnerabilities: supplyChainResult.vulnerabilities || [],
+        attemptedFiles: supplyChainResult.attemptedFiles || [],
+        filesFound: supplyChainResult.filesFound || [],
+        reason: supplyChainResult.reason || "",
+        failureReason: supplyChainResult.failureReason || "",
+        errorCode: supplyChainResult.errorCode || "",
         error: supplyChainResult.error || null
       },
       createdBy: userId,
-      failed: Boolean(supplyChainResult.error) && supplyFindings.length === 0,
-      failureMessage: supplyChainResult.error || "",
+      failed: supplyStatus === "failed",
+      failureMessage: getPostScanFailureMessage(supplyChainResult),
+      status: supplyStatus,
+      durationMs: supplyChainResult.durationMs || 0,
       findingDefaults: {
         idPrefix: "supply",
         severity: "medium",
@@ -389,14 +491,21 @@ async function runPostExecutionScans(engagement, userId) {
     });
     summaries.push({
       toolId: "supply_chain_scan",
+      status: supplyStatus,
       findings: supplyFindings.length,
-      error: supplyChainResult.error || null
+      error: supplyChainResult.error || null,
+      reason: getPostScanFailureMessage(supplyChainResult)
     });
   } catch (error) {
-    logger.warn(
-      { engagementId, error: error?.message || String(error) },
-      "Supply-chain scan post-step failed"
-    );
+    logError(logger, { engagementId, toolId: "supply_chain_scan" }, "Supply-chain scan post-step failed", error);
+    await persistFailedPostScan({
+      engagement,
+      userId,
+      toolId: "supply_chain_scan",
+      error,
+      testId: buildExecutionTestId("supply_chain_scan", "post-error"),
+      testName: toExecutionTestName("supply_chain_scan")
+    });
   }
 
   const hasAwsCredentials = Boolean(
@@ -475,19 +584,27 @@ async function runPostExecutionScans(engagement, userId) {
       engagement.targetUrl
     );
     const apiFindings = asArray(apiResult.findings);
+    const apiStatus = getPostScanJobStatus(apiResult, apiFindings);
     const apiJob = await persistScanJob({
       engagement,
       toolId: "api_security_scan",
       findings: apiFindings,
       output: {
         source: "api_security",
+        status: apiResult.status || "SUCCESS",
         scannedEndpoints: apiResult.scannedEndpoints || [],
         endpointCount: apiResult.endpointCount || 0,
+        probedUrlCount: apiResult.probedUrlCount || apiResult.endpointCount || 0,
+        reason: apiResult.reason || "",
+        failureReason: apiResult.failureReason || "",
+        errorCode: apiResult.errorCode || "",
         error: apiResult.error || null
       },
       createdBy: userId,
-      failed: Boolean(apiResult.error) && apiFindings.length === 0,
-      failureMessage: apiResult.error || "",
+      failed: apiStatus === "failed",
+      failureMessage: getPostScanFailureMessage(apiResult),
+      status: apiStatus,
+      durationMs: apiResult.durationMs || 0,
       findingDefaults: {
         idPrefix: "api",
         severity: "medium",
@@ -519,14 +636,21 @@ async function runPostExecutionScans(engagement, userId) {
     });
     summaries.push({
       toolId: "api_security_scan",
+      status: apiStatus,
       findings: apiFindings.length,
-      error: apiResult.error || null
+      error: apiResult.error || null,
+      reason: getPostScanFailureMessage(apiResult)
     });
   } catch (error) {
-    logger.warn(
-      { engagementId, error: error?.message || String(error) },
-      "API security post-step failed"
-    );
+    logError(logger, { engagementId, toolId: "api_security_scan" }, "API security post-step failed", error);
+    await persistFailedPostScan({
+      engagement,
+      userId,
+      toolId: "api_security_scan",
+      error,
+      testId: buildExecutionTestId("api_security_scan", "post-error"),
+      testName: toExecutionTestName("api_security_scan")
+    });
   }
 
   try {
@@ -537,22 +661,28 @@ async function runPostExecutionScans(engagement, userId) {
       engagement.targetUrl
     );
     const containerFindings = asArray(containerResult.findings);
+    const containerStatus = getPostScanJobStatus(containerResult, containerFindings);
     const containerJob = await persistScanJob({
       engagement,
       toolId: "container_security_scan",
       findings: containerFindings,
       output: {
         source: "container_security",
+        status: containerResult.status || "SUCCESS",
         attemptedFiles: containerResult.attemptedFiles || [],
         filesFound: containerResult.filesFound || [],
         checksRan: containerResult.checksRan || [],
         skipped: Boolean(containerResult.skipped),
         reason: containerResult.reason || "",
+        failureReason: containerResult.failureReason || "",
+        errorCode: containerResult.errorCode || "",
         error: containerResult.error || null
       },
       createdBy: userId,
-      failed: Boolean(containerResult.error) && containerFindings.length === 0,
-      failureMessage: containerResult.error || "",
+      failed: containerStatus === "failed",
+      failureMessage: getPostScanFailureMessage(containerResult),
+      status: containerStatus,
+      durationMs: containerResult.durationMs || 0,
       findingDefaults: {
         idPrefix: "container",
         severity: "medium",
@@ -586,14 +716,21 @@ async function runPostExecutionScans(engagement, userId) {
     });
     summaries.push({
       toolId: "container_security_scan",
+      status: containerStatus,
       findings: containerFindings.length,
-      error: containerResult.error || null
+      error: containerResult.error || null,
+      reason: getPostScanFailureMessage(containerResult)
     });
   } catch (error) {
-    logger.warn(
-      { engagementId, error: error?.message || String(error) },
-      "Container security post-step failed"
-    );
+    logError(logger, { engagementId, toolId: "container_security_scan" }, "Container security post-step failed", error);
+    await persistFailedPostScan({
+      engagement,
+      userId,
+      toolId: "container_security_scan",
+      error,
+      testId: buildExecutionTestId("container_security_scan", "post-error"),
+      testName: toExecutionTestName("container_security_scan")
+    });
   }
 
   try {

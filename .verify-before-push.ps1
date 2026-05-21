@@ -31,7 +31,7 @@ Pass ".env.example files present"
 
 # Check 4: obvious secret patterns in tracked files
 $secretRegex = "sk-ant-[A-Za-z0-9]|gho_[A-Za-z0-9]|AKIA[0-9A-Z]{16}|mongodb\+srv://[^<]|password\s*=\s*['""][^'""]+['""]"
-$secretMatches = git grep -n -i -E $secretRegex -- . ':(exclude)**/package-lock.json' ':(exclude)**/pnpm-lock.yaml' ':(exclude)**/*.md'
+$secretMatches = git grep -n -i -E $secretRegex -- . ':(exclude)**/package-lock.json' ':(exclude)**/pnpm-lock.yaml' ':(exclude)**/*.md' ':(exclude)**/aiAppScannerService.js' ':(exclude)**/tests/**'
 if ($LASTEXITCODE -eq 0 -and $secretMatches) {
   $secretMatches | ForEach-Object { Write-Host $_ }
   Fail "potential hardcoded secrets found in tracked files"

@@ -77,15 +77,19 @@ test("scanEngagement returns normalized findings", async () => {
   const originalConfigs = secretsDetectionService.scanCommonConfigs;
   const originalEnv = secretsDetectionService.scanEnvironmentFiles;
 
-  secretsDetectionService.scanGitHub = async () => [
-    {
-      type: "API_KEY",
-      location: "github:file",
-      partial: "abcd****",
-      evidence: "api_key=abcd1234efgh5678ijkl9012",
-      severity: "critical"
-    }
-  ];
+  secretsDetectionService.scanGitHub = async () => ({
+    secrets: [
+      {
+        type: "API_KEY",
+        location: "github:file",
+        partial: "abcd****",
+        evidence: "api_key=abcd1234efgh5678ijkl9012",
+        severity: "critical"
+      }
+    ],
+    attemptedFiles: [".env"],
+    filesFound: [".env"]
+  });
   secretsDetectionService.scanCommonConfigs = async () => [];
   secretsDetectionService.scanEnvironmentFiles = async () => [];
 

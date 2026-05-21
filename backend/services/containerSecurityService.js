@@ -2,6 +2,12 @@ const axios = require("axios");
 const Engagement = require("../models/Engagement");
 const executionLoggerService = require("./executionLoggerService");
 const { logger } = require("../config/logger");
+const {
+  createNotApplicableResult,
+  createStructuredError,
+  logError,
+  logWarn
+} = require("../utils/scanErrors");
 
 const K8S_PATHS = [
   "k8s/deployment.yaml",
@@ -402,6 +408,7 @@ class ContainerSecurityService {
         data: response.data
       };
     } catch (error) {
+      logWarn(logger, { url }, "Container scanner GitHub raw file request failed", error);
       return {
         status: 0,
         data: null,
@@ -447,7 +454,10 @@ class ContainerSecurityService {
     filesFound,
     checksRan,
     durationMs,
-    note = ""
+    note = "",
+    status = findings.length > 0 ? "VULNERABLE" : "PASSED",
+    failureReason = "",
+    errorCode = ""
   }) {
     if (!engagementId) {
       return;
@@ -474,13 +484,15 @@ class ContainerSecurityService {
         }).length
       },
       result: {
-        status: findings.length > 0 ? "VULNERABLE" : "PASSED",
+        status,
         confidence: findings.length > 0 ? 0.9 : 0.85,
         reason:
           note ||
           (findings.length > 0
             ? `${findings.length} container security finding(s) detected.`
             : "No container security findings detected."),
+        failureReason,
+        errorCode,
         severity: this.topSeverity(findings)
       },
       executionTimeMs: durationMs,
@@ -504,6 +516,12 @@ class ContainerSecurityService {
       const targetUrl = String(targetUrlInput || engagement.targetUrl || "").trim();
       const parsedGitHub = parseGitHubTarget(targetUrl);
       if (!parsedGitHub) {
+        const notApplicable = createNotApplicableResult({
+          reason:
+            "Source code analysis requires a GitHub repository URL. Container scans were not applicable for this target type.",
+          requiredTarget: "a GitHub repository URL",
+          note: "The container scan was intentionally skipped rather than failing."
+        });
         await this.logContainerExecution({
           engagementId: String(engagement._id),
           targetUrl,
@@ -512,15 +530,20 @@ class ContainerSecurityService {
           filesFound: [],
           checksRan: [],
           durationMs: Date.now() - startedAt,
-          note: "Target is not a GitHub repository. Container scan skipped."
+          note: notApplicable.reason,
+          status: "NOT_APPLICABLE",
+          failureReason: notApplicable.failureReason,
+          errorCode: "NOT_APPLICABLE"
         });
         return {
+          ...notApplicable,
           findings: [],
           attemptedFiles: [],
           filesFound: [],
           checksRan: [],
           skipped: true,
-          reason: "Target is not a GitHub repository URL."
+          reason: notApplicable.reason,
+          durationMs: Date.now() - startedAt
         };
       }
 
@@ -598,22 +621,24 @@ class ContainerSecurityService {
       });
 
       return {
+        status: "SUCCESS",
         findings,
         attemptedFiles,
         filesFound,
-        checksRan: [...checksRan]
+        checksRan: [...checksRan],
+        durationMs: Date.now() - startedAt
       };
     } catch (error) {
-      logger.error(
-        { engagementId, error: error?.message || String(error) },
-        "Container security scan failed"
-      );
+      logError(logger, { engagementId }, "Container security scan failed", error);
+      const structuredError = createStructuredError(error);
       return {
+        ...structuredError,
         findings: [],
         attemptedFiles: [],
         filesFound: [],
         checksRan: [],
-        error: error?.message || "Container security scan failed"
+        error: structuredError.message,
+        durationMs: Date.now() - startedAt
       };
     }
   }

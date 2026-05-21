@@ -1,9 +1,14 @@
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { URL } = require("node:url");
+const { logger } = require("../config/logger");
+const { logWarn } = require("../utils/scanErrors");
 
 const execFileAsync = promisify(execFile);
-const DOCKER_ENABLED = process.env.ENABLE_DOCKER_TOOLS === "true";
+
+function isDockerEnabled() {
+  return process.env.ENABLE_DOCKER_TOOLS === "true";
+}
 
 const REAL_TOOL_REGISTRY = {
   nmap_tcp_scan: {
@@ -84,6 +89,40 @@ const REAL_TOOL_REGISTRY = {
     ]
   }
 };
+
+const LOCAL_TOOL_NAMES = {
+  nmap_tcp_scan: "nmap",
+  nuclei_scan: "nuclei",
+  nikto_scan: "nikto",
+  sqlmap_detect: "sqlmap"
+};
+
+async function assertDockerAvailableForTool(toolId) {
+  const toolName = LOCAL_TOOL_NAMES[toolId] || toolId;
+  if (!isDockerEnabled()) {
+    const error = new Error(
+      `${toolName} scan skipped because Docker tool execution is disabled. Set ENABLE_DOCKER_TOOLS=true and ensure Docker is installed to run ${toolName}.`
+    );
+    error.code = "DOCKER_DISABLED";
+    error.errorCode = "TOOL_NOT_INSTALLED";
+    throw error;
+  }
+
+  try {
+    await execFileAsync("docker", ["--version"], {
+      timeout: 5000,
+      maxBuffer: 1024 * 256
+    });
+  } catch (error) {
+    const wrapped = new Error(
+      `${toolName} scan skipped because docker was not found on system PATH. VENOM runs ${toolName} through a Docker image (${REAL_TOOL_REGISTRY[toolId]?.image || "unknown image"}). Install Docker or add it to PATH to enable this probe.`
+    );
+    wrapped.code = "TOOL_NOT_INSTALLED";
+    wrapped.errorCode = "TOOL_NOT_INSTALLED";
+    wrapped.cause = error;
+    throw wrapped;
+  }
+}
 
 function severityFromPort(port) {
   if ([21, 23, 3389].includes(port)) {
@@ -174,7 +213,8 @@ function parseNucleiOutput(stdout = "") {
               : null
         }
       });
-    } catch {
+    } catch (error) {
+      logWarn(logger, { toolId: "nuclei_scan", line: line.slice(0, 240) }, "Nuclei output line was not valid JSON", error);
       // Ignore malformed line.
     }
   }
@@ -207,7 +247,8 @@ function parseNiktoOutput(stdout = "") {
         }
       });
     }
-  } catch {
+  } catch (error) {
+    logWarn(logger, { toolId: "nikto_scan" }, "Nikto JSON output parse failed; falling back to text heuristics", error);
     if (/OSVDB|Nikto|potentially/i.test(stdout)) {
       findings.push({
         id: "nikto-text-output-finding",
@@ -285,13 +326,7 @@ async function executeRealTool(toolId, targetUrl, timeoutSeconds) {
     throw error;
   }
 
-  if (!DOCKER_ENABLED) {
-    const error = new Error(
-      "Docker tool execution disabled. Set ENABLE_DOCKER_TOOLS=true to allow."
-    );
-    error.code = "DOCKER_DISABLED";
-    throw error;
-  }
+  await assertDockerAvailableForTool(toolId);
 
   const commandArgs = tool.buildArgs(targetUrl);
   const dockerArgs = ["run", "--rm", tool.image, ...commandArgs];

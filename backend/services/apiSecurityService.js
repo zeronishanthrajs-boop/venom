@@ -2,6 +2,11 @@ const axios = require("axios");
 const Engagement = require("../models/Engagement");
 const executionLoggerService = require("./executionLoggerService");
 const { logger } = require("../config/logger");
+const {
+  createStructuredError,
+  logError,
+  logWarn
+} = require("../utils/scanErrors");
 
 const API_SPEC_PATHS = ["/openapi.json", "/swagger.json", "/api-docs", "/v3/api-docs"];
 const COMMON_API_PATHS = [
@@ -12,8 +17,43 @@ const COMMON_API_PATHS = [
   "/api/products",
   "/api/login"
 ];
+const COMMON_WEB_PATHS = [
+  "/",
+  "/index.php",
+  "/search",
+  "/search.php?test=query",
+  "/login",
+  "/login.php",
+  "/admin",
+  "/products",
+  "/product",
+  "/list",
+  "/list.php",
+  "/listproducts.php?cat=1",
+  "/product.php?id=1",
+  "/view",
+  "/view.php?id=1",
+  "/user",
+  "/user.php?id=1",
+  "/profile",
+  "/profile.php?id=1",
+  "/upload",
+  "/upload.php",
+  "/download",
+  "/download.php?file=test.txt",
+  "/artists.php?artist=1",
+  "/categories.php",
+  "/showimage.php?file=./pictures/1.jpg"
+];
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 const PII_HINTS = ["email", "phone", "password", "token", "ssn", "address", "dob"];
+const SQL_ERROR_PATTERNS = [
+  /you have an error in your sql syntax/i,
+  /warning:\s*mysql/i,
+  /unclosed quotation mark/i,
+  /quoted string not properly terminated/i,
+  /odbc|jdbc|sqlite|postgresql|mariadb/i
+];
 
 function asObject(value) {
   return value && typeof value === "object" ? value : {};
@@ -145,6 +185,12 @@ class ApiSecurityService {
         durationMs: Date.now() - startedAt
       };
     } catch (error) {
+      logWarn(
+        logger,
+        { url, method, timeout },
+        "API scanner HTTP request failed",
+        error
+      );
       return {
         ok: false,
         status: 0,
@@ -175,7 +221,13 @@ class ApiSecurityService {
           ? (() => {
               try {
                 return JSON.parse(specResponse.body);
-              } catch {
+              } catch (error) {
+                logWarn(
+                  logger,
+                  { targetUrl, specPath },
+                  "OpenAPI spec response was not valid JSON",
+                  error
+                );
                 return {};
               }
             })()
@@ -186,26 +238,55 @@ class ApiSecurityService {
       }
     }
 
-    for (const path of COMMON_API_PATHS) {
-      const headResp = await this.safeRequest({
-        url: joinUrl(targetUrl, path),
-        method: "HEAD"
-      });
-      if (headResp.status > 0 && headResp.status !== 404) {
-        endpoints.push({ path, method: "HEAD", source: "probe" });
-        continue;
-      }
+    const rootResponse = await this.safeRequest({
+      url: joinUrl(targetUrl, "/"),
+      method: "GET",
+      timeout: 8000
+    });
+    if (rootResponse.status > 0 && rootResponse.status !== 404) {
+      endpoints.push({ path: "/", method: "GET", source: "root" });
+      endpoints.push(...this.extractEndpointsFromHtml(rootResponse.body, targetUrl));
+    }
 
+    for (const path of [...COMMON_API_PATHS, ...COMMON_WEB_PATHS]) {
       const getResp = await this.safeRequest({
         url: joinUrl(targetUrl, path),
         method: "GET"
       });
       if (getResp.status > 0 && getResp.status !== 404) {
-        endpoints.push({ path, method: "GET", source: "probe" });
+        endpoints.push({ path, method: "GET", source: "fallback" });
       }
     }
 
     return this.deduplicateEndpoints(endpoints);
+  }
+
+  extractEndpointsFromHtml(body, targetUrl) {
+    const html = asString(body);
+    if (!html.trim()) {
+      return [];
+    }
+    const discovered = [];
+    const hrefPattern = /\bhref\s*=\s*["']([^"']+)["']/gi;
+    let match = hrefPattern.exec(html);
+    while (match) {
+      const href = String(match[1] || "").trim();
+      try {
+        const resolved = new URL(href, targetUrl);
+        const base = new URL(targetUrl);
+        if (resolved.hostname === base.hostname) {
+          discovered.push({
+            path: `${resolved.pathname || "/"}${resolved.search || ""}`,
+            method: "GET",
+            source: "html-link"
+          });
+        }
+      } catch (error) {
+        logWarn(logger, { href, targetUrl }, "API scanner could not parse discovered link", error);
+      }
+      match = hrefPattern.exec(html);
+    }
+    return discovered;
   }
 
   materializePath(path) {
@@ -215,6 +296,17 @@ class ApiSecurityService {
 
   incrementEndpointId(path) {
     const materialized = this.materializePath(path);
+    const queryIndex = materialized.indexOf("?");
+    if (queryIndex !== -1) {
+      const pathname = materialized.slice(0, queryIndex) || "/";
+      const params = new URLSearchParams(materialized.slice(queryIndex + 1));
+      for (const [key, value] of params.entries()) {
+        if (/^\d+$/.test(String(value))) {
+          params.set(key, String(Number.parseInt(value, 10) + 1));
+          return `${pathname}?${params.toString()}`;
+        }
+      }
+    }
     const segments = materialized.split("/");
     for (let index = segments.length - 1; index >= 0; index -= 1) {
       if (!/^\d+$/.test(segments[index])) {
@@ -224,6 +316,28 @@ class ApiSecurityService {
       return segments.join("/");
     }
     return null;
+  }
+
+  hasQueryParams(path) {
+    return normalizePath(path).includes("?");
+  }
+
+  buildPathWithQueryPayload(path, paramName, payload) {
+    const materialized = this.materializePath(path);
+    const [pathname, rawQuery = ""] = materialized.split("?");
+    const params = new URLSearchParams(rawQuery);
+    params.set(paramName, payload);
+    return `${pathname || "/"}?${params.toString()}`;
+  }
+
+  getQueryParamNames(path) {
+    const query = String(path || "").split("?")[1] || "";
+    return [...new URLSearchParams(query).keys()];
+  }
+
+  hasSqlError(body) {
+    const text = asString(body);
+    return SQL_ERROR_PATTERNS.some((pattern) => pattern.test(text));
   }
 
   containsSensitiveData(body) {
@@ -282,7 +396,11 @@ class ApiSecurityService {
       return;
     }
     const statusCode = Number(response?.status || 0);
-    const resultStatus = finding ? "VULNERABLE" : "PASSED";
+    const failedResponse = response && response.ok === false;
+    const resultStatus = failedResponse ? "FAILED" : finding ? "VULNERABLE" : "PASSED";
+    const failureReason = failedResponse
+      ? `NETWORK_ERROR: ${response.error || "Request failed before scanner could evaluate the endpoint."}`
+      : "";
     await this.executionLogger.logTestExecution({
       engagementId,
       testId: buildTestId(String(testName || "check").toLowerCase().replace(/\s+/g, "-")),
@@ -305,7 +423,11 @@ class ApiSecurityService {
         confidence: finding ? 0.9 : 0.85,
         reason: finding
           ? String(finding.title || "Potential API vulnerability detected.")
+          : failedResponse
+            ? failureReason
           : "No vulnerability signal detected.",
+        failureReason,
+        errorCode: failedResponse ? "NETWORK_ERROR" : "",
         severity: finding?.severity || "low"
       },
       executionTimeMs: durationMs,
@@ -480,6 +602,9 @@ class ApiSecurityService {
 
   async runInputValidationTest(targetUrl, endpoint, engagementId) {
     const methodToTest = String(endpoint.method || "").toUpperCase();
+    if (this.hasQueryParams(endpoint.path)) {
+      return this.runQueryParameterInjectionTest(targetUrl, endpoint, engagementId);
+    }
     if (!["POST", "PUT"].includes(methodToTest)) {
       return [];
     }
@@ -555,6 +680,83 @@ class ApiSecurityService {
     return findings;
   }
 
+  async runQueryParameterInjectionTest(targetUrl, endpoint, engagementId) {
+    const requestPath = this.materializePath(endpoint.path);
+    const paramNames = this.getQueryParamNames(requestPath);
+    if (paramNames.length === 0) {
+      return [];
+    }
+
+    const payloads = [
+      { key: "sqli_quote", value: "1'" },
+      { key: "sqli_boolean", value: "1 OR 1=1" },
+      { key: "xss_reflection", value: "<script>alert('venom')</script>" }
+    ];
+    const findings = [];
+
+    for (const paramName of paramNames) {
+      for (const payload of payloads) {
+        const testPath = this.buildPathWithQueryPayload(requestPath, paramName, payload.value);
+        // eslint-disable-next-line no-await-in-loop
+        const response = await this.safeRequest({
+          url: joinUrl(targetUrl, testPath),
+          method: "GET",
+          timeout: 8000
+        });
+
+        const body = asString(response.body);
+        const reflected = body.includes(payload.value);
+        const sqlError = this.hasSqlError(body);
+        const finding =
+          sqlError || reflected
+            ? this.buildFinding({
+                type: sqlError ? "SQL_INJECTION" : "XSS",
+                title: sqlError
+                  ? `SQL error response triggered by query parameter '${paramName}'`
+                  : `Reflected query input detected for '${paramName}'`,
+                description: sqlError
+                  ? "A quote/boolean SQL payload caused a database error signature in the HTTP response."
+                  : "A test payload was reflected in the response body without obvious encoding.",
+                severity: sqlError ? "high" : "medium",
+                endpoint: testPath,
+                methodTested: "GET",
+                testPerformed: `Changed query parameter ${paramName} using ${payload.key} payload.`,
+                responseObserved: sqlError
+                  ? `HTTP ${response.status} with SQL error signature.`
+                  : `HTTP ${response.status} reflected the supplied payload.`,
+                remediation: sqlError
+                  ? "Use parameterized queries for all query-string inputs and suppress database errors in responses."
+                  : "Apply output encoding and strict input validation for reflected query parameters."
+              })
+            : null;
+
+        // eslint-disable-next-line no-await-in-loop
+        await this.logApiTest({
+          engagementId,
+          testName: "Query Parameter Injection Check",
+          endpoint: joinUrl(targetUrl, testPath),
+          method: "GET",
+          parameters: {
+            check: "query_parameter_injection",
+            paramName,
+            payloadType: payload.key
+          },
+          response,
+          finding,
+          durationMs: response.durationMs
+        });
+
+        if (finding) {
+          finding.metadata.paramName = paramName;
+          finding.metadata.payloadType = payload.key;
+          findings.push(finding);
+        }
+      }
+    }
+
+    return findings;
+  }
+
   async checkGraphQLIntrospection(targetUrl, engagementId = null) {
     const response = await this.safeRequest({
       url: joinUrl(targetUrl, "/graphql"),
@@ -615,16 +817,51 @@ class ApiSecurityService {
 
       const targetUrl = String(targetUrlInput || engagement.targetUrl || "").trim();
       if (!looksLikeHttpUrl(targetUrl)) {
+        const structuredError = createStructuredError(
+          new Error("Target URL is not a valid HTTP URL."),
+          {
+            errorCode: "INVALID_TARGET_URL",
+            message: "Target URL is not a valid HTTP URL."
+          }
+        );
         return {
+          ...structuredError,
           findings: [],
           scannedEndpoints: [],
-          warning: "Target URL is not a valid HTTP URL."
+          warning: structuredError.message
         };
       }
 
       logger.info({ engagementId, targetUrl }, "Starting API security scan");
       const discoveredEndpoints = await this.discoverEndpoints(targetUrl);
       const findings = [];
+
+      await this.executionLogger.logTestExecution({
+        engagementId: String(engagement._id),
+        testId: buildTestId("discovery"),
+        testName: "API Endpoint Discovery",
+        tool: "VENOM API Scanner",
+        category: "API Security",
+        target: targetUrl,
+        parameters: {
+          targetUrl,
+          endpointCount: discoveredEndpoints.length,
+          sources: Array.from(new Set(discoveredEndpoints.map((item) => item.source || "probe")))
+        },
+        response: {
+          statusCode: discoveredEndpoints.length > 0 ? 200 : 404,
+          headers: {},
+          bodySize: JSON.stringify(discoveredEndpoints).length
+        },
+        result: {
+          status: "PASSED",
+          confidence: 0.85,
+          reason: `API scanner discovered/probed ${discoveredEndpoints.length} URL(s).`,
+          severity: "info"
+        },
+        executionTimeMs: 0,
+        findingCount: 0
+      });
 
       for (const endpoint of discoveredEndpoints) {
         // eslint-disable-next-line no-await-in-loop
@@ -681,19 +918,20 @@ class ApiSecurityService {
       );
 
       return {
+        status: "SUCCESS",
         findings,
         scannedEndpoints: discoveredEndpoints,
-        endpointCount: discoveredEndpoints.length
+        endpointCount: discoveredEndpoints.length,
+        probedUrlCount: discoveredEndpoints.length
       };
     } catch (error) {
-      logger.error(
-        { engagementId, error: error?.message || String(error) },
-        "API security scan failed"
-      );
+      logError(logger, { engagementId }, "API security scan failed", error);
+      const structuredError = createStructuredError(error);
       return {
+        ...structuredError,
         findings: [],
         scannedEndpoints: [],
-        error: error?.message || "API security scan failed"
+        error: structuredError.message
       };
     }
   }

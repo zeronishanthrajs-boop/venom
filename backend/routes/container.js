@@ -80,6 +80,24 @@ function filterContainerFindings(findings = []) {
   });
 }
 
+function resolveJobStatus(result = {}, findings = []) {
+  const status = String(result.status || "").toUpperCase();
+  if (status === "NOT_APPLICABLE") {
+    return "not_applicable";
+  }
+  if (status === "TOOL_NOT_INSTALLED") {
+    return "tool_not_installed";
+  }
+  if (status === "ERROR" || (result.error && findings.length === 0)) {
+    return "failed";
+  }
+  return "success";
+}
+
+function resolveFailureMessage(result = {}) {
+  return result.failureReason || result.error || result.message || result.reason || "";
+}
+
 router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
   try {
     const { engagementId } = req.params;
@@ -98,13 +116,13 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
     const normalizedFindings = findings.map((finding, index) =>
       toExecutionFinding(finding, index, executionMeta, engagement.targetUrl)
     );
-    const hasError = Boolean(result.error) && normalizedFindings.length === 0;
+    const jobStatus = resolveJobStatus(result, normalizedFindings);
 
     const job = await ExecutionJob.create({
       engagementId: engagement._id,
       toolId: "container_security_scan",
       targetUrl: engagement.targetUrl,
-      status: hasError ? "failed" : "success",
+      status: jobStatus,
       startedAt: new Date(startedAt),
       finishedAt: new Date(),
       durationMs: Date.now() - startedAt,
@@ -114,12 +132,15 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
         attemptedFiles: result.attemptedFiles || [],
         filesFound: result.filesFound || [],
         checksRan: result.checksRan || [],
+        status: result.status || "SUCCESS",
         skipped: Boolean(result.skipped),
         reason: result.reason || "",
+        failureReason: result.failureReason || "",
+        errorCode: result.errorCode || "",
         error: result.error || null
       },
       findings: normalizedFindings,
-      errorMessage: hasError ? result.error : "",
+      errorMessage: jobStatus === "failed" ? resolveFailureMessage(result) : "",
       createdBy: req.user?.id || "unknown"
     });
 
@@ -157,7 +178,7 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
       return res.status(400).json({ error: "Invalid engagement id" });
     }
     logger.error(
-      { error: error?.message || String(error) },
+      { error: error?.message || String(error), stack: error?.stack || "" },
       "Container security scan route failed"
     );
     return next(error);

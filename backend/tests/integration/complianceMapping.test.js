@@ -95,7 +95,16 @@ test("generateComplianceReport returns CRITICAL risk when critical findings exis
 });
 
 test("generateComplianceReport returns 100% CIS score for zero findings", () => {
-  const report = complianceMapperService.generateComplianceReport([]);
+  const jobs = [
+    { toolId: "http_headers_probe", status: "success" },
+    { toolId: "dns_lookup_probe", status: "success" },
+    { toolId: "tls_metadata_probe", status: "success" },
+    { toolId: "api_security_scan", status: "success" },
+    { toolId: "container_security_scan", status: "success" },
+    { toolId: "supply_chain_scan", status: "success" },
+    { toolId: "secrets_scan", status: "success" }
+  ];
+  const report = complianceMapperService.generateComplianceReport([], { jobs });
   assert.equal(report.cis.scorePercent, 100);
   assert.equal(report.cis.passedControls, 7);
   assert.equal(report.cis.failedControls, 0);

@@ -9,6 +9,8 @@ const {
   analyzeHeaderFindings,
   detectTechnologyFingerprint
 } = require("../tooling/vulnerabilityFeed");
+const { logger } = require("../config/logger");
+const { createNotApplicableResult } = require("../utils/scanErrors");
 
 const execFileAsync = promisify(execFile);
 const SENSITIVE_HEADERS = [
@@ -43,9 +45,9 @@ function withTimeout(promise, timeoutMs, label) {
   });
 }
 
-async function fetchWithTimeout(targetUrl, timeoutMs) {
+async function fetchOnceWithTimeout(targetUrl, timeoutMs) {
   const safeTimeoutMs =
-    Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30000;
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 15000;
 
   if (typeof AbortController !== "undefined") {
     const controller = new AbortController();
@@ -82,10 +84,45 @@ async function fetchWithTimeout(targetUrl, timeoutMs) {
   );
 }
 
-async function runHttpHeadersProbe(targetUrl, timeoutMs) {
-  const response = await fetchWithTimeout(targetUrl, timeoutMs);
+async function fetchWithTimeout(targetUrl, timeoutMs, maxRedirects = 3) {
+  const safeTimeoutMs = Math.min(
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 15000,
+    15000
+  );
+  let currentUrl = targetUrl;
+  const redirectChain = [];
 
-  const responseBody = await response.text().catch(() => "");
+  for (let redirects = 0; redirects <= maxRedirects; redirects += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const response = await fetchOnceWithTimeout(currentUrl, safeTimeoutMs);
+    const location = response.headers.get("location");
+    if (
+      response.status >= 300 &&
+      response.status < 400 &&
+      location &&
+      redirects < maxRedirects
+    ) {
+      const nextUrl = new URL(location, currentUrl).toString();
+      redirectChain.push({ from: currentUrl, to: nextUrl, status: response.status });
+      currentUrl = nextUrl;
+      continue;
+    }
+    return { response, finalUrl: currentUrl, redirectChain };
+  }
+
+  return { response: await fetchOnceWithTimeout(currentUrl, safeTimeoutMs), finalUrl: currentUrl, redirectChain };
+}
+
+async function runHttpHeadersProbe(targetUrl, timeoutMs) {
+  const { response, finalUrl, redirectChain } = await fetchWithTimeout(targetUrl, timeoutMs, 3);
+
+  const responseBody = await response.text().catch((error) => {
+    logger.warn(
+      { targetUrl: finalUrl, error: error?.message || String(error), stack: error?.stack || "" },
+      "HTTP headers probe could not read response body"
+    );
+    return "";
+  });
   const headers = {};
   response.headers.forEach((value, key) => {
     headers[key] = value;
@@ -100,6 +137,8 @@ async function runHttpHeadersProbe(targetUrl, timeoutMs) {
   return {
     tool: "http_headers_probe",
     targetUrl,
+    finalUrl,
+    redirectChain,
     httpStatus: response.status,
     headers,
     responseBodyPreview: responseBody.slice(0, 1000),
@@ -147,7 +186,22 @@ async function runDnsLookupProbe(targetUrl, timeoutMs) {
 function runTlsMetadataProbe(targetUrl, timeoutMs) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(targetUrl);
+    if (parsed.protocol === "http:") {
+      resolve(
+        createNotApplicableResult({
+          reason: "TLS_NOT_APPLICABLE: Target uses HTTP, not HTTPS. TLS analysis requires an HTTPS endpoint.",
+          requiredTarget: "an HTTPS endpoint",
+          note: "TLS analysis was intentionally skipped for an HTTP target."
+        })
+      );
+      return;
+    }
+
     const port = parsed.port ? Number(parsed.port) : 443;
+    const safeTimeoutMs = Math.min(
+      Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 10000,
+      10000
+    );
 
     const socket = tls.connect(
       {
@@ -182,9 +236,14 @@ function runTlsMetadataProbe(targetUrl, timeoutMs) {
       }
     );
 
-    socket.setTimeout(timeoutMs, () => {
+    socket.setTimeout(safeTimeoutMs, () => {
       socket.destroy();
-      reject(new Error("TLS probe timed out"));
+      const timeoutError = new Error(
+        "TLS_HANDSHAKE_TIMEOUT: Could not complete TLS handshake within 10 seconds."
+      );
+      timeoutError.code = "TOOL_TIMEOUT";
+      timeoutError.errorCode = "TLS_HANDSHAKE_TIMEOUT";
+      reject(timeoutError);
     });
 
     socket.on("error", (error) => {

@@ -1,6 +1,12 @@
 const axios = require("axios");
 const Engagement = require("../models/Engagement");
 const { logger } = require("../config/logger");
+const {
+  createNotApplicableResult,
+  createStructuredError,
+  logError,
+  logWarn
+} = require("../utils/scanErrors");
 
 function sanitizeContent(value) {
   if (typeof value === "string") {
@@ -57,13 +63,21 @@ class SecretsDetectionService {
       logger.info({ engagementId }, "Starting secrets detection scan");
 
       const targetUrl = String(engagement.targetUrl || "").trim();
-      const [githubSecrets, configSecrets, envSecrets] = await Promise.all([
-        this.scanGitHub(targetUrl),
-        this.scanCommonConfigs(targetUrl),
-        this.scanEnvironmentFiles(targetUrl)
-      ]);
+      if (!this.parseGitHubTarget(targetUrl)) {
+        return {
+          ...createNotApplicableResult({
+            reason:
+              "Source code analysis requires a GitHub repository URL. Secrets scans were not applicable for this target type.",
+            requiredTarget: "a GitHub repository URL",
+            note: "The secrets scan was intentionally skipped rather than failing."
+          }),
+          attemptedFiles: [],
+          filesFound: []
+        };
+      }
 
-      const allSecrets = [...githubSecrets, ...configSecrets, ...envSecrets];
+      const githubResult = await this.scanGitHub(targetUrl);
+      const allSecrets = githubResult.secrets;
       const deduped = this.deduplicateSecrets(allSecrets);
       const findings = deduped.map((secret, index) => this.toFinding(secret, index + 1));
 
@@ -73,20 +87,26 @@ class SecretsDetectionService {
       );
 
       return {
+        status: "SUCCESS",
         findings,
+        attemptedFiles: githubResult.attemptedFiles,
+        filesFound: githubResult.filesFound,
         meta: {
           scannedTarget: targetUrl,
-          sourcesChecked: 3
+          sourcesChecked: githubResult.filesFound.length,
+          attemptedFiles: githubResult.attemptedFiles,
+          filesFound: githubResult.filesFound
         }
       };
     } catch (error) {
-      logger.error(
-        { engagementId, error: error?.message || String(error) },
-        "Secrets detection scan failed"
-      );
+      logError(logger, { engagementId }, "Secrets detection scan failed", error);
+      const structuredError = createStructuredError(error);
       return {
+        ...structuredError,
         findings: [],
-        error: error?.message || "Secrets scan failed"
+        attemptedFiles: [],
+        filesFound: [],
+        error: structuredError.message
       };
     }
   }
@@ -105,7 +125,7 @@ class SecretsDetectionService {
   async scanGitHub(targetUrl) {
     const match = this.parseGitHubTarget(targetUrl);
     if (!match) {
-      return [];
+      return { secrets: [], attemptedFiles: [], filesFound: [] };
     }
 
     const { owner, repo } = match;
@@ -137,7 +157,10 @@ class SecretsDetectionService {
 
     const branchesToTry = Array.from(new Set([defaultBranch, "main", "master"]));
     const findings = [];
+    const attemptedFiles = [];
+    const filesFound = [];
     for (const filePath of commonFiles) {
+      attemptedFiles.push(filePath);
       let content = null;
       for (const branch of branchesToTry) {
         try {
@@ -146,8 +169,15 @@ class SecretsDetectionService {
             { headers, timeout: 5000 }
           );
           content = sanitizeContent(response.data);
+          filesFound.push(filePath);
           break;
-        } catch {
+        } catch (error) {
+          logWarn(
+            logger,
+            { owner, repo, branch, filePath },
+            "Secrets scanner could not fetch GitHub file",
+            error
+          );
           // Try next branch.
         }
       }
@@ -158,7 +188,7 @@ class SecretsDetectionService {
 
       findings.push(...this.matchPatterns(content, `github:${owner}/${repo}/${filePath}`));
     }
-    return findings;
+    return { secrets: findings, attemptedFiles, filesFound };
   }
 
   async scanCommonConfigs(targetUrl) {
