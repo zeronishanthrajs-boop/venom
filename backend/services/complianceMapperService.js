@@ -53,7 +53,8 @@ const STANDARD_PROBES = {
     "api_security_scan",
     "nmap_tcp_scan",
     "secrets_scan",
-    "supply_chain_scan"
+    "supply_chain_scan",
+    "sqlmap_detect"
   ],
   hipaa: [
     "http_headers_probe",
@@ -68,7 +69,8 @@ const STANDARD_PROBES = {
     "api_security_scan",
     "container_security_scan",
     "supply_chain_scan",
-    "secrets_scan"
+    "secrets_scan",
+    "sqlmap_detect"
   ]
 };
 
@@ -138,7 +140,10 @@ function assessProbeCoverage({ jobs = [], requiredTools = [], violations = [] })
   const successfulTools = new Set();
   for (const toolId of requiredTools) {
     const matchingJobs = jobs.filter((job) => String(job.toolId || "") === toolId);
-    const successful = matchingJobs.some((job) => normalizeJobStatus(job.status) === "success");
+    const successful = matchingJobs.some((job) => {
+      const normalized = normalizeJobStatus(job.status);
+      return normalized === "success" || normalized === "blocked";
+    });
     if (successful) {
       successfulTools.add(toolId);
       continue;

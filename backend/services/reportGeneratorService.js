@@ -425,6 +425,7 @@ class ReportGeneratorService {
                 "Evidence capture failed — scanner did not provide reproducible request steps."
               ],
         owaspTags,
+        tags: Array.from(new Set([...asArray(finding?.tags), ...owaspTags])),
         compliance: mappedCompliance,
         metadata: {
           toolId: finding?._toolId || null,

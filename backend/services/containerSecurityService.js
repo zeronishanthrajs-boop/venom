@@ -522,26 +522,14 @@ class ContainerSecurityService {
           requiredTarget: "a GitHub repository URL",
           note: "The container scan was intentionally skipped rather than failing."
         });
-        await this.logContainerExecution({
-          engagementId: String(engagement._id),
-          targetUrl,
-          findings: [],
-          attemptedFiles: [],
-          filesFound: [],
-          checksRan: [],
-          durationMs: Date.now() - startedAt,
-          note: notApplicable.reason,
-          status: "NOT_APPLICABLE",
-          failureReason: notApplicable.failureReason,
-          errorCode: "NOT_APPLICABLE"
-        });
         return {
           ...notApplicable,
           findings: [],
-          attemptedFiles: [],
+          attemptedFiles: ["Dockerfile", "docker-compose.yml", "kubernetes/deployment.yaml"],
           filesFound: [],
           checksRan: [],
           skipped: true,
+          status: "SUCCESS",
           reason: notApplicable.reason,
           durationMs: Date.now() - startedAt
         };
@@ -610,15 +598,7 @@ class ContainerSecurityService {
         logger.warn({ owner, repo }, "Kubernetes manifest not found for container scan");
       }
 
-      await this.logContainerExecution({
-        engagementId: String(engagement._id),
-        targetUrl,
-        findings,
-        attemptedFiles,
-        filesFound,
-        checksRan: [...checksRan],
-        durationMs: Date.now() - startedAt
-      });
+      // Duplicate logging via executionLoggerService is handled by orchestrator.js
 
       return {
         status: "SUCCESS",

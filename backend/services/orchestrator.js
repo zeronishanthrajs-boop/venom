@@ -916,7 +916,7 @@ async function persistGeneratedPlan(engagement, planningResult, createdBy) {
 async function buildComplianceReportForEngagement(engagementId) {
   const jobs = await ExecutionJob.find({ engagementId }).sort({ createdAt: -1 }).lean();
   const findings = flattenJobFindings(jobs);
-  return complianceMapperService.generateComplianceReport(findings);
+  return complianceMapperService.generateComplianceReport(findings, { jobs });
 }
 
 async function orchestrateSingle(engagementId, userId = "unknown") {

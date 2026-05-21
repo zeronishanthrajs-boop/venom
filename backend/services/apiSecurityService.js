@@ -988,17 +988,36 @@ class ApiSecurityService {
       durationMs: totalDuration
     };
     const requestUrl = joinUrl(targetUrl, requestPath);
+    let defenseReason = null;
+    if (first429Index !== -1) {
+      defenseReason = `Rate limiting was actively enforced on ${requestPath} after ${first429Index} requests.`;
+      if (Array.isArray(options.defenseSignals)) {
+        options.defenseSignals.push({
+          type: "RATE_LIMIT_ENFORCED",
+          reason: defenseReason
+        });
+      }
+    } else if (successfulResponses < requestCount && representative.status >= 400) {
+      defenseReason = `WAF or network control blocked probe on ${requestPath} after ${successfulResponses} requests.`;
+      if (Array.isArray(options.defenseSignals)) {
+        options.defenseSignals.push({
+          type: "WAF_BLOCK",
+          reason: defenseReason
+        });
+      }
+    }
+
     const finding =
-      first429Index === -1 && successfulResponses === requestCount
+      first429Index === -1
         ? this.buildFinding({
           type: "API_MISSING_RATE_LIMIT",
-          title: `No rate limiting detected on ${requestPath}`,
-          description: `${requestCount} sequential rapid requests were accepted without throttling.`,
+          title: `No standard rate limiting detected on ${requestPath}`,
+          description: `${requestCount} sequential rapid requests did not trigger a standard HTTP 429 Too Many Requests response.`,
           severity: "high",
           endpoint: requestPath,
           methodTested: requestMethod,
           testPerformed: `Executed ${requestCount} sequential rapid unauthenticated requests.`,
-          responseObserved: `No HTTP 429 responses. ${requestCount}/${requestCount} requests succeeded in ${totalDuration}ms.`,
+          responseObserved: `First 429 index: -1. Successful requests: ${successfulResponses}/${requestCount}.`,
           evidence: {
             request: {
               url: requestUrl,
@@ -1020,13 +1039,17 @@ class ApiSecurityService {
               first429AtRequest: first429Index === -1 ? null : first429Index + 1,
               totalDurationMs: totalDuration,
               testedThreshold: requestCount
-            }
+            },
+            notes: [
+              "Rate limit probe found no standard 429 HTTP response code.",
+              defenseReason ? defenseReason : "All requests succeeded without throttling."
+            ]
           },
           discoveryVector:
-            "Rate limit probe: 20 sequential rapid requests were sent to the same endpoint and responses were checked for HTTP 429.",
+            "Rate limit probe: bulk rapid requests sent to test threshold enforcement.",
           reproductionSteps: [
-            `for i in {1..${requestCount}}; do curl -s -o /dev/null -w \"%{http_code}\\n\" -X ${requestMethod} '${requestUrl}'; done`,
-            "If no HTTP 429 appears while rapid requests continue, rate limiting is likely missing."
+            `for i in {1..${requestCount}}; do curl -s -o /dev/null -w "%{http_code}\\n" -X ${requestMethod} '${requestUrl}'; done`,
+            "Check for HTTP 429 or appropriate throttle response."
           ],
           remediation:
             "Apply request throttling (for example: 60 requests/minute for public endpoints and 20 requests/minute for authenticated/session endpoints)."
@@ -1425,6 +1448,21 @@ class ApiSecurityService {
         executionTimeMs: 0,
         findingCount: 0
       });
+
+      if (discoveredEndpoints.length === 0) {
+        findings.push(this.buildFinding({
+          idPrefix: "api",
+          type: "API_NO_ENDPOINTS_DISCOVERED",
+          title: "API Endpoint Discovery Failed",
+          description: "No functional API endpoints could be discovered via OpenAPI specs, common paths, or crawling. API security checks could not be comprehensively performed.",
+          severity: "info",
+          endpoint: targetUrl,
+          methodTested: "GET",
+          testPerformed: "Probed common API paths and analyzed root HTML for links.",
+          responseObserved: "All probes returned 404, 403, or non-API responses.",
+          remediation: "Ensure the target has an OpenAPI specification at a standard path (e.g., /openapi.json) or provide explicit API endpoint lists."
+        }));
+      }
 
       for (const endpoint of discoveredEndpoints) {
         // eslint-disable-next-line no-await-in-loop
