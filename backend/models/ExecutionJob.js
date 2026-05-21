@@ -52,6 +52,15 @@ const executionJobSchema = new mongoose.Schema(
           title: { type: String, default: "" },
           description: { type: String, default: "" },
           recommendation: { type: String, default: "" },
+          evidence: {
+            type: mongoose.Schema.Types.Mixed,
+            default: null
+          },
+          discoveryVector: { type: String, default: "" },
+          reproductionSteps: {
+            type: [String],
+            default: []
+          },
           exploitationPotential: { type: String, default: "" },
           cve: { type: String, default: null },
           source: { type: String, default: "" },

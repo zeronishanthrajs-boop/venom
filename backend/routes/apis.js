@@ -44,6 +44,26 @@ function normalizeFindingType(finding = {}) {
 
 function toExecutionFinding(finding = {}, index = 0, executionMeta = null, targetUrl = "") {
   const findingType = normalizeFindingType(finding);
+  const evidenceValue =
+    finding.evidence && typeof finding.evidence === "object"
+      ? finding.evidence
+      : String(finding.evidence || "").trim()
+        ? finding.evidence
+        : {
+            status: "failed",
+            reason:
+              "Evidence capture failed — scanner did not persist request/response evidence for this finding."
+          };
+  const discoveryVector =
+    String(finding.discoveryVector || finding.metadata?.discoveryVector || "").trim() ||
+    "Evidence capture failed — discovery vector was not provided by scanner output.";
+  const reproductionSteps = Array.isArray(finding.reproductionSteps)
+    ? finding.reproductionSteps.filter((step) => String(step || "").trim().length > 0)
+    : Array.isArray(finding.metadata?.reproductionSteps)
+      ? finding.metadata.reproductionSteps.filter(
+          (step) => String(step || "").trim().length > 0
+        )
+      : [];
   return {
     id: finding.id || `api-${index + 1}`,
     severity: finding.severity || "medium",
@@ -56,6 +76,15 @@ function toExecutionFinding(finding = {}, index = 0, executionMeta = null, targe
       "Enforce strict API authentication, authorization, and validation controls.",
     source: finding.source || "api_security",
     tags: Array.isArray(finding.tags) ? finding.tags : ["api-security"],
+    evidence: evidenceValue,
+    discoveryVector,
+    reproductionSteps:
+      reproductionSteps.length > 0
+        ? reproductionSteps
+        : [
+            `curl -i -X GET '${targetUrl || "https://target.example"}'`,
+            "Evidence capture failed — scanner did not provide reproducible request steps."
+          ],
     metadata: {
       ...(finding.metadata || {}),
       endpoint: finding.endpoint || finding.metadata?.endpoint || "",
@@ -63,6 +92,15 @@ function toExecutionFinding(finding = {}, index = 0, executionMeta = null, targe
       testPerformed: finding.testPerformed || finding.metadata?.testPerformed || "",
       responseObserved: finding.responseObserved || finding.metadata?.responseObserved || "",
       findingType,
+      evidence: evidenceValue,
+      discoveryVector,
+      reproductionSteps:
+        reproductionSteps.length > 0
+          ? reproductionSteps
+          : [
+              `curl -i -X GET '${targetUrl || "https://target.example"}'`,
+              "Evidence capture failed — scanner did not provide reproducible request steps."
+            ],
       ...(executionMeta
         ? {
             executionTestId: executionMeta.testId,
@@ -126,6 +164,9 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
         source: "api_security",
         scannedEndpoints: result.scannedEndpoints || [],
         endpointCount: result.endpointCount || 0,
+        scanLimitations: result.scanLimitations || [],
+        discoveryAudit: result.discoveryAudit || [],
+        defenseSignals: result.defenseSignals || [],
         error: result.error || null
       },
       findings: normalizedFindings,

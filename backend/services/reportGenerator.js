@@ -183,30 +183,58 @@ function jobFailureReason(job = {}) {
   );
 }
 
-function riskFromScore(score) {
-  if (score >= 85) return "LOW";
-  if (score >= 65) return "MEDIUM";
-  if (score >= 40) return "HIGH";
-  return "CRITICAL";
+function riskFromFindings(findings = []) {
+  const severities = new Set(
+    (Array.isArray(findings) ? findings : []).map((finding) =>
+      String(finding?.severity || "").toLowerCase()
+    )
+  );
+  if (severities.has("critical")) return "CRITICAL";
+  if (severities.has("high")) return "HIGH";
+  if (severities.has("medium")) return "MEDIUM";
+  return "LOW";
+}
+
+function deriveDensityLabel(rawDeduction = 0) {
+  if (rawDeduction >= 200) return "CRITICAL FINDING DENSITY — IMMEDIATE ACTION REQUIRED";
+  if (rawDeduction >= 100) return "HIGH FINDING DENSITY";
+  if (rawDeduction >= 31) return "MULTIPLE ISSUES DETECTED";
+  return "";
 }
 
 function calculateSecurityScore(findings = [], jobs = []) {
   const deductions = { critical: 25, high: 15, medium: 8, low: 3, info: 0 };
   let score = 100;
   const bySeverity = computeSeverityBreakdown(findings);
+  let severityDeductionTotal = 0;
 
   for (const [severity, deduction] of Object.entries(deductions)) {
-    score -= (bySeverity[severity] || 0) * deduction;
+    const total = (bySeverity[severity] || 0) * deduction;
+    score -= total;
+    severityDeductionTotal += total;
   }
 
   const failedJobs = jobs.filter((job) => ["failed", "error"].includes(normalizeJobStatus(job.status)));
   const timeoutJobs = jobs.filter((job) => normalizeJobStatus(job.status) === "timeout");
   const blockedJobs = jobs.filter((job) => normalizeJobStatus(job.status) === "blocked");
   const toolMissingJobs = jobs.filter((job) => normalizeJobStatus(job.status) === "tool_not_installed");
+  let probeDeductionTotal = 0;
 
-  score -= failedJobs.filter((job) => job.output?.errorCode !== "TOOL_NOT_INSTALLED").length * 5;
+  const failedWithoutToolMissing = failedJobs.filter(
+    (job) => job.output?.errorCode !== "TOOL_NOT_INSTALLED"
+  ).length;
+  score -= failedWithoutToolMissing * 5;
   score -= timeoutJobs.length * 2;
-  score += blockedJobs.length * 3;
+  probeDeductionTotal += failedWithoutToolMissing * 5;
+  probeDeductionTotal += timeoutJobs.length * 2;
+
+  const defenseSignals = [...blockedJobs];
+  for (const job of jobs) {
+    if (Array.isArray(job?.output?.defenseSignals) && job.output.defenseSignals.length > 0) {
+      defenseSignals.push(...job.output.defenseSignals.map(() => job));
+    }
+  }
+  score += defenseSignals.length * 3;
 
   const cleanCategories = new Set();
   for (const job of jobs) {
@@ -214,7 +242,7 @@ function calculateSecurityScore(findings = [], jobs = []) {
       cleanCategories.add(job.toolId || "scan");
     }
   }
-  score += Math.min(5, cleanCategories.size);
+  score += Math.min(10, cleanCategories.size * 2);
 
   const reliabilityJobs = jobs.filter(
     (job) =>
@@ -226,12 +254,17 @@ function calculateSecurityScore(findings = [], jobs = []) {
   );
   const unreliable =
     reliabilityJobs.length > 0 && failedOrTimedOut.length > reliabilityJobs.length / 2;
+  const rawDeduction = severityDeductionTotal + probeDeductionTotal;
+  const unclampedScore = Math.round(score);
   const finalScore = Math.max(0, Math.min(100, Math.round(score)));
+  const densityLabel = unclampedScore < 0 ? deriveDensityLabel(rawDeduction) : "";
 
   return {
     score: finalScore,
     maxScore: 100,
-    riskRating: unreliable ? "UNRELIABLE" : riskFromScore(finalScore),
+    rawDeduction,
+    densityLabel,
+    riskRating: riskFromFindings(findings),
     reliable: !unreliable,
     unreliableReason: unreliable
       ? "Score could not be accurately calculated because too many scan probes failed. Address probe failures to get an accurate score."
@@ -443,6 +476,7 @@ async function loadReportContext(engagementId) {
   const severity = computeSeverityBreakdown(findings);
   const execution = buildExecutionSummary(jobs);
   const compliance = generateComplianceSummary(findings);
+  const securityScore = calculateSecurityScore(findings, jobs);
 
   // Compute intelligence layer
   const {
@@ -474,6 +508,7 @@ async function loadReportContext(engagementId) {
     severity,
     execution,
     compliance,
+    securityScore,
     intelligence: {
       overallEps,
       totalFixEffortHours,
@@ -505,7 +540,7 @@ function buildMarkdownReport(context) {
   lines.push(`- Low: ${context.severity.low}`);
   lines.push(`- Success rate: ${context.execution.successRate}%`);
   lines.push(
-    `- Compliance: CVSS ${context.compliance.cvssOverallScore} (${context.compliance.cvssSeverity}), OWASP categories ${context.compliance.owaspCoverage}`
+    `- Security Score: ${context.securityScore?.score ?? 0}/100${context.securityScore?.densityLabel ? ` (${context.securityScore.densityLabel})` : ""}, Risk ${context.securityScore?.riskRating || "LOW"}, OWASP categories ${context.compliance.owaspCoverage}`
   );
   lines.push("");
 
@@ -558,8 +593,9 @@ function toTemplateData(context, options = {}) {
   const generatedAt = new Date().toLocaleString("en-IN", {
     timeZone: "Asia/Kolkata"
   });
-  const riskLevel = String(context.compliance.cvssSeverity || "LOW").toLowerCase();
-  const riskScore = Math.round(Number(context.compliance.cvssOverallScore || 0) * 10);
+  const riskLevel = String(context.securityScore?.riskRating || "LOW").toLowerCase();
+  const riskScore = Number(context.securityScore?.score || 0);
+  const densityLabel = String(context.securityScore?.densityLabel || "").trim();
   const owaspItems = Object.entries(context.compliance.owaspBreakdown || {}).map(
     ([code, item]) => ({
       code,
@@ -600,8 +636,10 @@ function toTemplateData(context, options = {}) {
     generatedAt,
     reportId: crypto.randomBytes(4).toString("hex").toUpperCase(),
 
-    overallRiskSentence: `${context.findings.length} finding(s) detected. CVSS ${context.compliance.cvssOverallScore} (${context.compliance.cvssSeverity}).`,
-    riskLevel: context.compliance.cvssSeverity || "LOW",
+    overallRiskSentence: densityLabel
+      ? `${context.findings.length} finding(s) detected. Security score ${riskScore}/100 (${String(context.securityScore?.riskRating || "LOW").toUpperCase()}) — ${densityLabel}.`
+      : `${context.findings.length} finding(s) detected. Security score ${riskScore}/100 (${String(context.securityScore?.riskRating || "LOW").toUpperCase()}).`,
+    riskLevel: context.securityScore?.riskRating || "LOW",
     riskScore,
     riskBannerColor: RISK_BANNER_COLOR[riskLevel] || RISK_BANNER_COLOR.low,
     cvssScore: context.compliance.cvssOverallScore,
@@ -619,18 +657,30 @@ function toTemplateData(context, options = {}) {
       const severity = String(finding.severity || "info").toUpperCase();
       
       const what = finding.description || finding.what || "No description provided.";
-      const how = finding.evidence || finding.how || "Automated check signature matched.";
-      const whatFound = finding.evidence || finding.whatFound || "No evidence snippet recorded.";
+      const discoveryVector =
+        String(finding.discoveryVector || finding.how || "").trim() ||
+        "Evidence capture failed — discovery vector was not provided by scanner output.";
+      const evidenceSummary =
+        finding.evidence && typeof finding.evidence === "object"
+          ? `Request: ${finding.evidence?.request?.method || "GET"} ${finding.evidence?.request?.url || "unknown-url"} | Response: HTTP ${finding.evidence?.response?.statusCode || "n/a"} in ${finding.evidence?.response?.responseTimeMs || 0}ms.`
+          : String(finding.evidence || finding.whatFound || "").trim();
+      const how = discoveryVector;
+      const whatFound =
+        evidenceSummary ||
+        "Evidence capture failed — scanner did not persist request/response evidence for this finding.";
       const why = finding.why || `This presents a potential vector for security compromise in ${finding.category || "the system"}.`;
       const fix = finding.recommendation || finding.remediation || finding.fix || "Remediate according to standard hardening guidelines.";
 
-      const reproductionSteps = Array.isArray(finding.reproductionSteps)
-        ? finding.reproductionSteps
-        : [
-            `Navigate/target: ${context.engagement.targetUrl || "application root"}`,
-            `Trigger condition/payload: ${finding.evidence || "Use standard scanner trigger."}`,
-            `Verify response shows vulnerability.`
-          ];
+      const explicitRepro = Array.isArray(finding.reproductionSteps)
+        ? finding.reproductionSteps.filter((step) => String(step || "").trim().length > 0)
+        : [];
+      const reproductionSteps =
+        explicitRepro.length > 0
+          ? explicitRepro
+          : [
+              `curl -i -X GET '${finding?.metadata?.targetUrl || context.engagement.targetUrl || "https://target.example"}'`,
+              "Evidence capture failed — scanner did not provide reproducible request steps."
+            ];
 
       return {
         ...finding,

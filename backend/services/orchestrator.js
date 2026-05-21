@@ -149,6 +149,26 @@ function createHttpError(statusCode, message) {
 }
 
 function toExecutionFinding(finding = {}, index = 0, defaults = {}) {
+  const evidenceValue =
+    finding.evidence && typeof finding.evidence === "object"
+      ? finding.evidence
+      : String(finding.evidence || "").trim()
+        ? finding.evidence
+        : {
+            status: "failed",
+            reason:
+              "Evidence capture failed — scanner did not persist request/response evidence for this finding."
+          };
+  const discoveryVector =
+    String(finding.discoveryVector || finding.metadata?.discoveryVector || "").trim() ||
+    "Evidence capture failed — discovery vector was not provided by scanner output.";
+  const reproductionSteps = Array.isArray(finding.reproductionSteps)
+    ? finding.reproductionSteps.filter((step) => String(step || "").trim().length > 0)
+    : Array.isArray(finding.metadata?.reproductionSteps)
+      ? finding.metadata.reproductionSteps.filter(
+          (step) => String(step || "").trim().length > 0
+        )
+      : [];
   return {
     id: finding.id || `${defaults.idPrefix || "scan"}-${index + 1}`,
     severity: finding.severity || defaults.severity || "low",
@@ -166,7 +186,27 @@ function toExecutionFinding(finding = {}, index = 0, defaults = {}) {
       ? Number(finding.cvssScore)
       : null,
     tags: Array.isArray(finding.tags) ? finding.tags : asArray(defaults.tags),
-    metadata: finding.metadata || {}
+    evidence: evidenceValue,
+    discoveryVector,
+    reproductionSteps:
+      reproductionSteps.length > 0
+        ? reproductionSteps
+        : [
+            `curl -i -X GET '${defaults.targetUrl || "https://target.example"}'`,
+            "Evidence capture failed — scanner did not provide reproducible request steps."
+          ],
+    metadata: {
+      ...(finding.metadata || {}),
+      evidence: evidenceValue,
+      discoveryVector,
+      reproductionSteps:
+        reproductionSteps.length > 0
+          ? reproductionSteps
+          : [
+              `curl -i -X GET '${defaults.targetUrl || "https://target.example"}'`,
+              "Evidence capture failed — scanner did not provide reproducible request steps."
+            ]
+    }
   };
 }
 
@@ -271,7 +311,10 @@ async function persistScanJob({
       ...output
     },
     findings: findings.map((finding, index) => {
-      const normalized = toExecutionFinding(finding, index, findingDefaults);
+      const normalized = toExecutionFinding(finding, index, {
+        ...(findingDefaults || {}),
+        targetUrl: engagement.targetUrl
+      });
       if (!executionMeta) {
         return normalized;
       }
@@ -595,6 +638,9 @@ async function runPostExecutionScans(engagement, userId) {
         scannedEndpoints: apiResult.scannedEndpoints || [],
         endpointCount: apiResult.endpointCount || 0,
         probedUrlCount: apiResult.probedUrlCount || apiResult.endpointCount || 0,
+        scanLimitations: apiResult.scanLimitations || [],
+        discoveryAudit: apiResult.discoveryAudit || [],
+        defenseSignals: apiResult.defenseSignals || [],
         reason: apiResult.reason || "",
         failureReason: apiResult.failureReason || "",
         errorCode: apiResult.errorCode || "",

@@ -116,17 +116,49 @@ function isTerminalForReliability(job = {}) {
   return ["success", "failed", "blocked", "timeout", "error"].includes(status);
 }
 
-function deriveRiskRating(score) {
-  if (score >= 85) {
-    return "LOW";
+function deriveRiskRating(findings = []) {
+  const severities = new Set(
+    asArray(findings).map((finding) => normalizeSeverity(finding?.severity))
+  );
+  if (severities.has("critical")) {
+    return "CRITICAL";
   }
-  if (score >= 65) {
-    return "MEDIUM";
-  }
-  if (score >= 40) {
+  if (severities.has("high")) {
     return "HIGH";
   }
-  return "CRITICAL";
+  if (severities.has("medium")) {
+    return "MEDIUM";
+  }
+  return "LOW";
+}
+
+function deriveDensityLabel(rawDeduction = 0) {
+  if (rawDeduction >= 200) {
+    return "CRITICAL FINDING DENSITY — IMMEDIATE ACTION REQUIRED";
+  }
+  if (rawDeduction >= 100) {
+    return "HIGH FINDING DENSITY";
+  }
+  if (rawDeduction >= 31) {
+    return "MULTIPLE ISSUES DETECTED";
+  }
+  return "";
+}
+
+function formatEvidenceSummary(evidence) {
+  if (!evidence || typeof evidence !== "object") {
+    return "";
+  }
+  const requestUrl = String(evidence?.request?.url || "").trim();
+  const method = String(evidence?.request?.method || "GET").toUpperCase();
+  const statusCode = Number(evidence?.response?.statusCode || 0);
+  const responseTimeMs = Number(evidence?.response?.responseTimeMs || 0);
+  const notes = Array.isArray(evidence?.notes) ? evidence.notes.filter(Boolean) : [];
+  const noteSnippet = notes.length > 0 ? ` Notes: ${notes.slice(0, 2).join(" | ")}` : "";
+  if (requestUrl || statusCode) {
+    return `Request: ${method} ${requestUrl || "unknown-url"} | Response: HTTP ${statusCode || "n/a"} in ${responseTimeMs}ms.${noteSnippet}`.trim();
+  }
+  return "";
 }
 
 class ReportGeneratorService {
@@ -288,22 +320,41 @@ class ReportGeneratorService {
   }
 
   buildReproductionSteps(finding, trace) {
-    const target = finding?.metadata?.targetUrl ? String(finding.metadata.targetUrl) : "target endpoint";
+    const explicit = Array.isArray(finding?.reproductionSteps)
+      ? finding.reproductionSteps.filter((step) => String(step || "").trim().length > 0)
+      : Array.isArray(finding?.metadata?.reproductionSteps)
+        ? finding.metadata.reproductionSteps.filter(
+            (step) => String(step || "").trim().length > 0
+          )
+        : [];
+    if (explicit.length > 0) {
+      return explicit;
+    }
+
+    const target =
+      String(
+        finding?.metadata?.targetUrl ||
+          finding?.evidence?.request?.url ||
+          "https://target.example"
+      ).trim() || "https://target.example";
+    const method = String(
+      trace?.parameters?.method ||
+        finding?.evidence?.request?.method ||
+        finding?.metadata?.methodTested ||
+        "GET"
+    ).toUpperCase();
+
     if (trace?.parameters && Object.keys(trace.parameters).length > 0) {
-      const method = String(trace.parameters.method || "GET");
       const url = String(trace.parameters.url || trace.parameters.targetUrl || target);
       return [
-        `Send ${method} request to ${url}.`,
-        "Use the same headers/parameters captured in execution trace.",
-        "Compare response status and headers with trace evidence.",
-        "Validate remediation by repeating the exact request after fixes."
+        `curl -i -X ${method} '${url}'`,
+        "Compare returned status code and headers to the evidence captured in this finding."
       ];
     }
+
     return [
-      `Re-run scanner against ${target}.`,
-      "Capture response artifacts that triggered the finding.",
-      "Apply remediation and execute the same check.",
-      "Confirm finding transitions to PASSED in execution timeline."
+      `curl -i -X ${method} '${target}'`,
+      "Evidence capture failed — scanner did not persist detailed reproduction context for this finding."
     ];
   }
 
@@ -338,18 +389,41 @@ class ReportGeneratorService {
         finding?.recommendation ||
         finding?.remediation ||
         this.getDefaultRemediation(normalizedType);
+      const evidenceSummary =
+        formatEvidenceSummary(finding?.evidence) ||
+        this.buildWhatFoundFallback(finding);
+      const discoveryVector =
+        String(finding?.discoveryVector || finding?.metadata?.discoveryVector || "").trim() ||
+        (finding?.source
+          ? `Discovered via ${finding.source}${finding._toolId ? ` (${finding._toolId})` : ""}.`
+          : "Evidence capture failed — discovery vector not provided by scanner.");
+      const reproductionSteps = Array.isArray(finding?.reproductionSteps)
+        ? finding.reproductionSteps.filter((step) => String(step || "").trim().length > 0)
+        : [];
       return {
         id: index + 1,
         title: finding?.title || "Untitled finding",
         severity: String(normalizeSeverity(finding?.severity)).toUpperCase(),
         type: normalizedType,
         what: finding?.description || "No description provided.",
-        how: finding?.source
-          ? `Discovered via ${finding.source}${finding._toolId ? ` (${finding._toolId})` : ""}.`
-          : "Discovered during automated assessment.",
-        whatFound: finding?.evidence || this.buildWhatFoundFallback(finding),
+        how: discoveryVector,
+        whatFound: evidenceSummary,
         why: this.getWhyItMatters(normalizedType),
         fix: recommendation,
+        evidence:
+          finding?.evidence ||
+          {
+            status: "failed",
+            reason: "Evidence capture failed — scanner did not persist evidence payload."
+          },
+        discoveryVector,
+        reproductionSteps:
+          reproductionSteps.length > 0
+            ? reproductionSteps
+            : [
+                `curl -i -X GET '${finding?.metadata?.targetUrl || "https://target.example"}'`,
+                "Evidence capture failed — scanner did not provide reproducible request steps."
+              ],
         owaspTags,
         compliance: mappedCompliance,
         metadata: {
@@ -371,7 +445,7 @@ class ReportGeneratorService {
         return `Observed metadata keys: ${keys.join(", ")}`;
       }
     }
-    return "See execution logs for detailed evidence.";
+    return "Evidence capture failed — scanner did not persist evidence for this finding.";
   }
 
   normalizeType(finding) {
@@ -408,10 +482,13 @@ class ReportGeneratorService {
       severityDeductions: [],
       probeDeductions: [],
       bonuses: [],
+      rawDeduction: 0,
+      unclampedScore: 100,
       clamp: "0-100"
     };
 
     const severityCounts = countBySeverity(findings);
+    let severityDeductionTotal = 0;
     for (const [severity, deduction] of Object.entries(SCORE_DEDUCTIONS)) {
       const count = severityCounts[severity] || 0;
       if (count <= 0 || deduction <= 0) {
@@ -419,6 +496,7 @@ class ReportGeneratorService {
       }
       const total = count * deduction;
       score -= total;
+      severityDeductionTotal += total;
       formula.severityDeductions.push({ severity: severity.toUpperCase(), count, deduction, total });
     }
 
@@ -431,11 +509,13 @@ class ReportGeneratorService {
         getJobErrorCode(job) === "TOOL_NOT_INSTALLED"
     );
 
+    let probeDeductionTotal = 0;
     for (const job of failedJobs) {
       if (getJobErrorCode(job) === "TOOL_NOT_INSTALLED") {
         continue;
       }
       score -= 5;
+      probeDeductionTotal += 5;
       formula.probeDeductions.push({
         toolId: job.toolId,
         status: "FAILED",
@@ -446,6 +526,7 @@ class ReportGeneratorService {
 
     for (const job of timeoutJobs) {
       score -= 2;
+      probeDeductionTotal += 2;
       formula.probeDeductions.push({
         toolId: job.toolId,
         status: "TIMEOUT",
@@ -454,13 +535,39 @@ class ReportGeneratorService {
       });
     }
 
+    const defenseSignals = [];
     for (const job of blockedJobs) {
+      defenseSignals.push({
+        toolId: job.toolId,
+        reason: getJobFailureReason(job) || "Target actively blocked the probe.",
+        type: "WAF_BLOCK"
+      });
+    }
+
+    for (const job of jobs) {
+      const explicitSignals = Array.isArray(job?.output?.defenseSignals)
+        ? job.output.defenseSignals
+        : [];
+      for (const signal of explicitSignals) {
+        defenseSignals.push({
+          toolId: job.toolId,
+          reason:
+            signal?.reason ||
+            (signal?.type === "RATE_LIMIT_ENFORCED"
+              ? "Rate limiting defense returned HTTP 429 during probe."
+              : "Defense signal recorded during scan."),
+          type: signal?.type || "DEFENSE_SIGNAL"
+        });
+      }
+    }
+
+    for (const signal of defenseSignals) {
       score += 3;
       formula.bonuses.push({
-        toolId: job.toolId,
-        status: "BLOCKED",
+        toolId: signal.toolId,
+        status: signal.type,
         bonus: 3,
-        reason: getJobFailureReason(job) || "Target actively blocked the probe."
+        reason: signal.reason
       });
     }
 
@@ -475,7 +582,7 @@ class ReportGeneratorService {
       }
       successfulCleanCategories.add(String(job.toolId || "unknown"));
     }
-    const successBonus = Math.min(5, successfulCleanCategories.size);
+    const successBonus = Math.min(10, successfulCleanCategories.size * 2);
     if (successBonus > 0) {
       score += successBonus;
       formula.bonuses.push({
@@ -496,12 +603,18 @@ class ReportGeneratorService {
     );
     const unreliable =
       reliabilityJobs.length > 0 && failedOrTimedOut.length > reliabilityJobs.length / 2;
-
+    const rawDeduction = severityDeductionTotal + probeDeductionTotal;
+    formula.rawDeduction = rawDeduction;
+    formula.unclampedScore = Math.round(score);
     const finalScore = Math.max(0, Math.min(100, Math.round(score)));
+    const densityLabel =
+      formula.unclampedScore < 0 ? deriveDensityLabel(rawDeduction) : "";
     return {
       score: finalScore,
       maxScore: 100,
-      riskRating: unreliable ? "UNRELIABLE" : deriveRiskRating(finalScore),
+      densityLabel,
+      rawDeduction,
+      riskRating: deriveRiskRating(findings),
       reliable: !unreliable,
       reliabilityStatus: unreliable ? "UNRELIABLE" : "RELIABLE",
       unreliableReason: unreliable
@@ -553,13 +666,11 @@ class ReportGeneratorService {
   generateRiskAnalysis(findings = [], summary = {}, securityScore = null) {
     const criticalCount = summary.critical || 0;
     const highCount = summary.high || 0;
-    let riskLevel = securityScore?.riskRating || "LOW";
+    let riskLevel = securityScore?.riskRating || deriveRiskRating(findings);
     let impactStatement =
       "Current posture indicates low immediate risk, with routine hardening recommended.";
 
-    if (securityScore?.riskRating === "UNRELIABLE") {
-      impactStatement = securityScore.unreliableReason;
-    } else if (criticalCount > 0) {
+    if (criticalCount > 0) {
       riskLevel = "CRITICAL";
       impactStatement =
         "Critical findings expose credible compromise paths and should be remediated immediately.";

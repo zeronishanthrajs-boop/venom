@@ -47,6 +47,60 @@ const COMMON_WEB_PATHS = [
 ];
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 const PII_HINTS = ["email", "phone", "password", "token", "ssn", "address", "dob"];
+const DISCOVERY_VALID_STATUS_CODES = new Set([
+  200,
+  201,
+  204,
+  301,
+  302,
+  307,
+  308,
+  401,
+  403,
+  405
+]);
+const DISCOVERY_NON_EXISTENT_STATUS_CODES = new Set([404, 410]);
+const DISCOVERY_TOOL_HEALTH_STATUS_CODES = new Set([500, 502, 503]);
+const STATIC_ASSET_EXTENSIONS = new Set([
+  ".js",
+  ".css",
+  ".map",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".svg",
+  ".webp",
+  ".ico",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".eot",
+  ".otf",
+  ".pdf",
+  ".zip",
+  ".tar",
+  ".gz"
+]);
+const STATIC_PATH_PATTERNS = [
+  "/assets/",
+  "/static/",
+  "/public/",
+  "/images/",
+  "/fonts/",
+  "/icons/",
+  "/_next/",
+  "/dist/",
+  "/build/"
+];
+const EVIDENCE_EXCLUDED_REQUEST_HEADERS = new Set([
+  "authorization",
+  "cookie",
+  "set-cookie",
+  "proxy-authorization",
+  "x-internal-token",
+  "x-venom-internal-token"
+]);
 const SQL_ERROR_PATTERNS = [
   /you have an error in your sql syntax/i,
   /warning:\s*mysql/i,
@@ -111,6 +165,61 @@ function buildTestId(prefix) {
   return `test-api-${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 }
 
+function trimBodyExcerpt(body, maxLength = 200) {
+  const text = asString(body).replace(/\s+/g, " ").trim();
+  if (!text) {
+    return "";
+  }
+  return text.slice(0, maxLength);
+}
+
+function sanitizeHeadersForEvidence(headers = {}) {
+  const sanitized = {};
+  for (const [rawKey, rawValue] of Object.entries(asObject(headers))) {
+    const key = String(rawKey || "").trim().toLowerCase();
+    if (!key || EVIDENCE_EXCLUDED_REQUEST_HEADERS.has(key)) {
+      continue;
+    }
+    sanitized[key] = asString(rawValue).slice(0, 400);
+  }
+  return sanitized;
+}
+
+function isStaticAssetPath(pathValue = "") {
+  const normalized = normalizePath(pathValue).toLowerCase();
+  if (STATIC_PATH_PATTERNS.some((pattern) => normalized.includes(pattern))) {
+    return true;
+  }
+  const stripped = normalized.split("#")[0] || normalized;
+  const lastDot = stripped.lastIndexOf(".");
+  if (lastDot === -1) {
+    return false;
+  }
+  const extension = stripped.slice(lastDot).match(/^(\.[a-z0-9]+)(?:$|[?&=])/i);
+  return extension ? STATIC_ASSET_EXTENSIONS.has(extension[1].toLowerCase()) : false;
+}
+
+function buildCurlRequest(method, url, headers = {}, body = null) {
+  const commandParts = ["curl", "-i", "-X", String(method || "GET").toUpperCase(), `'${url}'`];
+  for (const [rawHeader, rawValue] of Object.entries(headers)) {
+    const key = String(rawHeader || "").trim();
+    if (!key) {
+      continue;
+    }
+    commandParts.push("-H");
+    commandParts.push(`'${key}: ${String(rawValue || "").replace(/'/g, "'\\''")}'`);
+  }
+  if (body !== null && body !== undefined && body !== "") {
+    commandParts.push("--data-raw");
+    commandParts.push(`'${String(body).replace(/'/g, "'\\''")}'`);
+  }
+  return commandParts.join(" ");
+}
+
+function normalizeBodyForFingerprint(body) {
+  return asString(body).replace(/\s+/g, " ").trim();
+}
+
 class ApiSecurityService {
   constructor(httpClient = axios, executionLogger = executionLoggerService) {
     this.httpClient = httpClient;
@@ -159,6 +268,151 @@ class ApiSecurityService {
     return deduped;
   }
 
+  toDiscoveryAuditMessage(responseStatus, path) {
+    if (DISCOVERY_NON_EXISTENT_STATUS_CODES.has(responseStatus)) {
+      return `Target responded ${responseStatus} — path does not exist — skipped`;
+    }
+    if (DISCOVERY_TOOL_HEALTH_STATUS_CODES.has(responseStatus)) {
+      return `Target responded ${responseStatus} during discovery probe — server error observed — logged as scan limitation`;
+    }
+    return `Target responded ${responseStatus} for discovery probe ${path}`;
+  }
+
+  buildConnectionFailureMessage(errorMessage = "") {
+    return `Connection failed before response — tool or network issue — logged as scan limitation (${errorMessage || "request failed"})`;
+  }
+
+  isDiscoveryStatusEligible(statusCode) {
+    return DISCOVERY_VALID_STATUS_CODES.has(Number(statusCode || 0));
+  }
+
+  async probeEndpointCandidate({
+    targetUrl,
+    path,
+    method = "GET",
+    source = "probe",
+    rootBodyFingerprint = "",
+    discoveryAudit = [],
+    scanLimitations = []
+  }) {
+    const normalizedPath = normalizePath(path);
+    if (isStaticAssetPath(normalizedPath)) {
+      return null;
+    }
+
+    const probeMethod = String(method || "GET").toUpperCase();
+    const response = await this.safeRequest({
+      url: joinUrl(targetUrl, normalizedPath),
+      method: probeMethod,
+      timeout: 8000
+    });
+
+    if (!response.ok) {
+      scanLimitations.push({
+        category: "API Security",
+        phase: "endpoint_discovery",
+        endpoint: normalizedPath,
+        method: probeMethod,
+        status: "FAILED",
+        errorCode: response.errorCode || (response.timeout ? "NETWORK_TIMEOUT" : "NETWORK_ERROR"),
+        reason: this.buildConnectionFailureMessage(response.error)
+      });
+      discoveryAudit.push({
+        path: normalizedPath,
+        method: probeMethod,
+        source,
+        statusCode: 0,
+        action: "limited",
+        message: this.buildConnectionFailureMessage(response.error)
+      });
+      return null;
+    }
+
+    const statusCode = Number(response.status || 0);
+    if (this.isDiscoveryStatusEligible(statusCode)) {
+      const contentType = String(response.headers?.["content-type"] || "").toLowerCase();
+      const currentBodyFingerprint =
+        statusCode === 200 ? normalizeBodyForFingerprint(response.body) : "";
+      if (
+        statusCode === 200 &&
+        normalizedPath !== "/" &&
+        source !== "openapi" &&
+        rootBodyFingerprint &&
+        currentBodyFingerprint &&
+        contentType.includes("text/html") &&
+        currentBodyFingerprint === rootBodyFingerprint
+      ) {
+        discoveryAudit.push({
+          path: normalizedPath,
+          method: probeMethod,
+          source,
+          statusCode,
+          action: "skipped",
+          message:
+            "Target returned the same HTML shell as root for this path — probable SPA fallback/soft-404 — skipped from API test queue"
+        });
+        return null;
+      }
+      discoveryAudit.push({
+        path: normalizedPath,
+        method: probeMethod,
+        source,
+        statusCode,
+        action: "queued",
+        message: `Path responded ${statusCode} — endpoint considered valid and queued for API tests`
+      });
+      return {
+        path: normalizedPath,
+        method: probeMethod,
+        source
+      };
+    }
+
+    if (DISCOVERY_NON_EXISTENT_STATUS_CODES.has(statusCode)) {
+      discoveryAudit.push({
+        path: normalizedPath,
+        method: probeMethod,
+        source,
+        statusCode,
+        action: "skipped",
+        message: this.toDiscoveryAuditMessage(statusCode, normalizedPath)
+      });
+      return null;
+    }
+
+    if (DISCOVERY_TOOL_HEALTH_STATUS_CODES.has(statusCode)) {
+      const message = this.toDiscoveryAuditMessage(statusCode, normalizedPath);
+      scanLimitations.push({
+        category: "API Security",
+        phase: "endpoint_discovery",
+        endpoint: normalizedPath,
+        method: probeMethod,
+        status: "FAILED",
+        errorCode: `HTTP_${statusCode}`,
+        reason: message
+      });
+      discoveryAudit.push({
+        path: normalizedPath,
+        method: probeMethod,
+        source,
+        statusCode,
+        action: "limited",
+        message
+      });
+      return null;
+    }
+
+    discoveryAudit.push({
+      path: normalizedPath,
+      method: probeMethod,
+      source,
+      statusCode,
+      action: "skipped",
+      message: `Target responded ${statusCode} — not in endpoint validity allowlist — skipped`
+    });
+    return null;
+  }
+
   async safeRequest({
     url,
     method = "GET",
@@ -191,23 +445,33 @@ class ApiSecurityService {
         "API scanner HTTP request failed",
         error
       );
+      const errorCode = String(error?.code || "").toUpperCase();
       return {
         ok: false,
         status: 0,
         headers: {},
         body: null,
         durationMs: Date.now() - startedAt,
-        error: error?.message || "request failed"
+        error: error?.message || "request failed",
+        errorCode,
+        timeout: errorCode === "ECONNABORTED" || /timeout/i.test(error?.message || "")
       };
     }
   }
 
   async discoverEndpoints(targetUrl) {
-    const endpoints = [];
+    const discoveryAudit = [];
+    const scanLimitations = [];
+    const candidates = [];
     if (!looksLikeHttpUrl(targetUrl)) {
-      return endpoints;
+      return {
+        endpoints: [],
+        discoveryAudit,
+        scanLimitations
+      };
     }
 
+    let openApiCandidates = [];
     for (const specPath of API_SPEC_PATHS) {
       const specResponse = await this.safeRequest({
         url: joinUrl(targetUrl, specPath),
@@ -234,31 +498,81 @@ class ApiSecurityService {
           : asObject(specResponse.body);
       const specEndpoints = this.parseOpenApiSpec(parsed);
       if (specEndpoints.length > 0) {
-        return this.deduplicateEndpoints(specEndpoints);
+        openApiCandidates = specEndpoints;
+        break;
       }
     }
 
-    const rootResponse = await this.safeRequest({
-      url: joinUrl(targetUrl, "/"),
-      method: "GET",
-      timeout: 8000
-    });
-    if (rootResponse.status > 0 && rootResponse.status !== 404) {
-      endpoints.push({ path: "/", method: "GET", source: "root" });
-      endpoints.push(...this.extractEndpointsFromHtml(rootResponse.body, targetUrl));
-    }
-
-    for (const path of [...COMMON_API_PATHS, ...COMMON_WEB_PATHS]) {
-      const getResp = await this.safeRequest({
-        url: joinUrl(targetUrl, path),
-        method: "GET"
+    if (openApiCandidates.length > 0) {
+      candidates.push(...openApiCandidates);
+    } else {
+      let rootBodyFingerprint = "";
+      candidates.push({ path: "/", method: "GET", source: "root" });
+      const rootResponse = await this.safeRequest({
+        url: joinUrl(targetUrl, "/"),
+        method: "GET",
+        timeout: 8000
       });
-      if (getResp.status > 0 && getResp.status !== 404) {
-        endpoints.push({ path, method: "GET", source: "fallback" });
+      if (
+        rootResponse.ok &&
+        this.isDiscoveryStatusEligible(rootResponse.status) &&
+        !isStaticAssetPath("/")
+      ) {
+        rootBodyFingerprint = normalizeBodyForFingerprint(rootResponse.body);
+        candidates.push(...this.extractEndpointsFromHtml(rootResponse.body, targetUrl));
+      }
+      for (const path of [...COMMON_API_PATHS, ...COMMON_WEB_PATHS]) {
+        candidates.push({ path, method: "GET", source: "fallback" });
+      }
+
+      const validated = [];
+      const dedupedCandidates = this.deduplicateEndpoints(candidates);
+      for (const candidate of dedupedCandidates) {
+        // eslint-disable-next-line no-await-in-loop
+        const accepted = await this.probeEndpointCandidate({
+          targetUrl,
+          path: candidate.path,
+          method: candidate.method,
+          source: candidate.source || "probe",
+          rootBodyFingerprint,
+          discoveryAudit,
+          scanLimitations
+        });
+        if (accepted) {
+          validated.push(accepted);
+        }
+      }
+
+      return {
+        endpoints: this.deduplicateEndpoints(validated),
+        discoveryAudit,
+        scanLimitations
+      };
+    }
+
+    const validated = [];
+    const dedupedCandidates = this.deduplicateEndpoints(candidates);
+    for (const candidate of dedupedCandidates) {
+      // eslint-disable-next-line no-await-in-loop
+      const accepted = await this.probeEndpointCandidate({
+        targetUrl,
+        path: candidate.path,
+        method: candidate.method,
+        source: candidate.source || "probe",
+        rootBodyFingerprint: "",
+        discoveryAudit,
+        scanLimitations
+      });
+      if (accepted) {
+        validated.push(accepted);
       }
     }
 
-    return this.deduplicateEndpoints(endpoints);
+    return {
+      endpoints: this.deduplicateEndpoints(validated),
+      discoveryAudit,
+      scanLimitations
+    };
   }
 
   extractEndpointsFromHtml(body, targetUrl) {
@@ -355,8 +669,24 @@ class ApiSecurityService {
     methodTested,
     testPerformed,
     responseObserved,
-    remediation
+    remediation,
+    evidence = null,
+    discoveryVector = "",
+    reproductionSteps = []
   }) {
+    const normalizedReproductionSteps = Array.isArray(reproductionSteps)
+      ? reproductionSteps.filter((step) => String(step || "").trim().length > 0)
+      : [];
+    const safeEvidence =
+      evidence && typeof evidence === "object" && !Array.isArray(evidence)
+        ? evidence
+        : {
+            status: "failed",
+            reason:
+              typeof evidence === "string" && evidence
+                ? evidence
+                : "Evidence capture failed — no request/response snapshot was recorded by the scanner."
+          };
     return {
       id: `${idPrefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
       type,
@@ -371,13 +701,29 @@ class ApiSecurityService {
       methodTested,
       testPerformed,
       responseObserved,
+      evidence: safeEvidence,
+      discoveryVector:
+        String(discoveryVector || "").trim() ||
+        "Evidence capture failed — discovery vector was not supplied by this scanner step.",
+      reproductionSteps:
+        normalizedReproductionSteps.length > 0
+          ? normalizedReproductionSteps
+          : ["Evidence capture failed — reproduction steps were not generated for this finding."],
       tags: ["api-security", String(type || "").toLowerCase()],
       metadata: {
         findingType: type,
         endpoint,
         methodTested,
         testPerformed,
-        responseObserved
+        responseObserved,
+        discoveryVector:
+          String(discoveryVector || "").trim() ||
+          "Evidence capture failed — discovery vector was not supplied by this scanner step.",
+        reproductionSteps:
+          normalizedReproductionSteps.length > 0
+            ? normalizedReproductionSteps
+            : ["Evidence capture failed — reproduction steps were not generated for this finding."],
+        evidence: safeEvidence
       }
     };
   }
@@ -435,15 +781,58 @@ class ApiSecurityService {
     });
   }
 
+  buildEvidenceSnapshot({
+    url,
+    method,
+    requestHeaders = {},
+    requestBody = null,
+    response,
+    includeBodyExcerpt = true,
+    notes = []
+  }) {
+    const responseHeaders = sanitizeHeadersForEvidence(response?.headers || {});
+    return {
+      request: {
+        url,
+        method: String(method || "GET").toUpperCase(),
+        headers: sanitizeHeadersForEvidence(requestHeaders),
+        body: requestBody,
+        timestamp: new Date().toISOString()
+      },
+      response: {
+        statusCode: Number(response?.status || 0),
+        headers: responseHeaders,
+        responseTimeMs: Number(response?.durationMs || 0),
+        bodyExcerpt: includeBodyExcerpt ? trimBodyExcerpt(response?.body, 200) : ""
+      },
+      notes: Array.isArray(notes) ? notes.filter((item) => String(item || "").trim().length > 0) : []
+    };
+  }
+
   async runMissingAuthTest(targetUrl, endpoint, engagementId) {
     const requestPath = this.materializePath(endpoint.path);
+    const requestMethod = endpoint.method === "HEAD" ? "GET" : endpoint.method;
+    const requestUrl = joinUrl(targetUrl, requestPath);
     const response = await this.safeRequest({
-      url: joinUrl(targetUrl, requestPath),
-      method: endpoint.method === "HEAD" ? "GET" : endpoint.method,
+      url: requestUrl,
+      method: requestMethod,
       headers: {}
     });
     const isApiPath = requestPath.toLowerCase().includes("/api");
     const vulnerable = response.status === 200 && isApiPath;
+    const authEvidence = this.buildEvidenceSnapshot({
+      url: requestUrl,
+      method: requestMethod,
+      requestHeaders: {},
+      response,
+      includeBodyExcerpt: true,
+      notes: [
+        "Authentication probe executed without Authorization header and without session cookie.",
+        vulnerable
+          ? "Response returned HTTP 200 for API-style path without auth."
+          : `Response returned HTTP ${Number(response.status || 0)} when unauthenticated request was sent.`
+      ]
+    });
     const finding = vulnerable
       ? this.buildFinding({
           type: "API_MISSING_AUTHENTICATION",
@@ -455,6 +844,16 @@ class ApiSecurityService {
           methodTested: endpoint.method,
           testPerformed: "Sent request without Authorization or API key headers.",
           responseObserved: `HTTP ${response.status}`,
+          evidence: authEvidence,
+          discoveryVector:
+            "Auth probe: request sent without Authorization header or session cookie; response status and body were inspected for protected data exposure.",
+          reproductionSteps: [
+            buildCurlRequest(requestMethod, requestUrl, {
+              Authorization: "",
+              Cookie: ""
+            }),
+            `Expected secure behavior: HTTP 401/403. Observed during scan: HTTP ${Number(response.status || 0)}.`
+          ],
           remediation:
             "Add authentication middleware (e.g., auth guard) before this route and enforce token/API-key validation."
         })
@@ -484,13 +883,29 @@ class ApiSecurityService {
     if (!incrementedPath) {
       return null;
     }
+    const requestMethod = endpoint.method === "HEAD" ? "GET" : endpoint.method;
+    const requestUrl = joinUrl(targetUrl, incrementedPath);
 
     const response = await this.safeRequest({
-      url: joinUrl(targetUrl, incrementedPath),
-      method: endpoint.method === "HEAD" ? "GET" : endpoint.method,
+      url: requestUrl,
+      method: requestMethod,
       headers: {}
     });
     const vulnerable = response.status === 200 && this.containsSensitiveData(response.body);
+    const bolaEvidence = this.buildEvidenceSnapshot({
+      url: requestUrl,
+      method: requestMethod,
+      requestHeaders: {},
+      response,
+      includeBodyExcerpt: true,
+      notes: [
+        `Original object path: ${originalPath}`,
+        `Mutated object path: ${incrementedPath}`,
+        vulnerable
+          ? "Response body contained sensitive field hints after object ID mutation."
+          : "No sensitive field hints were detected after object ID mutation."
+      ]
+    });
     const finding = vulnerable
       ? this.buildFinding({
           type: "API_BROKEN_OBJECT_LEVEL_AUTHORIZATION",
@@ -502,6 +917,16 @@ class ApiSecurityService {
           methodTested: endpoint.method,
           testPerformed: `Changed object identifier from ${originalPath} to ${incrementedPath} and replayed request.`,
           responseObserved: `HTTP ${response.status} with sensitive fields in response body.`,
+          evidence: bolaEvidence,
+          discoveryVector:
+            "BOLA probe: numeric identifier was incremented and replayed without credentials; response body was checked for sensitive data patterns.",
+          reproductionSteps: [
+            buildCurlRequest(requestMethod, requestUrl, {
+              Authorization: "",
+              Cookie: ""
+            }),
+            "Compare response data against the authenticated user's own object; access to another user's data indicates broken object-level authorization."
+          ],
           remediation:
             "Validate object ownership before returning data by comparing the authenticated user ID to the resource owner ID."
         })
@@ -525,7 +950,7 @@ class ApiSecurityService {
     return finding;
   }
 
-  async runRateLimitTest(targetUrl, endpoint, engagementId) {
+  async runRateLimitTest(targetUrl, endpoint, engagementId, options = {}) {
     const requestPath = this.materializePath(endpoint.path);
     const requestMethod = endpoint.method === "HEAD" ? "GET" : endpoint.method;
     const requestCount = 20;
@@ -541,6 +966,12 @@ class ApiSecurityService {
     }
     const totalDuration = Date.now() - startedAt;
     const first429Index = responses.findIndex((item) => item.status === 429);
+    const statusTimeline = responses.map((item) => Number(item.status || 0));
+    const statusCounts = statusTimeline.reduce((acc, statusCode) => {
+      const key = String(statusCode);
+      acc[key] = Number(acc[key] || 0) + 1;
+      return acc;
+    }, {});
     const successfulResponses = responses.filter(
       (item) => item.status >= 200 && item.status < 300
     ).length;
@@ -556,6 +987,7 @@ class ApiSecurityService {
       headers: {},
       durationMs: totalDuration
     };
+    const requestUrl = joinUrl(targetUrl, requestPath);
     const finding =
       first429Index === -1 && successfulResponses === requestCount
         ? this.buildFinding({
@@ -567,6 +999,35 @@ class ApiSecurityService {
           methodTested: requestMethod,
           testPerformed: `Executed ${requestCount} sequential rapid unauthenticated requests.`,
           responseObserved: `No HTTP 429 responses. ${requestCount}/${requestCount} requests succeeded in ${totalDuration}ms.`,
+          evidence: {
+            request: {
+              url: requestUrl,
+              method: requestMethod,
+              headers: {},
+              timestamp: new Date().toISOString()
+            },
+            response: {
+              statusCode: Number(representative.status || 0),
+              headers: sanitizeHeadersForEvidence(representative.headers || {}),
+              responseTimeMs: Number(representative.durationMs || 0),
+              bodyExcerpt: trimBodyExcerpt(representative.body, 200)
+            },
+            rateLimitProbe: {
+              requestCount,
+              statusCodesByRequest: statusTimeline,
+              statusCodeHistogram: statusCounts,
+              received429: first429Index !== -1,
+              first429AtRequest: first429Index === -1 ? null : first429Index + 1,
+              totalDurationMs: totalDuration,
+              testedThreshold: requestCount
+            }
+          },
+          discoveryVector:
+            "Rate limit probe: 20 sequential rapid requests were sent to the same endpoint and responses were checked for HTTP 429.",
+          reproductionSteps: [
+            `for i in {1..${requestCount}}; do curl -s -o /dev/null -w \"%{http_code}\\n\" -X ${requestMethod} '${requestUrl}'; done`,
+            "If no HTTP 429 appears while rapid requests continue, rate limiting is likely missing."
+          ],
           remediation:
             "Apply request throttling (for example: 60 requests/minute for public endpoints and 20 requests/minute for authenticated/session endpoints)."
         })
@@ -582,18 +1043,32 @@ class ApiSecurityService {
         requestCount,
         successfulResponses,
         successfulBeforeThrottle,
-        first429AtRequest: first429Index === -1 ? null : first429Index + 1
+        first429AtRequest: first429Index === -1 ? null : first429Index + 1,
+        statusCodeHistogram: statusCounts
       },
       response: representative,
       finding,
       durationMs: totalDuration
     });
 
+    if (first429Index !== -1 && Array.isArray(options?.defenseSignals)) {
+      options.defenseSignals.push({
+        type: "RATE_LIMIT_ENFORCED",
+        endpoint: requestPath,
+        method: requestMethod,
+        first429AtRequest: first429Index + 1,
+        requestCount,
+        durationMs: totalDuration
+      });
+    }
+
     if (finding) {
       finding.metadata.requestCount = requestCount;
       finding.metadata.totalDurationMs = totalDuration;
       finding.metadata.successfulBeforeThrottle = successfulBeforeThrottle;
       finding.metadata.first429AtRequest = first429Index === -1 ? null : first429Index + 1;
+      finding.metadata.statusCodeHistogram = statusCounts;
+      finding.metadata.statusCodesByRequest = statusTimeline;
       finding.responseObserved = `No HTTP 429 responses. ${requestCount}/${requestCount} requests succeeded in ${totalDuration}ms.`;
     }
 
@@ -639,6 +1114,10 @@ class ApiSecurityService {
         }
       });
       const reflected = asString(response.body).includes(payload.value);
+      const requestUrl = joinUrl(targetUrl, requestPath);
+      const requestHeaders = {
+        "Content-Type": "application/json"
+      };
       const finding = reflected
         ? this.buildFinding({
             type: "API_INPUT_VALIDATION_MISSING",
@@ -650,6 +1129,29 @@ class ApiSecurityService {
             methodTested: methodToTest,
             testPerformed: `Sent malicious payload variant (${payload.key}).`,
             responseObserved: `Payload reflected in HTTP ${response.status} response.`,
+            evidence: this.buildEvidenceSnapshot({
+              url: requestUrl,
+              method: methodToTest,
+              requestHeaders,
+              requestBody: JSON.stringify({ test: payload.value }),
+              response,
+              includeBodyExcerpt: true,
+              notes: [
+                `Payload type tested: ${payload.key}`,
+                "Response body included the exact payload value, indicating missing output encoding or input validation."
+              ]
+            }),
+            discoveryVector:
+              "Input validation probe: malicious payload variants were submitted in JSON body and response reflections were inspected.",
+            reproductionSteps: [
+              buildCurlRequest(
+                methodToTest,
+                requestUrl,
+                requestHeaders,
+                JSON.stringify({ test: payload.value })
+              ),
+              "If the payload string appears in the response without encoding/sanitization, input validation is insufficient."
+            ],
             remediation:
               "Apply strict schema validation and output encoding; reject unsafe payloads before business logic."
           })
@@ -724,6 +1226,28 @@ class ApiSecurityService {
                 responseObserved: sqlError
                   ? `HTTP ${response.status} with SQL error signature.`
                   : `HTTP ${response.status} reflected the supplied payload.`,
+                evidence: this.buildEvidenceSnapshot({
+                  url: joinUrl(targetUrl, testPath),
+                  method: "GET",
+                  requestHeaders: {},
+                  response,
+                  includeBodyExcerpt: true,
+                  notes: [
+                    `Parameter tested: ${paramName}`,
+                    `Payload type: ${payload.key}`,
+                    sqlError
+                      ? "SQL error signature detected in response body."
+                      : "Payload reflected in response body."
+                  ]
+                }),
+                discoveryVector:
+                  "Query parameter injection probe: query-string parameters were mutated with SQLi/XSS payloads and response bodies were inspected for reflection or SQL error signatures.",
+                reproductionSteps: [
+                  buildCurlRequest("GET", joinUrl(targetUrl, testPath)),
+                  sqlError
+                    ? "If SQL error signatures are visible in the response, query parameter handling is vulnerable to SQL injection patterns."
+                    : "If payload text is reflected without encoding, reflected input handling is vulnerable."
+                ],
                 remediation: sqlError
                   ? "Use parameterized queries for all query-string inputs and suppress database errors in responses."
                   : "Apply output encoding and strict input validation for reflected query parameters."
@@ -758,15 +1282,16 @@ class ApiSecurityService {
   }
 
   async checkGraphQLIntrospection(targetUrl, engagementId = null) {
+    const requestBody = {
+      query: "{ __schema { types { name } } }"
+    };
     const response = await this.safeRequest({
       url: joinUrl(targetUrl, "/graphql"),
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
-      data: {
-        query: "{ __schema { types { name } } }"
-      }
+      data: requestBody
     });
 
     const schemaData =
@@ -785,6 +1310,33 @@ class ApiSecurityService {
           methodTested: "POST",
           testPerformed: "Submitted GraphQL __schema introspection query.",
           responseObserved: `HTTP ${response.status} with schema type data in response.`,
+          evidence: this.buildEvidenceSnapshot({
+            url: joinUrl(targetUrl, "/graphql"),
+            method: "POST",
+            requestHeaders: {
+              "Content-Type": "application/json"
+            },
+            requestBody: JSON.stringify(requestBody),
+            response,
+            includeBodyExcerpt: true,
+            notes: [
+              "GraphQL introspection query executed against /graphql endpoint.",
+              hasIntrospection
+                ? "Schema data was returned, confirming introspection exposure."
+                : "No schema data was returned."
+            ]
+          }),
+          discoveryVector:
+            "GraphQL probe: POST request with __schema introspection query was sent and response body was inspected for schema metadata.",
+          reproductionSteps: [
+            buildCurlRequest(
+              "POST",
+              joinUrl(targetUrl, "/graphql"),
+              { "Content-Type": "application/json" },
+              JSON.stringify(requestBody)
+            ),
+            "If the response includes __schema/type metadata, GraphQL introspection is enabled."
+          ],
           remediation:
             "Disable GraphQL introspection in production configuration and restrict schema exploration to trusted environments."
         })
@@ -833,7 +1385,16 @@ class ApiSecurityService {
       }
 
       logger.info({ engagementId, targetUrl }, "Starting API security scan");
-      const discoveredEndpoints = await this.discoverEndpoints(targetUrl);
+      const scanStartedAt = Date.now();
+      const discoveryResult = await this.discoverEndpoints(targetUrl);
+      const discoveredEndpoints = this.deduplicateEndpoints(discoveryResult.endpoints || []);
+      const scanLimitations = Array.isArray(discoveryResult.scanLimitations)
+        ? discoveryResult.scanLimitations
+        : [];
+      const discoveryAudit = Array.isArray(discoveryResult.discoveryAudit)
+        ? discoveryResult.discoveryAudit
+        : [];
+      const defenseSignals = [];
       const findings = [];
 
       await this.executionLogger.logTestExecution({
@@ -846,7 +1407,9 @@ class ApiSecurityService {
         parameters: {
           targetUrl,
           endpointCount: discoveredEndpoints.length,
-          sources: Array.from(new Set(discoveredEndpoints.map((item) => item.source || "probe")))
+          sources: Array.from(new Set(discoveredEndpoints.map((item) => item.source || "probe"))),
+          skippedCount: discoveryAudit.filter((item) => item.action === "skipped").length,
+          limitationCount: scanLimitations.length
         },
         response: {
           statusCode: discoveredEndpoints.length > 0 ? 200 : 404,
@@ -856,7 +1419,7 @@ class ApiSecurityService {
         result: {
           status: "PASSED",
           confidence: 0.85,
-          reason: `API scanner discovered/probed ${discoveredEndpoints.length} URL(s).`,
+          reason: `API scanner discovered ${discoveredEndpoints.length} valid URL(s) using status-validated endpoint discovery.`,
           severity: "info"
         },
         executionTimeMs: 0,
@@ -884,7 +1447,8 @@ class ApiSecurityService {
         const rateLimitFinding = await this.runRateLimitTest(
           targetUrl,
           endpoint,
-          String(engagement._id)
+          String(engagement._id),
+          { defenseSignals }
         );
         if (rateLimitFinding) {
           findings.push(rateLimitFinding);
@@ -922,7 +1486,11 @@ class ApiSecurityService {
         findings,
         scannedEndpoints: discoveredEndpoints,
         endpointCount: discoveredEndpoints.length,
-        probedUrlCount: discoveredEndpoints.length
+        probedUrlCount: discoveredEndpoints.length,
+        scanLimitations,
+        discoveryAudit,
+        defenseSignals,
+        durationMs: Date.now() - scanStartedAt
       };
     } catch (error) {
       logError(logger, { engagementId }, "API security scan failed", error);
@@ -931,6 +1499,9 @@ class ApiSecurityService {
         ...structuredError,
         findings: [],
         scannedEndpoints: [],
+        scanLimitations: [],
+        discoveryAudit: [],
+        defenseSignals: [],
         error: structuredError.message
       };
     }

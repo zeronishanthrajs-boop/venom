@@ -21,6 +21,99 @@ const SENSITIVE_HEADERS = [
   "referrer-policy",
   "permissions-policy"
 ];
+const EVIDENCE_HEADER_EXCLUSIONS = new Set([
+  "authorization",
+  "cookie",
+  "set-cookie",
+  "proxy-authorization",
+  "x-internal-token",
+  "x-venom-internal-token"
+]);
+
+function asPlainText(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === undefined || value === null) {
+    return "";
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function sanitizeHeadersForEvidence(headers = {}) {
+  const safeHeaders = {};
+  for (const [rawKey, rawValue] of Object.entries(headers || {})) {
+    const key = String(rawKey || "").trim().toLowerCase();
+    if (!key || EVIDENCE_HEADER_EXCLUSIONS.has(key)) {
+      continue;
+    }
+    safeHeaders[key] = asPlainText(rawValue).slice(0, 400);
+  }
+  return safeHeaders;
+}
+
+function trimBodyExcerpt(body, maxLength = 200) {
+  const text = asPlainText(body).replace(/\s+/g, " ").trim();
+  if (!text) {
+    return "";
+  }
+  return text.slice(0, maxLength);
+}
+
+function enrichHeaderFindingWithEvidence(finding, {
+  requestUrl,
+  requestMethod,
+  requestHeaders,
+  requestTimestamp,
+  responseStatus,
+  responseHeaders,
+  responseTimeMs,
+  responseBody
+}) {
+  const findingHeader = String(finding?.metadata?.header || "").toLowerCase();
+  const presentHeaders = Object.keys(responseHeaders || {}).sort();
+  const missingHeaderList = findingHeader ? [findingHeader] : [];
+  const evidence = {
+    request: {
+      url: requestUrl,
+      method: String(requestMethod || "GET").toUpperCase(),
+      headers: sanitizeHeadersForEvidence(requestHeaders || {}),
+      timestamp: requestTimestamp
+    },
+    response: {
+      statusCode: Number(responseStatus || 0),
+      headers: sanitizeHeadersForEvidence(responseHeaders || {}),
+      responseTimeMs: Number(responseTimeMs || 0),
+      bodyExcerpt: trimBodyExcerpt(responseBody, 200)
+    },
+    headerProbe: {
+      presentHeaders,
+      missingHeaders: missingHeaderList
+    }
+  };
+  const discoveryVector =
+    "HTTP header probe: GET request sent to target URL, response headers analyzed for security directives and header hardening coverage.";
+  const reproductionSteps = [
+    `curl -sS -D - -o /dev/null '${requestUrl}'`
+  ];
+
+  return {
+    ...finding,
+    evidence,
+    discoveryVector,
+    reproductionSteps,
+    metadata: {
+      ...(finding.metadata || {}),
+      evidence,
+      discoveryVector,
+      reproductionSteps
+    }
+  };
+}
 
 function getTimeoutSignal(timeoutMs) {
   if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
@@ -114,7 +207,11 @@ async function fetchWithTimeout(targetUrl, timeoutMs, maxRedirects = 3) {
 }
 
 async function runHttpHeadersProbe(targetUrl, timeoutMs) {
+  const requestMethod = "GET";
+  const requestTimestamp = new Date().toISOString();
+  const startedAt = Date.now();
   const { response, finalUrl, redirectChain } = await fetchWithTimeout(targetUrl, timeoutMs, 3);
+  const responseTimeMs = Date.now() - startedAt;
 
   const responseBody = await response.text().catch((error) => {
     logger.warn(
@@ -132,7 +229,18 @@ async function runHttpHeadersProbe(targetUrl, timeoutMs) {
     (header) => !headers[header]
   );
   const technologyFingerprint = detectTechnologyFingerprint(headers, responseBody);
-  const findings = analyzeHeaderFindings(headers);
+  const findings = analyzeHeaderFindings(headers).map((finding) =>
+    enrichHeaderFindingWithEvidence(finding, {
+      requestUrl: finalUrl || targetUrl,
+      requestMethod,
+      requestHeaders: {},
+      requestTimestamp,
+      responseStatus: response.status,
+      responseHeaders: headers,
+      responseTimeMs,
+      responseBody
+    })
+  );
 
   return {
     tool: "http_headers_probe",
@@ -143,6 +251,7 @@ async function runHttpHeadersProbe(targetUrl, timeoutMs) {
     headers,
     responseBodyPreview: responseBody.slice(0, 1000),
     responseBodyLength: responseBody.length,
+    responseTimeMs,
     missingRecommendedHeaders,
     technologyFingerprint,
     findings

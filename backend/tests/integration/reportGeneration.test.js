@@ -116,6 +116,86 @@ test("generateReport builds What/How/What Found/Why/Fix structure", async () => 
   assert.ok(first.fix);
 });
 
+test("generateReport applies acquisition score formula and density label", async () => {
+  const engagement = await Engagement.create(buildEngagementPayload("Score formula stress"));
+  const highFindings = Array.from({ length: 41 }).map((_, index) => ({
+    id: `api-high-${index + 1}`,
+    severity: "high",
+    type: "API_MISSING_RATE_LIMIT",
+    category: "API Security",
+    title: `High finding ${index + 1}`,
+    description: `Rate limiting missing on endpoint ${index + 1}`,
+    recommendation: "Enable throttling",
+    source: "api_security",
+    evidence: {
+      request: { url: `https://example.com/api/test-${index + 1}`, method: "GET" },
+      response: { statusCode: 200, responseTimeMs: 10 }
+    },
+    discoveryVector: "Rate limit probe executed",
+    reproductionSteps: [`curl -i 'https://example.com/api/test-${index + 1}'`]
+  }));
+
+  await ExecutionJob.create({
+    engagementId: engagement._id,
+    toolId: "api_security_scan",
+    targetUrl: engagement.targetUrl,
+    status: "success",
+    findings: highFindings
+  });
+
+  const report = await reportGeneratorService.generateReport(engagement._id);
+  assert.equal(report.securityScore.score, 0);
+  assert.equal(report.securityScore.rawDeduction, 615);
+  assert.equal(
+    report.securityScore.densityLabel,
+    "CRITICAL FINDING DENSITY — IMMEDIATE ACTION REQUIRED"
+  );
+  assert.equal(report.securityScore.riskRating, "HIGH");
+});
+
+test("generateReport keeps risk rating severity-driven even with high score", async () => {
+  const engagement = await Engagement.create(buildEngagementPayload("Severity-driven risk"));
+
+  await ExecutionJob.create({
+    engagementId: engagement._id,
+    toolId: "api_security_scan",
+    targetUrl: engagement.targetUrl,
+    status: "success",
+    findings: [
+      {
+        id: "api-med-1",
+        severity: "medium",
+        type: "API_GRAPHQL_INTROSPECTION_ENABLED",
+        category: "API Security",
+        title: "GraphQL introspection enabled",
+        description: "Introspection returned schema data",
+        recommendation: "Disable introspection",
+        source: "api_security",
+        evidence: {
+          request: { url: "https://example.com/graphql", method: "POST" },
+          response: { statusCode: 200, responseTimeMs: 15 }
+        },
+        discoveryVector: "GraphQL probe executed",
+        reproductionSteps: [
+          "curl -i -X POST 'https://example.com/graphql' -H 'Content-Type: application/json' --data-raw '{\"query\":\"{ __schema { types { name } } }\"}'"
+        ]
+      }
+    ]
+  });
+
+  await ExecutionJob.create({
+    engagementId: engagement._id,
+    toolId: "dns_lookup_probe",
+    targetUrl: engagement.targetUrl,
+    status: "success",
+    findings: []
+  });
+
+  const report = await reportGeneratorService.generateReport(engagement._id);
+  assert.ok(report.securityScore.score >= 85 && report.securityScore.score <= 95);
+  assert.equal(report.securityScore.riskRating, "MEDIUM");
+});
+
 test("GET /api/reports/:engagementId/hardened returns structured report", async () => {
   const engagement = await Engagement.create(buildEngagementPayload("Hardened report route"));
   await ExecutionJob.create({
