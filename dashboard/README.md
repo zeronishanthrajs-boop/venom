@@ -53,3 +53,5 @@ Behavior:
 ## Backend Requirements
 - Backend `VENOM_API_KEY` must match dashboard `VENOM_BACKEND_API_KEY`.
 - Backend `CORS_ORIGINS` should include dashboard origin for direct calls and operational safety.
+
+<!-- Force Vercel build -->
