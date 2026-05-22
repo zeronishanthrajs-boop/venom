@@ -124,3 +124,7 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
   - `VENOM_DASHBOARD_SESSION_SECRET`
   - `VENOM_BACKEND_BASE_URL=https://<your-backend-domain>`
   - `VENOM_BACKEND_API_KEY=<same as backend VENOM_API_KEY>`
+
+## PDF Generation & Download Overhaul
+PDF report downloads are reinforced against server-side timeouts and cold starts, with status polling and clear UI error presentation.
+
