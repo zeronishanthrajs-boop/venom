@@ -77,7 +77,7 @@ router.get("/:engagementId/pdf", requireDb, async (req, res) => {
         const pdf = await generatePdfReport(engagementId, { mode });
         await Engagement.findByIdAndUpdate(engagementId, {
           pdfStatus: "ready",
-          pdfData: pdf,
+          pdfData: Buffer.from(pdf),
           pdfGeneratedAt: new Date(),
           pdfError: null
         });

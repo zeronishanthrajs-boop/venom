@@ -454,3 +454,12 @@ If the repository is lost, follow this exact step-by-step sequence to reconstruc
 [2026-05-22T19:35:00Z] VERIFIED: Run npm test in backend/ directory. All 197 integration and unit tests completed successfully (0 failures).
 [2026-05-22T19:35:00Z] STATUS: resolved
 ---
+
+[2026-05-22T15:38:00Z] GROUP: PDF FIX: Download Full Report delivers PDF not Markdown
+[2026-05-22T15:38:00Z] ROOT CAUSE: puppeteer-core's page.pdf() returns a Uint8Array in newer versions. Mongoose's Buffer schema type rejects Uint8Array with 'Cast to Buffer failed', causing the background job to set pdfStatus='failed' and pdfError with the CastError. The frontend catch block then silently fell back to the .md download.
+[2026-05-22T15:38:00Z] CHANGE: 1) In backend/services/reportGenerator.js renderPdfFromTemplate, wrapped the return value of page.pdf() with Buffer.from(pdf) to ensure a proper Node.js Buffer is always returned. 2) In backend/routes/reports.js background setImmediate handler, also wrapped the pdf value with Buffer.from(pdf) before assigning it to pdfData as a defence-in-depth measure.
+[2026-05-22T15:38:00Z] FILES: backend/services/reportGenerator.js, backend/routes/reports.js
+[2026-05-22T15:38:00Z] TESTS: 197 passing, 0 failing
+[2026-05-22T15:38:00Z] VERIFIED: Ran node test_fix.js locally against production MongoDB. www.royalchallengers.com engagement PDF Status changed from 'failed' to 'ready', PDF stored as 1,265,590 bytes. All 197 unit and integration tests pass.
+[2026-05-22T15:38:00Z] STATUS: resolved
+---
