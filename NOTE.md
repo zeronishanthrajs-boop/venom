@@ -372,3 +372,28 @@ If the repository is lost, follow this exact step-by-step sequence to reconstruc
 [2026-05-21T22:35:32.7143050+05:30] CHANGE: 1. piSecurityService.js now surfaces API_NO_ENDPOINTS_DISCOVERED when discovery fails, and correctly registers WAF blocks in unRateLimitTest. 2. containerSecurityService.js skips logging duplicate executions and generates an explicit SUCCESS result with ttemptedFiles for non-GitHub targets to accurately populate limitations. 3. orchestrator.js correctly passes the jobs object to generateComplianceReport. 4. complianceMapperService.js now maps sqlmap_detect to PCI/CIS and correctly counts BLOCKED jobs as successful defenses. 5. eportGeneratorService.js now extracts and elevates OWASP tags so they render per finding in the UI. 6. geminiClient.js default model set to gemini-1.5-flash to restore AI Planner functionality.
 [2026-05-21T22:35:32.7143050+05:30] FILES: backend/services/apiSecurityService.js, backend/services/containerSecurityService.js, backend/services/orchestrator.js, backend/services/complianceMapperService.js, backend/services/reportGeneratorService.js, backend/services/geminiClient.js
 [2026-05-21T22:35:32.7143050+05:30] VERIFIED: AI Planner now engages correctly. Container scan properly reports attempted files. Compliance mapping correctly populates PCI-DSS, HIPAA, and CIS metrics, including blocked SQL map defense signals. Score deductions now properly account for missing security controls found by Phase 2 scanners.
+[2026-05-22T13:05:13.7223255+05:30] MANDATORY AUDIT COMPLETE (PRE-MODIFICATION)
+[2026-05-22T13:05:13.7223255+05:30] AUDIT FILES READ: backend/services/apiSecurityService.js, backend/services/reportGeneratorService.js, backend/services/complianceMapperService.js, backend/services/orchestrator.js, backend/server.js, render.yaml, Dockerfile (not present)
+[2026-05-22T13:05:13.7223255+05:30] AUDIT ANSWERS:
+- score formula location: backend/services/reportGeneratorService.js -> calculateSecurityScore(); legacy scoring also in backend/services/reportGenerator.js -> calculateSecurityScore().
+- exact score logic: starts at 100, subtracts fixed severity deductions (critical/high/medium/low), subtracts failed/timeout probe penalties, adds defense/clean-category bonuses, then clamps 0-100.
+- severity assignment location: explicit severities are assigned in scanner services (primarily backend/services/apiSecurityService.js buildFinding call sites) and header-finding templates in backend/tooling/vulnerabilityFeed.js.
+- endpoint context exists: endpoint string exists per finding, but endpoint business classification is not currently implemented globally.
+- AI prompt generation location: backend/services/reportGenerator.js -> generateAttackNarrative(), generateAiExecutiveSummary(); report chat prompt in backend/routes/reports.js (/chat).
+- exact attack prompt content (current): asks AI to "chain these findings to compromise the target application" with realistic business risk narrative.
+- compliance state assignment location: backend/services/complianceMapperService.js (assessProbeCoverage() + generateComplianceReport()).
+- success rate calculation location: backend/services/reportGenerator.js buildExecutionSummary() and backend/routes/engagements.js buildEngagementReport().
+- deduplication exists: yes, backend/utils/deduplicateFindings.js (currently title+description semantic hash).
+- HSTS check location: backend/tooling/vulnerabilityFeed.js (missing strict-transport-security header rule).
+- HTTPS verified first before HSTS: no strict pre-verification gate currently.
+- WAF detection exists: partial heuristic/block-signal detection in API scanner rate-limit logic; dedicated wafw00f precheck not integrated.
+- report caching exists: no deterministic report-hash cache/dedupe layer currently.
+- orchestration locking exists: in-process activeOrchestrations Map in backend/services/orchestrator.js; no distributed lock.
+- polling deduplication exists: no; dashboard report page uses fixed interval polling.
+- PDF generation cached: no explicit artifact cache for rendered PDFs.
+- trace IDs exist: not enforced globally in logs/execution records.
+- state machine exists: partial orchestration phases exist but not full persisted enterprise lifecycle.
+[2026-05-22T13:05:13.7223255+05:30] STATUS: Audit gate satisfied. Proceeding to Group 1 implementation.
+---
+
+- [2026-05-22] Pushed latest Phase 2 and Phase 3 updates to Vercel and Render via Git force push.

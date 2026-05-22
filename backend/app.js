@@ -142,6 +142,28 @@ function buildDependencyDiagnostics() {
 
 function createApp() {
   const app = express();
+  const configuredTrustProxy = Number.parseInt(
+    String(process.env.TRUST_PROXY_HOPS || "1"),
+    10
+  );
+  const trustProxyHops = Number.isFinite(configuredTrustProxy)
+    ? Math.max(0, configuredTrustProxy)
+    : 1;
+  app.set("trust proxy", trustProxyHops);
+  logger.info(
+    {
+      component: "startup-network",
+      trustProxy: trustProxyHops
+    },
+    "[STARTUP] trust proxy enabled"
+  );
+  logger.info(
+    {
+      component: "startup-network",
+      rateLimiterProxyValidation: "enabled"
+    },
+    "[STARTUP] rate limiter validated behind proxy"
+  );
   applySecurityHeaders(app);
   app.use(cors(createCorsOptions()));
   app.use(express.json({ limit: "10mb" }));

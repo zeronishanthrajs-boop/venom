@@ -292,19 +292,26 @@ function summarizeExecutionJobs(executionJobs) {
     failedJobs: 0,
     blockedJobs: 0,
     timeoutJobs: 0,
+    toolUnavailableJobs: 0,
+    errorJobs: 0,
     runningJobs: 0
   };
 
   for (const job of executionJobs) {
-    if (job.status === "success") {
+    const status = String(job.status || "").toLowerCase();
+    if (status === "success" || status === "not_applicable") {
       summary.successfulJobs += 1;
-    } else if (job.status === "failed") {
+    } else if (status === "failed") {
       summary.failedJobs += 1;
-    } else if (job.status === "blocked") {
+    } else if (status === "blocked") {
       summary.blockedJobs += 1;
-    } else if (job.status === "timeout") {
+    } else if (status === "timeout") {
       summary.timeoutJobs += 1;
-    } else if (job.status === "running") {
+    } else if (status === "tool_not_installed") {
+      summary.toolUnavailableJobs += 1;
+    } else if (status === "error") {
+      summary.errorJobs += 1;
+    } else if (status === "running") {
       summary.runningJobs += 1;
     }
   }
@@ -323,7 +330,9 @@ function buildEngagementReport({
     jobSummary.successfulJobs +
     jobSummary.failedJobs +
     jobSummary.blockedJobs +
-    jobSummary.timeoutJobs;
+    jobSummary.timeoutJobs +
+    jobSummary.toolUnavailableJobs +
+    jobSummary.errorJobs;
   const successRate =
     terminalCount === 0
       ? 0

@@ -74,6 +74,17 @@ const STANDARD_PROBES = {
   ]
 };
 
+const CIS_PROBE_CONTROL_MAP = {
+  http_headers_probe: ["CIS-4"],
+  dns_lookup_probe: ["CIS-1"],
+  tls_metadata_probe: ["CIS-3"],
+  api_security_scan: ["CIS-5", "CIS-6"],
+  container_security_scan: ["CIS-4"],
+  supply_chain_scan: ["CIS-2", "CIS-7"],
+  secrets_scan: ["CIS-3"],
+  sqlmap_detect: ["CIS-7"]
+};
+
 function asString(value) {
   if (typeof value === "string") {
     return value;
@@ -142,7 +153,7 @@ function assessProbeCoverage({ jobs = [], requiredTools = [], violations = [] })
     const matchingJobs = jobs.filter((job) => String(job.toolId || "") === toolId);
     const successful = matchingJobs.some((job) => {
       const normalized = normalizeJobStatus(job.status);
-      return normalized === "success" || normalized === "blocked";
+      return normalized === "success" || normalized === "blocked" || normalized === "not_applicable";
     });
     if (successful) {
       successfulTools.add(toolId);
@@ -158,7 +169,7 @@ function assessProbeCoverage({ jobs = [], requiredTools = [], violations = [] })
 
   if (violations.length > 0) {
     return {
-      status: "FAILED",
+      status: "GAPS_IDENTIFIED",
       explanation: `${violations.length} mapped violation(s) were found.`,
       requiredProbes: requiredTools,
       incompleteProbes,
@@ -178,9 +189,9 @@ function assessProbeCoverage({ jobs = [], requiredTools = [], violations = [] })
   }
 
   return {
-    status: "POTENTIALLY_RELEVANT",
+    status: "CONTROLS_ASSESSED",
     explanation:
-      "Relevant probes ran successfully. This identifies potentially related control areas but is not a formal compliance audit.",
+      "Relevant probes ran successfully with no mapped gaps detected in this automated subset.",
     requiredProbes: requiredTools,
     incompleteProbes: [],
     successfulProbes: [...successfulTools]
@@ -391,8 +402,6 @@ class ComplianceMapperService {
     }
 
     const totalControls = CIS_CONTROLS.length;
-    const failedControlsCount = failedControls.size;
-    const passedControls = Math.max(0, totalControls - failedControlsCount);
     const pciAssessment = assessProbeCoverage({
       jobs,
       requiredTools: STANDARD_PROBES.pciDss,
@@ -408,23 +417,51 @@ class ComplianceMapperService {
       requiredTools: STANDARD_PROBES.cis,
       violations: CIS_CONTROLS.filter((item) => failedControls.has(item.id))
     });
-    const cisInsufficient = cisCoverage.status === "INSUFFICIENT_DATA";
-    const scorePercent = cisInsufficient
-      ? null
-      : totalControls === 0
-        ? 100
-        : Number(((passedControls / totalControls) * 100).toFixed(0));
+    const assessedControlIds = new Set();
+    for (const toolId of cisCoverage.successfulProbes || []) {
+      const mappedControls = CIS_PROBE_CONTROL_MAP[String(toolId || "")] || [];
+      for (const controlId of mappedControls) {
+        assessedControlIds.add(controlId);
+      }
+    }
+    for (const failedControlId of failedControls.values()) {
+      assessedControlIds.add(failedControlId);
+    }
+
+    const assessedControls = CIS_CONTROLS.filter((control) =>
+      assessedControlIds.has(control.id)
+    );
+    const failingControls = CIS_CONTROLS.filter((control) => failedControls.has(control.id));
+    const passingControls = assessedControls.filter((control) => !failedControls.has(control.id));
+    const notAssessedControls = CIS_CONTROLS.filter(
+      (control) => !assessedControlIds.has(control.id)
+    );
+    const assessedCount = assessedControls.length;
+    const failedControlsCount = failingControls.length;
+    const passedControlsCount = passingControls.length;
+    const scorePercent =
+      assessedCount > 0
+        ? Number(((passedControlsCount / assessedCount) * 100).toFixed(0))
+        : null;
+    const cisStatus =
+      assessedCount === 0
+        ? "INSUFFICIENT_DATA"
+        : failedControlsCount > 0
+          ? "GAPS_IDENTIFIED"
+          : "CONTROLS_ASSESSED";
     const overallRisk = this.computeOverallRisk(mappedFindings);
+    const complianceDisclaimer =
+      "Automated scanning evaluates a subset of technical controls only. Formal compliance certification requires comprehensive assessment by qualified auditors.";
     const summary =
-      mappedFindings.length === 0 && !cisInsufficient
-        ? "Compliance posture is currently healthy with no mapped security findings. This is not a formal compliance audit."
+      mappedFindings.length === 0 && cisStatus === "CONTROLS_ASSESSED"
+        ? "No mapped control gaps were identified in the assessed automated control subset."
         : mappedFindings.length === 0
-          ? "Compliance posture cannot be determined because relevant probes did not complete."
-        : `Compliance posture indicates ${overallRisk} risk with ${mappedFindings.length} mapped finding(s) requiring remediation. This is not a formal compliance audit.`;
+          ? "Compliance posture cannot be determined for all controls because assessment coverage is incomplete."
+          : `Compliance posture indicates ${overallRisk} risk with ${mappedFindings.length} mapped finding(s) requiring remediation in assessed controls.`;
 
     return {
       generatedAt: new Date().toISOString(),
-      disclaimer: "This is not a formal compliance audit.",
+      disclaimer: complianceDisclaimer,
       totalFindings: mappedFindings.length,
       overallRisk,
       summary,
@@ -436,15 +473,23 @@ class ComplianceMapperService {
       hipaa: Object.values(hipaaGroups).sort((a, b) => a.reference.localeCompare(b.reference)),
       hipaaAssessment,
       cis: {
-        status: cisCoverage.status,
-        explanation: cisCoverage.explanation,
+        status: cisStatus,
+        explanation:
+          cisStatus === "INSUFFICIENT_DATA"
+            ? "CIS control assessment coverage is incomplete. Unassessed controls are not treated as failed."
+            : cisStatus === "GAPS_IDENTIFIED"
+              ? "Assessed CIS controls include mapped gaps requiring remediation."
+              : "Assessed CIS controls showed no mapped technical gaps.",
         totalControls,
-        passedControls: cisInsufficient ? null : passedControls,
+        assessedControls: assessedCount,
+        unassessedControls: notAssessedControls.length,
+        passedControls: assessedCount === 0 ? null : passedControlsCount,
         failedControls: failedControlsCount,
         scorePercent,
         incompleteProbes: cisCoverage.incompleteProbes,
-        passingControls: CIS_CONTROLS.filter((item) => !failedControls.has(item.id)),
-        failingControls: CIS_CONTROLS.filter((item) => failedControls.has(item.id))
+        passingControls,
+        failingControls,
+        notAssessedControls
       },
       mappedFindings
     };

@@ -661,6 +661,17 @@
         <p style="color: #475569; font-size: 12.5px; white-space: pre-line;">{{attackNarrative}}</p>
       </div>
 
+      <div class="narrative-card">
+        <h3>Business Impact Estimates</h3>
+        <p style="color: #475569; font-size: 12.5px;">
+          Estimated remediation effort: {{estimatedRemediationEffort}} depending on infrastructure complexity.
+        </p>
+        <p style="color: #475569; font-size: 12.5px;">
+          Typical breach costs in similar categories: {{estimatedBreachCostRange}} depending on data sensitivity and regulatory exposure.
+        </p>
+        <p style="color: #64748b; font-size: 11px; white-space: pre-line;">{{estimatesDisclaimer}}</p>
+      </div>
+
 
     </div>
   </div>
@@ -755,6 +766,7 @@
             <div class="finding-card-badge-row">
               <span class="badge {{severity}}">{{severity}}</span>
               <span class="badge badge-outline">EPS: {{eps}}%</span>
+              <span class="badge badge-outline">Confidence: {{confidence}}</span>
               {{#if cve}}
                 <span class="badge badge-outline" style="font-family: 'JetBrains Mono', monospace; color: #7c3aed;">{{cve}}</span>
               {{/if}}
@@ -802,6 +814,13 @@
                   {{/each}}
                 </ol>
               </div>
+            </div>
+          {{/if}}
+
+          {{#if manualValidationRequired}}
+            <div class="finding-section">
+              <div class="finding-section-title">Validation Status</div>
+              <div class="finding-section-content">{{manualValidationNote}}</div>
             </div>
           {{/if}}
         {{/if}}

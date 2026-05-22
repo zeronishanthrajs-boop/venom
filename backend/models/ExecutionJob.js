@@ -71,6 +71,23 @@ const executionJobSchema = new mongoose.Schema(
             enum: ["informational", "weak signal", "strong signal", "confirmed"],
             default: "weak signal"
           },
+          confidence: {
+            type: String,
+            enum: ["CONFIRMED", "STRONG_SIGNAL", "WEAK_SIGNAL", "INFORMATIONAL"],
+            default: "WEAK_SIGNAL"
+          },
+          manualValidationRequired: {
+            type: Boolean,
+            default: true
+          },
+          manualValidationNote: {
+            type: String,
+            default:
+              "Manual validation recommended before treating as confirmed vulnerability."
+          },
+          endpointType: { type: String, default: "" },
+          endpointSensitivity: { type: String, default: "" },
+          severityReason: { type: String, default: "" },
           exploitationPotential: { type: String, default: "" },
           cve: { type: String, default: null },
           source: { type: String, default: "" },

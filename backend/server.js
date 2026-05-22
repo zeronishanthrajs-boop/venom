@@ -18,6 +18,7 @@ const {
   initWebSocketServer,
   closeWebSocketServer
 } = require("./services/realtimeServer");
+const { verifyToolchainAtStartup } = require("./services/toolchainService");
 
 const app = createApp();
 const server = http.createServer(app);
@@ -25,13 +26,30 @@ const port = process.env.PORT || 5000;
 
 async function bootstrap() {
   await connectDB();
+  const toolchainStatus = await verifyToolchainAtStartup().catch((error) => {
+    logger.warn(
+      {
+        component: "toolchain-startup-check",
+        error: error?.message || String(error)
+      },
+      "Toolchain startup verification failed"
+    );
+    return null;
+  });
   startCveSyncJob();
   startPromptEvolutionJob();
   startResearchJob();
   startMonitoringJob();
   initWebSocketServer(server);
   server.listen(port, () => {
-    logger.info({ port }, "Server started");
+    logger.info(
+      {
+        port,
+        toolchainIntegrity: toolchainStatus?.status || "UNKNOWN",
+        missingTools: toolchainStatus?.missingTools || []
+      },
+      "Server started"
+    );
   });
 }
 

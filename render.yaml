@@ -4,7 +4,20 @@ services:
     env: node
     plan: free
     rootDir: backend
-    buildCommand: npm ci
+    buildCommand: >-
+      bash -lc "set -euo pipefail;
+      apt-get update;
+      apt-get install -y --no-install-recommends nikto whatweb ffuf amass golang-go python3-pip;
+      npm ci;
+      python3 -m pip install --no-cache-dir sqlmap wafw00f semgrep trufflehog;
+      export GOBIN=/usr/local/bin;
+      go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest;
+      go install github.com/projectdiscovery/httpx/cmd/httpx@latest;
+      go install github.com/projectdiscovery/katana/cmd/katana@latest;
+      go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest;
+      go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest;
+      go install github.com/hahwul/dalfox/v2@latest;
+      nuclei -update-templates || true"
     startCommand: npm start
     healthCheckPath: /health
     autoDeploy: true
@@ -13,6 +26,8 @@ services:
         value: production
       - key: PORT
         value: 5000
+      - key: TRUST_PROXY_HOPS
+        value: "1"
       - key: ENABLE_INMEMORY_DB
         value: "false"
       - key: MONGODB_URI

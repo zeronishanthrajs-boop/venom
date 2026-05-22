@@ -206,6 +206,23 @@ async function fetchWithTimeout(targetUrl, timeoutMs, maxRedirects = 3) {
   return { response: await fetchOnceWithTimeout(currentUrl, safeTimeoutMs), finalUrl: currentUrl, redirectChain };
 }
 
+async function detectHttpsSupport(targetUrl, timeoutMs) {
+  try {
+    const parsed = new URL(targetUrl);
+    if (parsed.protocol === "https:") {
+      return true;
+    }
+    const httpsCandidate = `https://${parsed.host}${parsed.pathname || "/"}${parsed.search || ""}`;
+    const probe = await fetchOnceWithTimeout(
+      httpsCandidate,
+      Math.min(Number.isFinite(timeoutMs) ? timeoutMs : 6000, 6000)
+    );
+    return Number(probe?.status || 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function runHttpHeadersProbe(targetUrl, timeoutMs) {
   const requestMethod = "GET";
   const requestTimestamp = new Date().toISOString();
@@ -224,12 +241,18 @@ async function runHttpHeadersProbe(targetUrl, timeoutMs) {
   response.headers.forEach((value, key) => {
     headers[key] = value;
   });
+  const httpsSupported = await detectHttpsSupport(finalUrl || targetUrl, timeoutMs);
 
   const missingRecommendedHeaders = SENSITIVE_HEADERS.filter(
-    (header) => !headers[header]
+    (header) =>
+      !headers[header] &&
+      !(header === "strict-transport-security" && !httpsSupported)
   );
   const technologyFingerprint = detectTechnologyFingerprint(headers, responseBody);
-  const findings = analyzeHeaderFindings(headers).map((finding) =>
+  const findings = analyzeHeaderFindings(headers, {
+    httpsSupported,
+    targetUrl: finalUrl || targetUrl
+  }).map((finding) =>
     enrichHeaderFindingWithEvidence(finding, {
       requestUrl: finalUrl || targetUrl,
       requestMethod,
@@ -252,6 +275,7 @@ async function runHttpHeadersProbe(targetUrl, timeoutMs) {
     responseBodyPreview: responseBody.slice(0, 1000),
     responseBodyLength: responseBody.length,
     responseTimeMs,
+    httpsSupported,
     missingRecommendedHeaders,
     technologyFingerprint,
     findings

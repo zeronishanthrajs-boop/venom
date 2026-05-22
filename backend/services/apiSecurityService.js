@@ -1,12 +1,21 @@
-const axios = require("axios");
+﻿const axios = require("axios");
+const { execFile } = require("node:child_process");
+const { promisify } = require("node:util");
 const Engagement = require("../models/Engagement");
 const executionLoggerService = require("./executionLoggerService");
 const { logger } = require("../config/logger");
+const { classifyEndpoint } = require("../utils/endpointClassification");
+const {
+  deriveConfidenceLevel,
+  needsManualValidation,
+  normalizeConfidenceLevel
+} = require("../utils/confidenceModel");
 const {
   createStructuredError,
   logError,
   logWarn
 } = require("../utils/scanErrors");
+const execFileAsync = promisify(execFile);
 
 const API_SPEC_PATHS = ["/openapi.json", "/swagger.json", "/api-docs", "/v3/api-docs"];
 const COMMON_API_PATHS = [
@@ -108,6 +117,27 @@ const SQL_ERROR_PATTERNS = [
   /quoted string not properly terminated/i,
   /odbc|jdbc|sqlite|postgresql|mariadb/i
 ];
+const SEVERITY_ORDER = ["info", "low", "medium", "high", "critical"];
+
+function normalizeSeverityValue(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return SEVERITY_ORDER.includes(normalized) ? normalized : "low";
+}
+
+function contextualizeSeverity(baseSeverity, endpointContext = {}) {
+  const current = normalizeSeverityValue(baseSeverity);
+  const currentIndex = SEVERITY_ORDER.indexOf(current);
+  if (currentIndex === -1) {
+    return current;
+  }
+  const sensitivity = String(endpointContext?.sensitivity || "MEDIUM").toUpperCase();
+  let minimumIndex = 0;
+  if (sensitivity === "CRITICAL" || sensitivity === "HIGH") {
+    minimumIndex = SEVERITY_ORDER.indexOf("medium");
+  }
+  const finalIndex = Math.max(currentIndex, minimumIndex);
+  return SEVERITY_ORDER[Math.min(finalIndex, SEVERITY_ORDER.length - 1)];
+}
 
 function asObject(value) {
   return value && typeof value === "object" ? value : {};
@@ -270,16 +300,16 @@ class ApiSecurityService {
 
   toDiscoveryAuditMessage(responseStatus, path) {
     if (DISCOVERY_NON_EXISTENT_STATUS_CODES.has(responseStatus)) {
-      return `Target responded ${responseStatus} — path does not exist — skipped`;
+      return `Target responded ${responseStatus} â€” path does not exist â€” skipped`;
     }
     if (DISCOVERY_TOOL_HEALTH_STATUS_CODES.has(responseStatus)) {
-      return `Target responded ${responseStatus} during discovery probe — server error observed — logged as scan limitation`;
+      return `Target responded ${responseStatus} during discovery probe â€” server error observed â€” logged as scan limitation`;
     }
     return `Target responded ${responseStatus} for discovery probe ${path}`;
   }
 
   buildConnectionFailureMessage(errorMessage = "") {
-    return `Connection failed before response — tool or network issue — logged as scan limitation (${errorMessage || "request failed"})`;
+    return `Connection failed before response â€” tool or network issue â€” logged as scan limitation (${errorMessage || "request failed"})`;
   }
 
   isDiscoveryStatusEligible(statusCode) {
@@ -349,7 +379,7 @@ class ApiSecurityService {
           statusCode,
           action: "skipped",
           message:
-            "Target returned the same HTML shell as root for this path — probable SPA fallback/soft-404 — skipped from API test queue"
+            "Target returned the same HTML shell as root for this path â€” probable SPA fallback/soft-404 â€” skipped from API test queue"
         });
         return null;
       }
@@ -359,7 +389,7 @@ class ApiSecurityService {
         source,
         statusCode,
         action: "queued",
-        message: `Path responded ${statusCode} — endpoint considered valid and queued for API tests`
+        message: `Path responded ${statusCode} â€” endpoint considered valid and queued for API tests`
       });
       return {
         path: normalizedPath,
@@ -408,7 +438,7 @@ class ApiSecurityService {
       source,
       statusCode,
       action: "skipped",
-      message: `Target responded ${statusCode} — not in endpoint validity allowlist — skipped`
+      message: `Target responded ${statusCode} â€” not in endpoint validity allowlist â€” skipped`
     });
     return null;
   }
@@ -459,6 +489,148 @@ class ApiSecurityService {
     }
   }
 
+  async runWafDetection(targetUrl) {
+    try {
+      const { stdout = "", stderr = "" } = await execFileAsync(
+        "wafw00f",
+        [targetUrl, "-a"],
+        {
+          timeout: 20000,
+          maxBuffer: 1024 * 1024
+        }
+      );
+      const combined = `${stdout}\n${stderr}`;
+      const match = combined.match(/is behind (.+?) WAF/i) || combined.match(/behind (.+?)$/im);
+      const provider = match ? String(match[1] || "").trim() : "";
+      return {
+        status: "SUCCESS",
+        detected: Boolean(provider) || /is behind/i.test(combined),
+        provider: provider || "Unknown WAF",
+        output: combined.slice(0, 4000)
+      };
+    } catch (error) {
+      const code = String(error?.code || "").toUpperCase();
+      if (code === "ENOENT") {
+        return {
+          status: "TOOL_NOT_INSTALLED",
+          detected: false,
+          provider: "",
+          reason: "wafw00f is not installed."
+        };
+      }
+      const combined = `${String(error?.stdout || "")}\n${String(error?.stderr || "")}`;
+      const match = combined.match(/is behind (.+?) WAF/i) || combined.match(/behind (.+?)$/im);
+      if (match) {
+        return {
+          status: "SUCCESS",
+          detected: true,
+          provider: String(match[1] || "").trim() || "Unknown WAF",
+          output: combined.slice(0, 4000)
+        };
+      }
+      return {
+        status: "FAILED",
+        detected: false,
+        provider: "",
+        reason: error?.message || "wafw00f execution failed."
+      };
+    }
+  }
+
+  async runReconnaissance(targetUrl) {
+    const limitations = [];
+    const endpoints = [];
+    let baseHost = "";
+    try {
+      baseHost = new URL(targetUrl).hostname;
+    } catch {
+      return { endpoints, limitations, discoveredHosts: [] };
+    }
+    const discoveredHosts = new Set([baseHost]);
+
+    try {
+      const { stdout = "" } = await execFileAsync(
+        "subfinder",
+        ["-silent", "-d", baseHost],
+        {
+          timeout: 25000,
+          maxBuffer: 1024 * 1024 * 2
+        }
+      );
+      for (const line of String(stdout).split(/\r?\n/)) {
+        const host = String(line || "").trim().toLowerCase();
+        if (!host) {
+          continue;
+        }
+        discoveredHosts.add(host);
+      }
+    } catch (error) {
+      const code = String(error?.code || "").toUpperCase();
+      limitations.push({
+        phase: "recon",
+        tool: "subfinder",
+        status: code === "ENOENT" ? "TOOL_NOT_INSTALLED" : "FAILED",
+        reason: code === "ENOENT" ? "subfinder is not installed." : error?.message || "subfinder failed."
+      });
+    }
+
+    const hostsToCrawl = [...discoveredHosts].slice(0, 20);
+    for (const host of hostsToCrawl) {
+      const candidateUrls = [`https://${host}`, `http://${host}`];
+      for (const candidateUrl of candidateUrls) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const { stdout = "" } = await execFileAsync(
+            "katana",
+            ["-silent", "-u", candidateUrl, "-d", "2", "-timeout", "10", "-jc"],
+            {
+              timeout: 30000,
+              maxBuffer: 1024 * 1024 * 2
+            }
+          );
+          const lines = String(stdout).split(/\r?\n/);
+          for (const line of lines) {
+            const urlText = String(line || "").trim();
+            if (!urlText) {
+              continue;
+            }
+            try {
+              const parsed = new URL(urlText, candidateUrl);
+              if (!discoveredHosts.has(parsed.hostname.toLowerCase())) {
+                continue;
+              }
+              endpoints.push({
+                path: `${parsed.pathname || "/"}${parsed.search || ""}`,
+                method: "GET",
+                source: "katana"
+              });
+            } catch {
+              // ignore malformed crawl line
+            }
+          }
+          break;
+        } catch (error) {
+          const code = String(error?.code || "").toUpperCase();
+          limitations.push({
+            phase: "recon",
+            tool: "katana",
+            status: code === "ENOENT" ? "TOOL_NOT_INSTALLED" : "FAILED",
+            reason: code === "ENOENT" ? "katana is not installed." : error?.message || "katana failed."
+          });
+          if (code === "ENOENT") {
+            break;
+          }
+        }
+      }
+    }
+
+    return {
+      endpoints: this.deduplicateEndpoints(endpoints),
+      limitations,
+      discoveredHosts: [...discoveredHosts]
+    };
+  }
+
   async discoverEndpoints(targetUrl) {
     const discoveryAudit = [];
     const scanLimitations = [];
@@ -469,6 +641,24 @@ class ApiSecurityService {
         discoveryAudit,
         scanLimitations
       };
+    }
+
+    const reconResult = await this.runReconnaissance(targetUrl);
+    for (const limitation of Array.isArray(reconResult.limitations) ? reconResult.limitations : []) {
+      scanLimitations.push({
+        category: "API Security",
+        phase: "reconnaissance",
+        endpoint: targetUrl,
+        method: "GET",
+        status: String(limitation.status || "FAILED").toUpperCase(),
+        errorCode: String(limitation.status || "FAILED").toUpperCase(),
+        reason:
+          limitation.reason ||
+          `${String(limitation.tool || "recon")} did not complete successfully.`
+      });
+    }
+    if (Array.isArray(reconResult.endpoints) && reconResult.endpoints.length > 0) {
+      candidates.push(...reconResult.endpoints);
     }
 
     let openApiCandidates = [];
@@ -674,8 +864,32 @@ class ApiSecurityService {
     discoveryVector = "",
     reproductionSteps = [],
     detectionConfidence = "strong signal",
-    exploitConfidence = "weak signal"
+    exploitConfidence = "weak signal",
+    severityReason = ""
   }) {
+    const endpointContext = classifyEndpoint(endpoint);
+    const normalizedBaseSeverity = normalizeSeverityValue(severity);
+    const contextualSeverity = contextualizeSeverity(normalizedBaseSeverity, endpointContext);
+    const normalizedDetectionConfidence = String(detectionConfidence || "strong signal")
+      .trim()
+      .toLowerCase();
+    const normalizedExploitConfidence = String(exploitConfidence || "weak signal")
+      .trim()
+      .toLowerCase();
+    const confidence =
+      normalizeConfidenceLevel(
+        normalizeConfidenceLevel(normalizedDetectionConfidence) ||
+          normalizeConfidenceLevel(normalizedExploitConfidence)
+      ) ||
+      deriveConfidenceLevel({
+        severity: contextualSeverity,
+        detectionConfidence: normalizedDetectionConfidence,
+        exploitConfidence: normalizedExploitConfidence
+      });
+    const manualValidationRequired = needsManualValidation(confidence);
+    const effectiveSeverityReason =
+      String(severityReason || "").trim() ||
+      `Severity adjusted from '${normalizedBaseSeverity.toUpperCase()}' to '${contextualSeverity.toUpperCase()}' based on ${endpointContext.endpointType.toLowerCase()} endpoint context (${endpointContext.sensitivity}).`;
     const normalizedReproductionSteps = Array.isArray(reproductionSteps)
       ? reproductionSteps.filter((step) => String(step || "").trim().length > 0)
       : [];
@@ -692,7 +906,7 @@ class ApiSecurityService {
     return {
       id: `${idPrefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
       type,
-      severity,
+      severity: contextualSeverity,
       category: "API Security",
       title,
       description,
@@ -703,6 +917,14 @@ class ApiSecurityService {
       methodTested,
       testPerformed,
       responseObserved,
+      endpointType: endpointContext.endpointType,
+      endpointSensitivity: endpointContext.sensitivity,
+      severityReason: effectiveSeverityReason,
+      confidence,
+      manualValidationRequired,
+      manualValidationNote: manualValidationRequired
+        ? "Manual validation recommended before treating as confirmed vulnerability."
+        : "",
       evidence: safeEvidence,
       discoveryVector:
         String(discoveryVector || "").trim() ||
@@ -711,8 +933,8 @@ class ApiSecurityService {
         normalizedReproductionSteps.length > 0
           ? normalizedReproductionSteps
           : ["Evidence capture failed — reproduction steps were not generated for this finding."],
-      detectionConfidence,
-      exploitConfidence,
+      detectionConfidence: normalizedDetectionConfidence,
+      exploitConfidence: normalizedExploitConfidence,
       tags: ["api-security", String(type || "").toLowerCase()],
       metadata: {
         findingType: type,
@@ -720,6 +942,13 @@ class ApiSecurityService {
         methodTested,
         testPerformed,
         responseObserved,
+        endpointContext,
+        severityReason: effectiveSeverityReason,
+        confidence,
+        manualValidationRequired,
+        manualValidationNote: manualValidationRequired
+          ? "Manual validation recommended before treating as confirmed vulnerability."
+          : "",
         discoveryVector:
           String(discoveryVector || "").trim() ||
           "Evidence capture failed — discovery vector was not supplied by this scanner step.",
@@ -992,6 +1221,15 @@ class ApiSecurityService {
       durationMs: totalDuration
     };
     const requestUrl = joinUrl(targetUrl, requestPath);
+    const endpointContext = classifyEndpoint(requestPath);
+    const severityByEndpointType = {
+      Authentication: "high",
+      Administrative: "high",
+      Functional: "medium",
+      Informational: "low"
+    };
+    const contextualRateLimitSeverity =
+      severityByEndpointType[endpointContext.endpointType] || "medium";
     let defenseReason = null;
     if (first429Index !== -1) {
       defenseReason = `Rate limiting was actively enforced on ${requestPath} after ${first429Index} requests.`;
@@ -1017,7 +1255,7 @@ class ApiSecurityService {
           type: "API_MISSING_RATE_LIMIT",
           title: `No standard rate limiting detected on ${requestPath}`,
           description: `${requestCount} sequential rapid requests did not trigger a standard HTTP 429 Too Many Requests response.`,
-          severity: "high",
+          severity: contextualRateLimitSeverity,
           endpoint: requestPath,
           methodTested: requestMethod,
           testPerformed: `Executed ${requestCount} sequential rapid unauthenticated requests.`,
@@ -1056,7 +1294,8 @@ class ApiSecurityService {
             "Check for HTTP 429 or appropriate throttle response."
           ],
           remediation:
-            "Apply request throttling (for example: 60 requests/minute for public endpoints and 20 requests/minute for authenticated/session endpoints)."
+            "Apply request throttling (for example: 60 requests/minute for public endpoints and 20 requests/minute for authenticated/session endpoints).",
+          severityReason: `Rate-limiting severity mapped by endpoint class '${endpointContext.endpointType}' (${endpointContext.sensitivity}).`
         })
         : null;
 
@@ -1102,10 +1341,10 @@ class ApiSecurityService {
     return finding;
   }
 
-  async runInputValidationTest(targetUrl, endpoint, engagementId) {
+  async runInputValidationTest(targetUrl, endpoint, engagementId, options = {}) {
     const methodToTest = String(endpoint.method || "").toUpperCase();
     if (this.hasQueryParams(endpoint.path)) {
-      return this.runQueryParameterInjectionTest(targetUrl, endpoint, engagementId);
+      return this.runQueryParameterInjectionTest(targetUrl, endpoint, engagementId, options);
     }
     if (!["POST", "PUT"].includes(methodToTest)) {
       return [];
@@ -1147,11 +1386,11 @@ class ApiSecurityService {
       };
       const finding = reflected
         ? this.buildFinding({
-            type: "API_INPUT_VALIDATION_MISSING",
-            title: `Unescaped input reflection detected on ${requestPath}`,
+            type: "POTENTIAL_REFLECTED_INPUT",
+            title: `Potential Reflected Input - Manual Validation Required (${requestPath})`,
             description:
-              "Potential unsafe input handling: test payload was reflected in response without sanitization.",
-            severity: "high",
+              "Input reflected in response body. Browser-based validation required to confirm exploitability.",
+            severity: "info",
             endpoint: requestPath,
             methodTested: methodToTest,
             testPerformed: `Sent malicious payload variant (${payload.key}).`,
@@ -1165,7 +1404,8 @@ class ApiSecurityService {
               includeBodyExcerpt: true,
               notes: [
                 `Payload type tested: ${payload.key}`,
-                "Response body included the exact payload value, indicating missing output encoding or input validation."
+                "Input reflected in response body.",
+                "Browser-based validation required to confirm exploitability."
               ]
             }),
             discoveryVector:
@@ -1177,10 +1417,15 @@ class ApiSecurityService {
                 requestHeaders,
                 JSON.stringify({ test: payload.value })
               ),
-              "If the payload string appears in the response without encoding/sanitization, input validation is insufficient."
+              "Input reflected in response body.",
+              "Browser-based validation required to confirm exploitability."
             ],
             remediation:
-              "Apply strict schema validation and output encoding; reject unsafe payloads before business logic."
+              "Apply strict schema validation and output encoding; reject unsafe payloads before business logic.",
+            detectionConfidence: "weak signal",
+            exploitConfidence: "weak signal",
+            severityReason:
+              "Reflection signal without confirmed execution path is treated as informational pending manual validation."
           })
         : null;
 
@@ -1209,7 +1454,7 @@ class ApiSecurityService {
     return findings;
   }
 
-  async runQueryParameterInjectionTest(targetUrl, endpoint, engagementId) {
+  async runQueryParameterInjectionTest(targetUrl, endpoint, engagementId, options = {}) {
     const requestPath = this.materializePath(endpoint.path);
     const paramNames = this.getQueryParamNames(requestPath);
     if (paramNames.length === 0) {
@@ -1239,14 +1484,14 @@ class ApiSecurityService {
         const finding =
           sqlError || reflected
             ? this.buildFinding({
-                type: sqlError ? "SQL_INJECTION" : "XSS",
+                type: sqlError ? "SQL_INJECTION" : "POTENTIAL_REFLECTED_INPUT",
                 title: sqlError
                   ? `SQL error response triggered by query parameter '${paramName}'`
-                  : `Reflected query input detected for '${paramName}'`,
+                  : `Potential Reflected Input - Manual Validation Required ('${paramName}')`,
                 description: sqlError
                   ? "A quote/boolean SQL payload caused a database error signature in the HTTP response."
-                  : "A test payload was reflected in the response body without obvious encoding.",
-                severity: sqlError ? "high" : "medium",
+                  : "Input reflected in response body. Browser-based validation required to confirm exploitability.",
+                severity: sqlError ? "high" : "info",
                 endpoint: testPath,
                 methodTested: "GET",
                 testPerformed: `Changed query parameter ${paramName} using ${payload.key} payload.`,
@@ -1264,7 +1509,7 @@ class ApiSecurityService {
                     `Payload type: ${payload.key}`,
                     sqlError
                       ? "SQL error signature detected in response body."
-                      : "Payload reflected in response body."
+                      : "Input reflected in response body. Browser-based validation required to confirm exploitability."
                   ]
                 }),
                 discoveryVector:
@@ -1273,11 +1518,20 @@ class ApiSecurityService {
                   buildCurlRequest("GET", joinUrl(targetUrl, testPath)),
                   sqlError
                     ? "If SQL error signatures are visible in the response, query parameter handling is vulnerable to SQL injection patterns."
-                    : "If payload text is reflected without encoding, reflected input handling is vulnerable."
+                    : "Input reflected in response body. Browser-based validation required to confirm exploitability."
                 ],
                 remediation: sqlError
                   ? "Use parameterized queries for all query-string inputs and suppress database errors in responses."
-                  : "Apply output encoding and strict input validation for reflected query parameters."
+                  : "Apply output encoding and strict input validation for reflected query parameters.",
+                detectionConfidence:
+                  sqlError && !options?.wafDetected ? "strong signal" : "weak signal",
+                exploitConfidence:
+                  sqlError && !options?.wafDetected ? "strong signal" : "weak signal",
+                severityReason: sqlError
+                  ? options?.wafDetected
+                    ? "SQL signal observed while WAF is present; confidence reduced pending manual validation."
+                    : "SQL error signature is a strong signal for injection risk."
+                  : "Reflection signal without browser execution confirmation is informational pending manual validation."
               })
             : null;
 
@@ -1423,6 +1677,36 @@ class ApiSecurityService {
         : [];
       const defenseSignals = [];
       const findings = [];
+      const wafDetection = await this.runWafDetection(targetUrl);
+      const wafDetected = Boolean(wafDetection?.detected);
+      if (wafDetected) {
+        const provider = wafDetection.provider || "Unknown WAF";
+        const reason = `WAF DETECTED: ${provider}. Payload-based findings may reflect WAF behavior.`;
+        defenseSignals.push({
+          type: "WAF_DETECTED",
+          provider,
+          reason
+        });
+        scanLimitations.push({
+          category: "API Security",
+          phase: "payload_precheck",
+          endpoint: targetUrl,
+          method: "GET",
+          status: "BLOCKED",
+          errorCode: "WAF_DETECTED",
+          reason
+        });
+      } else if (String(wafDetection?.status || "").toUpperCase() === "TOOL_NOT_INSTALLED") {
+        scanLimitations.push({
+          category: "API Security",
+          phase: "payload_precheck",
+          endpoint: targetUrl,
+          method: "GET",
+          status: "TOOL_NOT_INSTALLED",
+          errorCode: "TOOL_NOT_INSTALLED",
+          reason: "wafw00f is not installed. WAF pre-detection was skipped."
+        });
+      }
 
       await this.executionLogger.logTestExecution({
         engagementId: String(engagement._id),
@@ -1500,7 +1784,8 @@ class ApiSecurityService {
         const inputValidationFindings = await this.runInputValidationTest(
           targetUrl,
           endpoint,
-          String(engagement._id)
+          String(engagement._id),
+          { wafDetected }
         );
         findings.push(...inputValidationFindings);
       }
@@ -1532,6 +1817,7 @@ class ApiSecurityService {
         scanLimitations,
         discoveryAudit,
         defenseSignals,
+        wafDetection,
         durationMs: Date.now() - scanStartedAt
       };
     } catch (error) {
@@ -1544,6 +1830,7 @@ class ApiSecurityService {
         scanLimitations: [],
         discoveryAudit: [],
         defenseSignals: [],
+        wafDetection: null,
         error: structuredError.message
       };
     }
@@ -1551,3 +1838,7 @@ class ApiSecurityService {
 }
 
 module.exports = new ApiSecurityService();
+
+
+
+

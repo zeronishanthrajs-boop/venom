@@ -12,6 +12,8 @@ const Plan = require("../models/Plan");
 const { generateComplianceSummary } = require("./complianceMapper");
 const { deduplicateFindings } = require("../utils/deduplicateFindings");
 const { callGeminiText } = require("./geminiClient");
+const reportGeneratorService = require("./reportGeneratorService");
+const { deriveConfidenceLevel, needsManualValidation } = require("../utils/confidenceModel");
 
 const TEMPLATE_PATH = path.join(__dirname, "../templates/report.html");
 
@@ -134,17 +136,44 @@ function formatDate(value) {
 
 function buildExecutionSummary(jobs = []) {
   const totalJobs = jobs.length;
-  const completedJobs = jobs.filter((job) =>
-    ["completed", "success"].includes(String(job.status || "").toLowerCase())
-  );
+  const statusOf = (job) => String(job.status || "").toLowerCase();
+  const terminalStatuses = new Set([
+    "success",
+    "failed",
+    "blocked",
+    "timeout",
+    "killed",
+    "error",
+    "tool_not_installed",
+    "not_applicable"
+  ]);
+  const successStatuses = new Set(["success", "blocked", "not_applicable"]);
+
+  const completedJobs = jobs.filter((job) => successStatuses.has(statusOf(job)));
   const failedJobs = jobs.filter((job) =>
-    ["failed", "blocked", "timeout", "killed"].includes(
-      String(job.status || "").toLowerCase()
-    )
+    ["failed", "timeout", "killed", "error", "tool_not_installed"].includes(statusOf(job))
   );
-  const terminalJobs = completedJobs.length + failedJobs.length;
-  const successRate =
-    terminalJobs > 0 ? Math.round((completedJobs.length / terminalJobs) * 100) : 0;
+  const terminalJobs = jobs.filter((job) => terminalStatuses.has(statusOf(job)));
+  const probeSuccessRate =
+    terminalJobs.length > 0
+      ? Math.round((completedJobs.length / terminalJobs.length) * 100)
+      : 0;
+
+  const modules = new Map();
+  for (const job of jobs) {
+    const key = String(job.toolId || "").trim();
+    if (!key || modules.has(key)) {
+      continue;
+    }
+    modules.set(key, statusOf(job));
+  }
+  const plannedModules = modules.size;
+  const successfulModules = Array.from(modules.values()).filter((status) =>
+    successStatuses.has(status)
+  ).length;
+  const scanCoverageRate =
+    plannedModules > 0 ? Math.round((successfulModules / plannedModules) * 100) : 0;
+
   const avgDurationMs =
     completedJobs.length > 0
       ? Math.round(
@@ -152,13 +181,32 @@ function buildExecutionSummary(jobs = []) {
             completedJobs.length
         )
       : 0;
+  const missingTools = jobs
+    .filter((job) => statusOf(job) === "tool_not_installed")
+    .map((job) => String(job.toolId || "unknown"));
 
   return {
     totalJobs,
     completedJobs: completedJobs.length,
     failedJobs: failedJobs.length,
-    successRate,
-    avgDurationMs
+    successRate: probeSuccessRate,
+    avgDurationMs,
+    metricHonesty: {
+      scanCoverageRate: {
+        plannedModules,
+        successfulModules,
+        ratePercent: scanCoverageRate
+      },
+      probeSuccessRate: {
+        executedProbes: terminalJobs.length,
+        successfulProbes: completedJobs.length,
+        ratePercent: probeSuccessRate
+      },
+      toolchainIntegrity: {
+        status: missingTools.length > 0 ? "INCOMPLETE" : "COMPLETE",
+        missingTools: [...new Set(missingTools)]
+      }
+    }
   };
 }
 
@@ -203,73 +251,7 @@ function deriveDensityLabel(rawDeduction = 0) {
 }
 
 function calculateSecurityScore(findings = [], jobs = []) {
-  const deductions = { critical: 25, high: 15, medium: 8, low: 3, info: 0 };
-  let score = 100;
-  const bySeverity = computeSeverityBreakdown(findings);
-  let severityDeductionTotal = 0;
-
-  for (const [severity, deduction] of Object.entries(deductions)) {
-    const total = (bySeverity[severity] || 0) * deduction;
-    score -= total;
-    severityDeductionTotal += total;
-  }
-
-  const failedJobs = jobs.filter((job) => ["failed", "error"].includes(normalizeJobStatus(job.status)));
-  const timeoutJobs = jobs.filter((job) => normalizeJobStatus(job.status) === "timeout");
-  const blockedJobs = jobs.filter((job) => normalizeJobStatus(job.status) === "blocked");
-  const toolMissingJobs = jobs.filter((job) => normalizeJobStatus(job.status) === "tool_not_installed");
-  let probeDeductionTotal = 0;
-
-  const failedWithoutToolMissing = failedJobs.filter(
-    (job) => job.output?.errorCode !== "TOOL_NOT_INSTALLED"
-  ).length;
-  score -= failedWithoutToolMissing * 5;
-  score -= timeoutJobs.length * 2;
-  probeDeductionTotal += failedWithoutToolMissing * 5;
-  probeDeductionTotal += timeoutJobs.length * 2;
-
-  const defenseSignals = [...blockedJobs];
-  for (const job of jobs) {
-    if (Array.isArray(job?.output?.defenseSignals) && job.output.defenseSignals.length > 0) {
-      defenseSignals.push(...job.output.defenseSignals.map(() => job));
-    }
-  }
-  score += defenseSignals.length * 3;
-
-  const cleanCategories = new Set();
-  for (const job of jobs) {
-    if (normalizeJobStatus(job.status) === "success" && collectJobFindings(job).length === 0) {
-      cleanCategories.add(job.toolId || "scan");
-    }
-  }
-  score += Math.min(10, cleanCategories.size * 2);
-
-  const reliabilityJobs = jobs.filter(
-    (job) =>
-      ["success", "failed", "error", "timeout"].includes(normalizeJobStatus(job.status)) &&
-      !toolMissingJobs.some((missingJob) => String(missingJob._id) === String(job._id))
-  );
-  const failedOrTimedOut = reliabilityJobs.filter((job) =>
-    ["failed", "error", "timeout"].includes(normalizeJobStatus(job.status))
-  );
-  const unreliable =
-    reliabilityJobs.length > 0 && failedOrTimedOut.length > reliabilityJobs.length / 2;
-  const rawDeduction = severityDeductionTotal + probeDeductionTotal;
-  const unclampedScore = Math.round(score);
-  const finalScore = Math.max(0, Math.min(100, Math.round(score)));
-  const densityLabel = unclampedScore < 0 ? deriveDensityLabel(rawDeduction) : "";
-
-  return {
-    score: finalScore,
-    maxScore: 100,
-    rawDeduction,
-    densityLabel,
-    riskRating: riskFromFindings(findings),
-    reliable: !unreliable,
-    unreliableReason: unreliable
-      ? "Score could not be accurately calculated because too many scan probes failed. Address probe failures to get an accurate score."
-      : ""
-  };
+  return reportGeneratorService.calculateSecurityScore(findings, jobs);
 }
 
 function buildScanLimitations(jobs = []) {
@@ -298,36 +280,115 @@ if (!handlebars.helpers.gt) {
   });
 }
 
+const NARRATIVE_DISCLAIMER =
+  "This narrative describes risks supported by observed findings only.\nAdditional attack vectors may require deeper manual testing.";
+
+function findingRef(finding = {}, index = 0) {
+  return String(finding.id || `F-${index + 1}`);
+}
+
+function findingText(finding = {}) {
+  return `${String(finding?.title || "")} ${String(finding?.type || "")} ${String(finding?.category || "")} ${String(finding?.description || "")}`.toLowerCase();
+}
+
+function hasSignal(findings = [], matcher) {
+  return findings.some((finding, index) => matcher(findingText(finding), finding, index));
+}
+
+function collectFindingIds(findings = [], matcher) {
+  return findings
+    .map((finding, index) => ({ finding, index }))
+    .filter(({ finding, index }) => matcher(findingText(finding), finding, index))
+    .map(({ finding, index }) => findingRef(finding, index));
+}
+
 function generateHeuristicAttackNarrative(findings, targetUrl) {
   if (!findings || findings.length === 0) {
-    return "No significant security vulnerabilities were identified. The application posture is currently clean, presenting a minimal attack surface.";
+    return `No significant exploitable chain is supported by the current findings for ${targetUrl}.\n\n${NARRATIVE_DISCLAIMER}`;
   }
 
-  const criticals = findings.filter(f => String(f.severity).toLowerCase() === "critical");
-  const highs = findings.filter(f => String(f.severity).toLowerCase() === "high");
-  const mediums = findings.filter(f => String(f.severity).toLowerCase() === "medium");
+  const topFindings = findings.slice(0, 3).map((finding, index) => ({
+    id: findingRef(finding, index),
+    title: String(finding.title || "Untitled finding"),
+    severity: String(finding.severity || "low").toUpperCase()
+  }));
 
-  const narrativeParts = [];
+  const narrativeParts = [
+    `Observed risk signals for ${targetUrl} include ${topFindings
+      .map((item) => `${item.id} (${item.severity}): ${item.title}`)
+      .join("; ")}.`
+  ];
 
-  if (criticals.length > 0) {
-    narrativeParts.push(`An attacker targeting ${targetUrl} would likely begin by exploiting the critical vulnerabilities discovered, such as ${criticals[0].title}. By targeting these high-impact endpoints or flaws, the threat actor could gain unauthorized administrative access, execute remote commands, or bypass core authentication systems.`);
+  const hasAuthWeakness = hasSignal(
+    findings,
+    (text) => /auth|token|session|login|signin|register|password|bola|unauth/.test(text)
+  );
+  const hasNoRateLimit = hasSignal(findings, (text) => /rate.?limit|throttl/.test(text));
+  const hasReflection = hasSignal(findings, (text) => /reflected|xss|input reflection/.test(text));
+  const hasMissingCsp = hasSignal(
+    findings,
+    (text) => /content-security-policy|missing csp|csp/.test(text)
+  );
+  const hasSqli = hasSignal(findings, (text) => /sql.?injection|sql error/.test(text));
+  const hasNetworkExposure = hasSignal(
+    findings,
+    (text) => /open port|network exposure|internal|service exposure/.test(text)
+  );
+  const hasVersionDisclosure = hasSignal(
+    findings,
+    (text) => /version disclosure|x-powered-by|server header|technology disclosure/.test(text)
+  );
+  const hasKnownCve = hasSignal(findings, (_text, finding) => Boolean(finding?.cve));
+
+  if (hasAuthWeakness && hasNoRateLimit) {
+    const ids = collectFindingIds(
+      findings,
+      (text) => /auth|token|session|login|signin|register|password|bola|unauth|rate.?limit|throttl/.test(text)
+    );
+    narrativeParts.push(
+      `A brute-force style chain is plausible where authentication weaknesses combine with weak request throttling controls. [Finding IDs: ${ids.join(", ")}]`
+    );
   }
 
-  if (highs.length > 0) {
-    const context = criticals.length > 0 ? "Following initial access, the" : "An attacker targeting the application would leverage the";
-    narrativeParts.push(`${context} high-severity issues (e.g., ${highs[0].title}) to escalate privileges, extract sensitive database schemas, or pivot into backend systems. This allows the attacker to maintain persistent control over the infrastructure.`);
+  if (hasReflection && hasMissingCsp) {
+    const ids = collectFindingIds(
+      findings,
+      (text) => /reflected|xss|input reflection|content-security-policy|missing csp|csp/.test(text)
+    );
+    narrativeParts.push(
+      `Potential reflected-input abuse could become more practical when browser script policy controls are absent. [Finding IDs: ${ids.join(", ")}]`
+    );
   }
 
-  if (mediums.length > 0) {
-    const context = (criticals.length > 0 || highs.length > 0) ? "To reinforce control or exfiltrate credentials, the attacker could exploit" : "The attacker would exploit";
-    narrativeParts.push(`${context} medium-severity gaps like ${mediums[0].title} to perform lateral movement, intercept communication, or gain internal infrastructure insights.`);
+  if (hasVersionDisclosure && hasKnownCve) {
+    const ids = collectFindingIds(
+      findings,
+      (text, finding) => /version disclosure|x-powered-by|server header|technology disclosure/.test(text) || Boolean(finding?.cve)
+    );
+    narrativeParts.push(
+      `Version and component disclosure can improve exploit targeting when known vulnerable components are also present. [Finding IDs: ${ids.join(", ")}]`
+    );
   }
 
-  if (narrativeParts.length === 0) {
-    narrativeParts.push("The scan identified low-severity and informational hygiene findings. While these do not present immediate compromise vectors, they weaken defense-in-depth and should be hardened to prevent information leakage or reconnaissance scanning.");
+  if (hasSqli && hasNetworkExposure) {
+    const ids = collectFindingIds(
+      findings,
+      (text) => /sql.?injection|sql error|open port|network exposure|internal|service exposure/.test(text)
+    );
+    narrativeParts.push(
+      `Data-layer compromise risk may increase where injection signals coexist with exposed service surfaces. [Finding IDs: ${ids.join(", ")}]`
+    );
   }
 
-  return narrativeParts.join(" ");
+  if (narrativeParts.length === 1) {
+    const ids = findings.map((finding, index) => findingRef(finding, index));
+    narrativeParts.push(
+      `No stronger multi-step chain is supported beyond the observed findings. Prioritize direct remediation and re-test each issue. [Finding IDs: ${ids.join(", ")}]`
+    );
+  }
+
+  narrativeParts.push(NARRATIVE_DISCLAIMER);
+  return narrativeParts.join("\n\n");
 }
 
 async function generateAttackNarrative(findings, targetUrl) {
@@ -336,10 +397,28 @@ async function generateAttackNarrative(findings, targetUrl) {
     return generateHeuristicAttackNarrative(findings, targetUrl);
   }
 
-  const prompt = `You are a Lead Penetration Tester. Review the following security findings for target ${targetUrl}:
-${JSON.stringify(findings.map(f => ({ title: f.title, severity: f.severity, category: f.category, description: f.description })), null, 2)}
-
-Provide a concise, plain English narrative (2-3 paragraphs) of how an attacker would chain these findings to compromise the target application. Be realistic, highlight the business risk, and keep it readable for non-technical leadership. Do not write generic text. Output only the paragraphs.`;
+  const normalizedFindings = findings.map((finding, index) => ({
+    id: findingRef(finding, index),
+    title: String(finding.title || "Untitled finding"),
+    severity: String(finding.severity || "low").toUpperCase(),
+    type: String(finding.type || ""),
+    category: String(finding.category || ""),
+    cve: finding.cve || null,
+    description: String(finding.description || "")
+  }));
+  const prompt = [
+    `You are a lead penetration tester generating an evidence-bound risk narrative for ${targetUrl}.`,
+    "Mandatory rules:",
+    "1) Only describe attack steps directly supported by provided findings.",
+    "2) Do not describe privilege escalation unless privilege/auth findings exist.",
+    "3) Do not describe database compromise unless SQL injection evidence exists.",
+    "4) Do not describe persistent access unless authentication/session compromise evidence exists.",
+    "5) Do not describe backend/internal pivoting unless network/internal exposure findings exist.",
+    "6) Every narrative claim must include at least one finding ID.",
+    "Output strict JSON only in this shape:",
+    "{\"claims\":[{\"text\":\"...\",\"findingIds\":[\"F-1\"]}]}",
+    `Findings:\n${JSON.stringify(normalizedFindings, null, 2)}`
+  ].join("\n");
 
   try {
     const response = await callGeminiText({
@@ -347,9 +426,27 @@ Provide a concise, plain English narrative (2-3 paragraphs) of how an attacker w
       model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
       userPrompt: prompt,
       maxOutputTokens: 500,
-      temperature: 0.3
+      temperature: 0.1
     });
-    return response.text.trim();
+    const raw = String(response.text || "").trim();
+    const parsed = JSON.parse(raw);
+    const claims = Array.isArray(parsed?.claims) ? parsed.claims : [];
+    const validIds = new Set(normalizedFindings.map((item) => item.id));
+    const safeClaims = claims
+      .filter((claim) => claim && typeof claim.text === "string" && Array.isArray(claim.findingIds))
+      .map((claim) => ({
+        text: String(claim.text || "").trim(),
+        findingIds: claim.findingIds
+          .map((id) => String(id || "").trim())
+          .filter((id) => validIds.has(id))
+      }))
+      .filter((claim) => claim.text && claim.findingIds.length > 0);
+    if (safeClaims.length === 0) {
+      throw new Error("No evidence-linked claims returned by AI narrative");
+    }
+    return `${safeClaims
+      .map((claim) => `${claim.text} [Finding IDs: ${claim.findingIds.join(", ")}]`)
+      .join("\n\n")}\n\n${NARRATIVE_DISCLAIMER}`;
   } catch (error) {
     return generateHeuristicAttackNarrative(findings, targetUrl);
   }
@@ -383,36 +480,60 @@ The summary should highlight the overall posture, key concerns, and high-level r
 }
 
 function computeEPSAndROI(findings) {
-  const mappedFindings = findings.map(finding => {
-    const severity = String(finding.severity || "low").toLowerCase();
-    
-    let eps = 10;
-    if (severity === "critical") eps = 85;
-    else if (severity === "high") eps = 65;
-    else if (severity === "medium") eps = 40;
-    else if (severity === "low") eps = 20;
-
-    if (finding.cve) {
-      eps += 15;
+  const mappedFindings = findings.map((finding) => {
+    const confidence = deriveConfidenceLevel(finding);
+    let eps = 20;
+    if (confidence === "CONFIRMED") {
+      eps = 90;
+    } else if (confidence === "STRONG_SIGNAL") {
+      eps = 70;
+    } else if (confidence === "WEAK_SIGNAL") {
+      eps = 45;
     }
-    if (finding.exploitationPotential && String(finding.exploitationPotential).toLowerCase().includes("easy")) {
-      eps += 10;
-    }
-    eps = Math.min(eps, 99);
-
     return {
       ...finding,
-      eps
+      eps,
+      confidence,
+      manualValidationRequired: needsManualValidation(confidence),
+      manualValidationNote: needsManualValidation(confidence)
+        ? "Manual validation recommended before treating as confirmed vulnerability."
+        : ""
     };
   });
 
-  const overallEps = findings.length > 0 
-    ? Math.round(mappedFindings.reduce((sum, f) => sum + f.eps, 0) / findings.length)
-    : 0;
+  const summary = computeSeverityBreakdown(mappedFindings);
+  const minHours = Math.max(
+    4,
+    summary.critical * 8 + summary.high * 4 + summary.medium * 2 + summary.low
+  );
+  const maxHours = Math.max(
+    minHours + 4,
+    summary.critical * 20 +
+      summary.high * 10 +
+      summary.medium * 6 +
+      summary.low * 3 +
+      summary.info * 2
+  );
+  const overallEps =
+    mappedFindings.length > 0
+      ? Math.round(mappedFindings.reduce((sum, finding) => sum + finding.eps, 0) / mappedFindings.length)
+      : 0;
 
   return {
     findings: mappedFindings,
-    overallEps
+    overallEps,
+    remediationEffortRange: {
+      minHours,
+      maxHours,
+      label: `${minHours}-${maxHours} hours`
+    },
+    breachCostRangeInr: {
+      min: 5000000,
+      max: 50000000,
+      label: "₹50L-₹5Cr"
+    },
+    estimatesDisclaimer:
+      "Estimates are based on industry averages and do not account for organization-specific infrastructure, data classification, or regulatory obligations."
   };
 }
 
@@ -457,7 +578,10 @@ async function loadReportContext(engagementId) {
   // Compute intelligence layer
   const {
     findings: enrichedFindings,
-    overallEps
+    overallEps,
+    remediationEffortRange,
+    breachCostRangeInr,
+    estimatesDisclaimer
   } = computeEPSAndROI(findings);
 
   const roadmap = computeFixRoadmap(enrichedFindings);
@@ -487,7 +611,10 @@ async function loadReportContext(engagementId) {
       attackNarrative,
       aiExecutiveSummary,
       roadmap,
-      evidenceHash
+      evidenceHash,
+      remediationEffortRange,
+      breachCostRangeInr,
+      estimatesDisclaimer
     }
   };
 }
@@ -658,6 +785,9 @@ function toTemplateData(context, options = {}) {
         title: finding.title || "Untitled finding",
         severity,
         severityClass: SEVERITY_CLASS[severity] || "info",
+        confidence: finding.confidence || "WEAK_SIGNAL",
+        manualValidationRequired: Boolean(finding.manualValidationRequired),
+        manualValidationNote: finding.manualValidationNote || "",
         tagsStr: Array.isArray(finding.tags) ? finding.tags.join(", ") : "",
         tool: finding.tool || finding._toolId || "",
         recommendation: fix,
@@ -680,6 +810,13 @@ function toTemplateData(context, options = {}) {
     attackNarrative: context.intelligence.attackNarrative,
     roadmap: context.intelligence.roadmap,
     evidenceHash: context.intelligence.evidenceHash,
+    estimatedRemediationEffort:
+      context.intelligence.remediationEffortRange?.label || "15-40 hours",
+    estimatedBreachCostRange:
+      context.intelligence.breachCostRangeInr?.label || "₹50L-₹5Cr",
+    estimatesDisclaimer:
+      context.intelligence.estimatesDisclaimer ||
+      "Estimates are based on industry averages and do not account for organization-specific infrastructure, data classification, or regulatory obligations.",
     executionTimeline
   };
 }

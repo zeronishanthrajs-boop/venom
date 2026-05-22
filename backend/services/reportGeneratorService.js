@@ -1,9 +1,15 @@
-const Engagement = require("../models/Engagement");
+﻿const Engagement = require("../models/Engagement");
 const ExecutionJob = require("../models/ExecutionJob");
 const executionLoggerService = require("./executionLoggerService");
 const complianceMapperService = require("./complianceMapperService");
 const { deduplicateFindings } = require("../utils/deduplicateFindings");
 const { logger } = require("../config/logger");
+const { classifyEndpoint } = require("../utils/endpointClassification");
+const {
+  deriveConfidenceLevel,
+  needsManualValidation,
+  confidenceRank
+} = require("../utils/confidenceModel");
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -57,13 +63,77 @@ function countBySeverity(findings = []) {
   return summary;
 }
 
-const SCORE_DEDUCTIONS = {
-  critical: 25,
-  high: 15,
-  medium: 8,
-  low: 3,
-  info: 0
+const FINDING_IMPACT_WEIGHTS = {
+  CONFIRMED: 25,
+  STRONG_SIGNAL: 15,
+  CONFIGURATION_GAP: 5,
+  INFORMATIONAL: 2
 };
+const REQUIRED_TOOLCHAIN = [
+  "nikto",
+  "whatweb",
+  "ffuf",
+  "amass",
+  "sqlmap",
+  "wafw00f",
+  "semgrep",
+  "trufflehog",
+  "nuclei",
+  "httpx",
+  "katana",
+  "naabu",
+  "subfinder",
+  "dalfox"
+];
+
+function isConfigurationFinding(finding = {}) {
+  const type = String(finding?.type || finding?.metadata?.findingType || "").toUpperCase();
+  const category = String(finding?.category || "").toUpperCase();
+  const text = `${type} ${category}`;
+  return (
+    text.includes("MISCONFIG") ||
+    text.includes("HEADER") ||
+    text.includes("CONFIG") ||
+    text.includes("HSTS") ||
+    text.includes("CSP")
+  );
+}
+
+function deriveImpactLevel(finding = {}) {
+  const confidence = deriveConfidenceLevel(finding);
+  if (confidence === "CONFIRMED") {
+    return "CONFIRMED";
+  }
+  if (confidence === "STRONG_SIGNAL") {
+    return "STRONG_SIGNAL";
+  }
+  if (confidence === "INFORMATIONAL") {
+    return "INFORMATIONAL";
+  }
+  if (confidence === "WEAK_SIGNAL" || isConfigurationFinding(finding)) {
+    return "CONFIGURATION_GAP";
+  }
+  const severity = normalizeSeverity(finding?.severity);
+  if (severity === "critical" || severity === "high") {
+    return "STRONG_SIGNAL";
+  }
+  if (severity === "medium" || severity === "low") {
+    return "CONFIGURATION_GAP";
+  }
+  return "INFORMATIONAL";
+}
+
+function resolveEndpointContext(finding = {}) {
+  if (finding?.metadata?.endpointContext && typeof finding.metadata.endpointContext === "object") {
+    return finding.metadata.endpointContext;
+  }
+  const endpoint =
+    finding?.endpoint ||
+    finding?.metadata?.endpoint ||
+    finding?.evidence?.request?.url ||
+    "/";
+  return classifyEndpoint(endpoint);
+}
 
 function normalizeJobStatus(value) {
   return String(value || "").trim().toLowerCase();
@@ -134,7 +204,7 @@ function deriveRiskRating(findings = []) {
 
 function deriveDensityLabel(rawDeduction = 0) {
   if (rawDeduction >= 200) {
-    return "CRITICAL FINDING DENSITY — IMMEDIATE ACTION REQUIRED";
+    return "CRITICAL FINDING DENSITY - IMMEDIATE ACTION REQUIRED";
   }
   if (rawDeduction >= 100) {
     return "HIGH FINDING DENSITY";
@@ -161,6 +231,16 @@ function formatEvidenceSummary(evidence) {
   return "";
 }
 
+function findingReferenceId(finding = {}, index = 0) {
+  return String(finding?.id || finding?.metadata?.testId || `F-${index + 1}`);
+}
+
+function findingSearchText(finding = {}) {
+  return `${String(finding?.title || "")} ${String(finding?.description || "")} ${String(
+    finding?.type || finding?.metadata?.findingType || ""
+  )}`.toLowerCase();
+}
+
 class ReportGeneratorService {
   async generateReport(engagementId) {
     const engagement = await Engagement.findById(engagementId).lean();
@@ -180,6 +260,8 @@ class ReportGeneratorService {
       complianceMapperService.generateComplianceReport(findings, { jobs });
     const securityScore = this.calculateSecurityScore(findings, jobs);
     const scanLimitations = this.generateScanLimitations(jobs);
+    const metricHonesty = this.buildMetricHonesty(engagement, jobs, scanLimitations);
+    const attackChainCorrelation = this.buildAttackChains(findings);
 
     logger.info(
       {
@@ -202,9 +284,12 @@ class ReportGeneratorService {
       scoreFormula: securityScore.formula,
       riskAnalysis: this.generateRiskAnalysis(findings, summary, securityScore),
       compliance: complianceReport,
+      metricHonesty,
       scanLimitations,
+      attackChainCorrelation,
       narrativeSections: {
-        scanLimitations: this.buildScanLimitationsNarrative(scanLimitations)
+        scanLimitations: this.buildScanLimitationsNarrative(scanLimitations),
+        attackChains: attackChainCorrelation.disclaimer
       },
       recommendations: this.generateRecommendations(findings),
       evidence: {
@@ -354,7 +439,7 @@ class ReportGeneratorService {
 
     return [
       `curl -i -X ${method} '${target}'`,
-      "Evidence capture failed — scanner did not persist detailed reproduction context for this finding."
+      "Evidence capture failed â€” scanner did not persist detailed reproduction context for this finding."
     ];
   }
 
@@ -392,11 +477,18 @@ class ReportGeneratorService {
       const evidenceSummary =
         formatEvidenceSummary(finding?.evidence) ||
         this.buildWhatFoundFallback(finding);
+      const deduplicationNote = String(finding?.deduplicationNote || "").trim();
       const discoveryVector =
         String(finding?.discoveryVector || finding?.metadata?.discoveryVector || "").trim() ||
         (finding?.source
           ? `Discovered via ${finding.source}${finding._toolId ? ` (${finding._toolId})` : ""}.`
-          : "Evidence capture failed — discovery vector not provided by scanner.");
+          : "Evidence capture failed â€” discovery vector not provided by scanner.");
+      const endpointContext = resolveEndpointContext(finding);
+      const severityReason =
+        String(finding?.severityReason || finding?.metadata?.severityReason || "").trim() ||
+        `Severity aligned to ${endpointContext.endpointType.toLowerCase()} endpoint context (${endpointContext.sensitivity}).`;
+      const confidence = deriveConfidenceLevel(finding);
+      const manualValidationRequired = needsManualValidation(confidence);
       const reproductionSteps = Array.isArray(finding?.reproductionSteps)
         ? finding.reproductionSteps.filter((step) => String(step || "").trim().length > 0)
         : [];
@@ -408,13 +500,22 @@ class ReportGeneratorService {
         what: finding?.description || "No description provided.",
         how: discoveryVector,
         whatFound: evidenceSummary,
+        deduplicationNote,
         why: this.getWhyItMatters(normalizedType),
         fix: recommendation,
+        endpointType: endpointContext.endpointType,
+        endpointSensitivity: endpointContext.sensitivity,
+        severityReason,
+        confidence,
+        manualValidationRequired,
+        manualValidationNote: manualValidationRequired
+          ? "Manual validation recommended before treating as confirmed vulnerability."
+          : "",
         evidence:
           finding?.evidence ||
           {
             status: "failed",
-            reason: "Evidence capture failed — scanner did not persist evidence payload."
+            reason: "Evidence capture failed â€” scanner did not persist evidence payload."
           },
         discoveryVector,
         reproductionSteps:
@@ -422,7 +523,7 @@ class ReportGeneratorService {
             ? reproductionSteps
             : [
                 `curl -i -X GET '${finding?.metadata?.targetUrl || "https://target.example"}'`,
-                "Evidence capture failed — scanner did not provide reproducible request steps."
+                "Evidence capture failed â€” scanner did not provide reproducible request steps."
               ],
         owaspTags,
         tags: Array.from(new Set([...asArray(finding?.tags), ...owaspTags])),
@@ -430,6 +531,13 @@ class ReportGeneratorService {
         metadata: {
           toolId: finding?._toolId || null,
           jobId: finding?._jobId || null,
+          endpointContext,
+          severityReason,
+          confidence,
+          manualValidationRequired,
+          manualValidationNote: manualValidationRequired
+            ? "Manual validation recommended before treating as confirmed vulnerability."
+            : "",
           tags: Array.from(new Set([...asArray(finding?.tags), ...owaspTags]))
         }
       };
@@ -446,7 +554,7 @@ class ReportGeneratorService {
         return `Observed metadata keys: ${keys.join(", ")}`;
       }
     }
-    return "Evidence capture failed — scanner did not persist evidence for this finding.";
+    return "Evidence capture failed â€” scanner did not persist evidence for this finding.";
   }
 
   normalizeType(finding) {
@@ -480,7 +588,7 @@ class ReportGeneratorService {
     let score = 100;
     const formula = {
       startsAt: 100,
-      severityDeductions: [],
+      findingImpacts: [],
       probeDeductions: [],
       bonuses: [],
       rawDeduction: 0,
@@ -488,17 +596,34 @@ class ReportGeneratorService {
       clamp: "0-100"
     };
 
-    const severityCounts = countBySeverity(findings);
-    let severityDeductionTotal = 0;
-    for (const [severity, deduction] of Object.entries(SCORE_DEDUCTIONS)) {
-      const count = severityCounts[severity] || 0;
-      if (count <= 0 || deduction <= 0) {
-        continue;
-      }
-      const total = count * deduction;
-      score -= total;
-      severityDeductionTotal += total;
-      formula.severityDeductions.push({ severity: severity.toUpperCase(), count, deduction, total });
+    const impactCounts = {
+      CONFIRMED: 0,
+      STRONG_SIGNAL: 0,
+      CONFIGURATION_GAP: 0,
+      INFORMATIONAL: 0
+    };
+
+    let findingDeductionTotal = 0;
+    for (const finding of findings) {
+      const impactLevel = deriveImpactLevel(finding);
+      impactCounts[impactLevel] = Number(impactCounts[impactLevel] || 0) + 1;
+      const baseWeight = FINDING_IMPACT_WEIGHTS[impactLevel] || 0;
+      const endpointContext = resolveEndpointContext(finding);
+      const endpointWeight = Number(endpointContext?.weight || 1);
+      const weightedDeduction = Math.max(0, Math.round(baseWeight * endpointWeight));
+
+      score -= weightedDeduction;
+      findingDeductionTotal += weightedDeduction;
+      formula.findingImpacts.push({
+        findingId: String(finding?.id || ""),
+        title: String(finding?.title || "Untitled finding"),
+        impactLevel,
+        baseWeight,
+        endpointType: endpointContext.endpointType,
+        endpointSensitivity: endpointContext.sensitivity,
+        endpointWeight,
+        deduction: weightedDeduction
+      });
     }
 
     const failedJobs = jobs.filter((job) => ["failed", "error"].includes(normalizeJobStatus(job.status)));
@@ -604,12 +729,21 @@ class ReportGeneratorService {
     );
     const unreliable =
       reliabilityJobs.length > 0 && failedOrTimedOut.length > reliabilityJobs.length / 2;
-    const rawDeduction = severityDeductionTotal + probeDeductionTotal;
+    const rawDeduction = findingDeductionTotal + probeDeductionTotal;
     formula.rawDeduction = rawDeduction;
     formula.unclampedScore = Math.round(score);
+
     const finalScore = Math.max(0, Math.min(100, Math.round(score)));
-    const densityLabel =
-      formula.unclampedScore < 0 ? deriveDensityLabel(rawDeduction) : "";
+    const densityLabel = formula.unclampedScore < 0 ? deriveDensityLabel(rawDeduction) : "";
+    const scoreFloorReached = finalScore === 0 && formula.unclampedScore < 0;
+    const scoreFloorMessage = scoreFloorReached
+      ? [
+          "Score floor reached.",
+          `${findings.length} findings identified.`,
+          "Score reflects cumulative finding impact rather than confirmed catastrophic compromise."
+        ].join("\n")
+      : "";
+
     return {
       score: finalScore,
       maxScore: 100,
@@ -625,6 +759,9 @@ class ReportGeneratorService {
       timeoutProbeCount: timeoutJobs.length,
       blockedProbeCount: blockedJobs.length,
       toolUnavailableCount: toolUnavailableJobs.length,
+      scoreFloorReached,
+      scoreFloorMessage,
+      impactCounts,
       formula
     };
   }
@@ -651,6 +788,74 @@ class ReportGeneratorService {
       }));
   }
 
+  buildMetricHonesty(engagement = {}, jobs = [], scanLimitations = []) {
+    const whitelist = Array.isArray(engagement?.constraints?.toolWhitelist)
+      ? engagement.constraints.toolWhitelist
+      : [];
+    const plannedModules = new Set(
+      (whitelist.length > 0 ? whitelist : jobs.map((job) => job.toolId)).filter(Boolean)
+    );
+    const successfulStatuses = new Set(["success", "blocked", "not_applicable"]);
+    const executedStatuses = new Set([
+      "success",
+      "failed",
+      "error",
+      "blocked",
+      "timeout",
+      "tool_not_installed",
+      "not_applicable"
+    ]);
+
+    const executedJobs = jobs.filter((job) => executedStatuses.has(normalizeJobStatus(job.status)));
+    const successfulJobs = executedJobs.filter((job) =>
+      successfulStatuses.has(normalizeJobStatus(job.status))
+    );
+
+    const plannedCount = plannedModules.size;
+    const successfulModuleCount = new Set(
+      successfulJobs.map((job) => String(job.toolId || "")).filter(Boolean)
+    ).size;
+    const scanCoverageRate =
+      plannedCount > 0
+        ? Number(((successfulModuleCount / plannedCount) * 100).toFixed(1))
+        : 0;
+    const probeSuccessRate =
+      executedJobs.length > 0
+        ? Number(((successfulJobs.length / executedJobs.length) * 100).toFixed(1))
+        : 0;
+
+    const missingToolSignals = scanLimitations
+      .filter(
+        (item) =>
+          String(item.errorCode || "").toUpperCase() === "TOOL_NOT_INSTALLED" ||
+          String(item.status || "").toUpperCase() === "TOOL_NOT_INSTALLED"
+      )
+      .map((item) => String(item.toolId || "unknown"));
+    const missingRequiredTools = REQUIRED_TOOLCHAIN.filter((toolName) =>
+      missingToolSignals.some((signal) => signal.toLowerCase().includes(toolName))
+    );
+    const uniqueMissing = [...new Set(missingRequiredTools)];
+    const toolchainIntegrity = {
+      status: uniqueMissing.length > 0 ? "INCOMPLETE" : "COMPLETE",
+      requiredTools: REQUIRED_TOOLCHAIN,
+      missingTools: uniqueMissing
+    };
+
+    return {
+      scanCoverageRate: {
+        plannedModules: plannedCount,
+        successfulModules: successfulModuleCount,
+        ratePercent: scanCoverageRate
+      },
+      probeSuccessRate: {
+        executedProbes: executedJobs.length,
+        successfulProbes: successfulJobs.length,
+        ratePercent: probeSuccessRate
+      },
+      toolchainIntegrity
+    };
+  }
+
   buildScanLimitationsNarrative(scanLimitations = []) {
     if (!scanLimitations.length) {
       return "";
@@ -662,6 +867,61 @@ class ReportGeneratorService {
       );
     }
     return lines.join("\n");
+  }
+
+  buildAttackChains(findings = []) {
+    const indexed = findings.map((finding, index) => ({
+      finding,
+      index,
+      text: findingSearchText(finding),
+      id: findingReferenceId(finding, index)
+    }));
+    const has = (pattern) => indexed.filter((item) => pattern.test(item.text));
+    const chains = [];
+
+    const rateLimitSignals = has(/rate.?limit|throttl/);
+    const accountLockoutSignals = has(/account lockout|lockout|login throttle/);
+    if (rateLimitSignals.length > 0 && accountLockoutSignals.length === 0) {
+      chains.push({
+        chain: "No rate limiting + no account lockout -> brute force chain",
+        findingIds: rateLimitSignals.map((item) => item.id)
+      });
+    }
+
+    const reflectedInputSignals = has(/reflected|xss|input reflection/);
+    const cspSignals = has(/content-security-policy|missing csp/);
+    if (reflectedInputSignals.length > 0 && cspSignals.length > 0) {
+      chains.push({
+        chain: "Reflected input + missing CSP -> potential XSS chain",
+        findingIds: [...reflectedInputSignals, ...cspSignals].map((item) => item.id)
+      });
+    }
+
+    const versionDisclosureSignals = has(/version disclosure|x-powered-by|server header|technology disclosure/);
+    const cveSignals = indexed.filter((item) => Boolean(item.finding?.cve));
+    if (versionDisclosureSignals.length > 0 && cveSignals.length > 0) {
+      chains.push({
+        chain: "Version disclosure + known CVE -> targeted exploit chain",
+        findingIds: [...versionDisclosureSignals, ...cveSignals].map((item) => item.id)
+      });
+    }
+
+    const unauthAdminSignals = has(/unauth.*admin|admin.*unauth|exposed admin|unauthenticated endpoint exposed/);
+    const authSignals = has(/auth|token|session|login|signin|password|bola/);
+    if (unauthAdminSignals.length > 0 && authSignals.length > 0) {
+      chains.push({
+        chain: "Unauthenticated admin + auth issue -> privilege chain",
+        findingIds: [...unauthAdminSignals, ...authSignals].map((item) => item.id)
+      });
+    }
+
+    return {
+      chains: chains.map((item) => ({
+        ...item,
+        findingIds: [...new Set(item.findingIds)]
+      })),
+      disclaimer: "Attack chains are theoretical and require manual validation."
+    };
   }
 
   generateRiskAnalysis(findings = [], summary = {}, securityScore = null) {
@@ -792,3 +1052,8 @@ class ReportGeneratorService {
 }
 
 module.exports = new ReportGeneratorService();
+
+
+
+
+
