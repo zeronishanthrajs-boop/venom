@@ -209,9 +209,6 @@ function deriveDensityLabel(rawDeduction = 0) {
   if (rawDeduction >= 100) {
     return "HIGH FINDING DENSITY";
   }
-  if (rawDeduction >= 31) {
-    return "MULTIPLE ISSUES DETECTED";
-  }
   return "";
 }
 
@@ -610,7 +607,21 @@ class ReportGeneratorService {
       const baseWeight = FINDING_IMPACT_WEIGHTS[impactLevel] || 0;
       const endpointContext = resolveEndpointContext(finding);
       const endpointWeight = Number(endpointContext?.weight || 1);
-      const weightedDeduction = Math.max(0, Math.round(baseWeight * endpointWeight));
+
+      let weightedDeduction = 0;
+      if (impactLevel === "CONFIRMED") {
+        weightedDeduction = 25;
+      } else if (impactLevel === "STRONG_SIGNAL") {
+        weightedDeduction = 15;
+      } else if (impactLevel === "CONFIGURATION_GAP") {
+        if (["AUTH", "ADMIN", "FUNCTIONAL"].includes(endpointContext.endpointType)) {
+          weightedDeduction = 8;
+        } else {
+          weightedDeduction = 5;
+        }
+      } else if (impactLevel === "INFORMATIONAL") {
+        weightedDeduction = 2;
+      }
 
       score -= weightedDeduction;
       findingDeductionTotal += weightedDeduction;
@@ -640,23 +651,23 @@ class ReportGeneratorService {
       if (getJobErrorCode(job) === "TOOL_NOT_INSTALLED") {
         continue;
       }
-      score -= 5;
-      probeDeductionTotal += 5;
+      score -= 3;
+      probeDeductionTotal += 3;
       formula.probeDeductions.push({
         toolId: job.toolId,
         status: "FAILED",
-        deduction: 5,
+        deduction: 3,
         reason: getJobFailureReason(job)
       });
     }
 
     for (const job of timeoutJobs) {
-      score -= 2;
-      probeDeductionTotal += 2;
+      score -= 3;
+      probeDeductionTotal += 3;
       formula.probeDeductions.push({
         toolId: job.toolId,
         status: "TIMEOUT",
-        deduction: 2,
+        deduction: 3,
         reason: getJobFailureReason(job)
       });
     }
@@ -734,7 +745,7 @@ class ReportGeneratorService {
     formula.unclampedScore = Math.round(score);
 
     const finalScore = Math.max(0, Math.min(100, Math.round(score)));
-    const densityLabel = formula.unclampedScore < 0 ? deriveDensityLabel(rawDeduction) : "";
+    const densityLabel = finalScore === 0 ? deriveDensityLabel(rawDeduction) : "";
     const scoreFloorReached = finalScore === 0 && formula.unclampedScore < 0;
     const scoreFloorMessage = scoreFloorReached
       ? [
@@ -881,10 +892,10 @@ class ReportGeneratorService {
 
     const rateLimitSignals = has(/rate.?limit|throttl/);
     const accountLockoutSignals = has(/account lockout|lockout|login throttle/);
-    if (rateLimitSignals.length > 0 && accountLockoutSignals.length === 0) {
+    if (rateLimitSignals.length > 0 || accountLockoutSignals.length > 0) {
       chains.push({
-        chain: "No rate limiting + no account lockout -> brute force chain",
-        findingIds: rateLimitSignals.map((item) => item.id)
+        chain: "Rate Limiting + Account Lockout",
+        findingIds: [...rateLimitSignals, ...accountLockoutSignals].map((item) => item.id)
       });
     }
 
@@ -892,7 +903,7 @@ class ReportGeneratorService {
     const cspSignals = has(/content-security-policy|missing csp/);
     if (reflectedInputSignals.length > 0 && cspSignals.length > 0) {
       chains.push({
-        chain: "Reflected input + missing CSP -> potential XSS chain",
+        chain: "Reflected Input + CSP",
         findingIds: [...reflectedInputSignals, ...cspSignals].map((item) => item.id)
       });
     }
@@ -901,17 +912,20 @@ class ReportGeneratorService {
     const cveSignals = indexed.filter((item) => Boolean(item.finding?.cve));
     if (versionDisclosureSignals.length > 0 && cveSignals.length > 0) {
       chains.push({
-        chain: "Version disclosure + known CVE -> targeted exploit chain",
+        chain: "Technology Disclosure + CVEs",
         findingIds: [...versionDisclosureSignals, ...cveSignals].map((item) => item.id)
       });
     }
 
     const unauthAdminSignals = has(/unauth.*admin|admin.*unauth|exposed admin|unauthenticated endpoint exposed/);
-    const authSignals = has(/auth|token|session|login|signin|password|bola/);
-    if (unauthAdminSignals.length > 0 && authSignals.length > 0) {
+    const highCriticalSignals = indexed.filter((item) => {
+      const sev = String(item.finding?.severity || "").toLowerCase();
+      return sev === "critical" || sev === "high";
+    });
+    if (unauthAdminSignals.length > 0 && highCriticalSignals.length > 0) {
       chains.push({
-        chain: "Unauthenticated admin + auth issue -> privilege chain",
-        findingIds: [...unauthAdminSignals, ...authSignals].map((item) => item.id)
+        chain: "Unauthenticated Admin + High finding",
+        findingIds: [...unauthAdminSignals, ...highCriticalSignals].map((item) => item.id)
       });
     }
 

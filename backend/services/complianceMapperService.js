@@ -135,7 +135,7 @@ function getProbeReason(job = {}) {
 function assessProbeCoverage({ jobs = [], requiredTools = [], violations = [] }) {
   if (!Array.isArray(jobs) || jobs.length === 0) {
     return {
-      status: "INSUFFICIENT_DATA",
+      status: "INSUFFICIENT DATA",
       explanation:
         "Relevant probes did not run, so compliance cannot be determined.",
       requiredProbes: requiredTools,
@@ -169,7 +169,7 @@ function assessProbeCoverage({ jobs = [], requiredTools = [], violations = [] })
 
   if (violations.length > 0) {
     return {
-      status: "GAPS_IDENTIFIED",
+      status: "GAPS IDENTIFIED",
       explanation: `${violations.length} mapped violation(s) were found.`,
       requiredProbes: requiredTools,
       incompleteProbes,
@@ -179,7 +179,7 @@ function assessProbeCoverage({ jobs = [], requiredTools = [], violations = [] })
 
   if (incompleteProbes.length > 0) {
     return {
-      status: "INSUFFICIENT_DATA",
+      status: "INSUFFICIENT DATA",
       explanation:
         "Relevant probes did not run, failed, were blocked, timed out, or were not applicable, so compliance cannot be determined.",
       requiredProbes: requiredTools,
@@ -189,7 +189,7 @@ function assessProbeCoverage({ jobs = [], requiredTools = [], violations = [] })
   }
 
   return {
-    status: "CONTROLS_ASSESSED",
+    status: "CONTROLS ASSESSED",
     explanation:
       "Relevant probes ran successfully with no mapped gaps detected in this automated subset.",
     requiredProbes: requiredTools,
@@ -445,15 +445,15 @@ class ComplianceMapperService {
         : null;
     const cisStatus =
       assessedCount === 0
-        ? "INSUFFICIENT_DATA"
+        ? "INSUFFICIENT DATA"
         : failedControlsCount > 0
-          ? "GAPS_IDENTIFIED"
-          : "CONTROLS_ASSESSED";
+          ? "GAPS IDENTIFIED"
+          : "CONTROLS ASSESSED";
     const overallRisk = this.computeOverallRisk(mappedFindings);
     const complianceDisclaimer =
-      "Automated scanning evaluates a subset of technical controls only. Formal compliance certification requires comprehensive assessment by qualified auditors.";
+      "Automated scanning assesses a subset of technical controls. Full compliance certification requires comprehensive assessment by a qualified auditor covering all technical, administrative, and physical controls.";
     const summary =
-      mappedFindings.length === 0 && cisStatus === "CONTROLS_ASSESSED"
+      mappedFindings.length === 0 && cisStatus === "CONTROLS ASSESSED"
         ? "No mapped control gaps were identified in the assessed automated control subset."
         : mappedFindings.length === 0
           ? "Compliance posture cannot be determined for all controls because assessment coverage is incomplete."
@@ -475,9 +475,9 @@ class ComplianceMapperService {
       cis: {
         status: cisStatus,
         explanation:
-          cisStatus === "INSUFFICIENT_DATA"
+          cisStatus === "INSUFFICIENT DATA"
             ? "CIS control assessment coverage is incomplete. Unassessed controls are not treated as failed."
-            : cisStatus === "GAPS_IDENTIFIED"
+            : cisStatus === "GAPS IDENTIFIED"
               ? "Assessed CIS controls include mapped gaps requiring remediation."
               : "Assessed CIS controls showed no mapped technical gaps.",
         totalControls,

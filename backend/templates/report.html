@@ -235,7 +235,7 @@
     /* KPI Grid */
     .kpi-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 16px;
       margin-bottom: 30px;
     }
@@ -599,7 +599,7 @@
     <div class="cover-body">
       <div class="cover-title">VENOM Security Assessment Report</div>
       <div class="cover-subtitle">
-        {{#if managerMode}}Executive & Risk Management Posture Summary{{else}}Automated Security Validation & Attack Path Validation{{/if}}
+        {{coverSubtitle}}
       </div>
 
       <div class="cover-meta-grid">
@@ -694,8 +694,16 @@
         <span class="label">High Risks</span>
       </div>
       <div class="kpi-card">
-        <span class="num green">{{successRate}}%</span>
-        <span class="label">Success Rate</span>
+        <span class="num" style="font-size: 18px; line-height: 48px; display: block; font-weight: 800; color: #4f46e5;">{{toolchainIntegrity}}</span>
+        <span class="label">Toolchain Integrity</span>
+      </div>
+      <div class="kpi-card">
+        <span class="num green">{{scanCoverageRate}}%</span>
+        <span class="label">Scan Coverage Rate</span>
+      </div>
+      <div class="kpi-card">
+        <span class="num green">{{probeSuccessRate}}%</span>
+        <span class="label">Probe Success Rate</span>
       </div>
     </div>
 

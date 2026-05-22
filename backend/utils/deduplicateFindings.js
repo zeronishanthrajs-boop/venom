@@ -40,6 +40,27 @@ function endpointFromFinding(finding = {}) {
   );
 }
 
+function normalizeSegment(segment) {
+  if (!segment) return "";
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const hex24Regex = /^[0-9a-f]{24,}$/i;
+  if (uuidRegex.test(segment) || hex24Regex.test(segment)) {
+    return "{id}";
+  }
+  const numberRegex = /^\d+$/;
+  if (numberRegex.test(segment)) {
+    return "{n}";
+  }
+  return segment;
+}
+
+function normalizePathname(pathname) {
+  if (!pathname) return "/";
+  const segments = pathname.split("/");
+  const normalizedSegments = segments.map(seg => normalizeSegment(seg));
+  return normalizedSegments.join("/");
+}
+
 function normalizeEndpointForDedup(finding = {}) {
   const endpoint = endpointFromFinding(finding);
   if (!endpoint) {
@@ -49,30 +70,40 @@ function normalizeEndpointForDedup(finding = {}) {
     return endpoint;
   }
 
+  let pathname = "";
+  let query = "";
+
   const parsed = parseUrlSafe(endpoint);
-  const numericParamToken = "{n}";
   if (parsed) {
+    pathname = parsed.pathname || "/";
     const normalizedParams = new URLSearchParams();
     const keys = [...parsed.searchParams.keys()].sort();
     for (const key of keys) {
-      normalizedParams.set(key, numericParamToken);
+      const vals = parsed.searchParams.getAll(key);
+      for (const val of vals) {
+        normalizedParams.append(key, normalizeSegment(val));
+      }
     }
-    const query = normalizedParams.toString();
-    return `${parsed.pathname || "/"}${query ? `?${query}` : ""}`.toLowerCase();
+    query = normalizedParams.toString();
+  } else {
+    const [pathPart, rawQuery] = endpoint.split("?");
+    pathname = pathPart || "/";
+    if (rawQuery) {
+      const params = new URLSearchParams(rawQuery);
+      const normalizedParams = new URLSearchParams();
+      const keys = [...params.keys()].sort();
+      for (const key of keys) {
+        const vals = params.getAll(key);
+        for (const val of vals) {
+          normalizedParams.append(key, normalizeSegment(val));
+        }
+      }
+      query = normalizedParams.toString();
+    }
   }
 
-  const [pathname, rawQuery] = endpoint.split("?");
-  if (!rawQuery) {
-    return pathname.toLowerCase();
-  }
-  const params = new URLSearchParams(rawQuery);
-  const normalizedParams = new URLSearchParams();
-  const keys = [...params.keys()].sort();
-  for (const key of keys) {
-    normalizedParams.set(key, numericParamToken);
-  }
-  const query = normalizedParams.toString();
-  return `${String(pathname || "/").toLowerCase()}${query ? `?${query}` : ""}`;
+  const normalizedPath = normalizePathname(pathname);
+  return `${normalizedPath.toLowerCase()}${query ? `?${query}` : ""}`;
 }
 
 function toSeverityRank(value) {
@@ -81,6 +112,9 @@ function toSeverityRank(value) {
 }
 
 function buildFindingFingerprint(finding) {
+  if (isBolaFinding(finding)) {
+    return crypto.randomUUID();
+  }
   const title = normalizeText(finding?.title).toLowerCase();
   const description = normalizeText(finding?.description).toLowerCase();
   const findingType = normalizeText(finding?.type || finding?.metadata?.findingType).toLowerCase();
@@ -156,7 +190,7 @@ function deduplicateFindings(findings = []) {
       return {
         ...finding,
         observedAcrossVariations: variations.length,
-        deduplicationNote: `Observed across ${variations.length} parameter variations.`
+        deduplicationNote: `Tested across ${variations.length} URL variants — all exhibited the same behaviour. One finding reported.`
       };
     }
     return finding;

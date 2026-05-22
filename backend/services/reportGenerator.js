@@ -185,6 +185,8 @@ function buildExecutionSummary(jobs = []) {
     .filter((job) => statusOf(job) === "tool_not_installed")
     .map((job) => String(job.toolId || "unknown"));
 
+  const uniqueMissing = [...new Set(missingTools)];
+
   return {
     totalJobs,
     completedJobs: completedJobs.length,
@@ -203,8 +205,8 @@ function buildExecutionSummary(jobs = []) {
         ratePercent: probeSuccessRate
       },
       toolchainIntegrity: {
-        status: missingTools.length > 0 ? "INCOMPLETE" : "COMPLETE",
-        missingTools: [...new Set(missingTools)]
+        status: uniqueMissing.length > 0 ? `INCOMPLETE (${uniqueMissing.length}/14 missing)` : "COMPLETE",
+        missingTools: uniqueMissing
       }
     }
   };
@@ -281,7 +283,7 @@ if (!handlebars.helpers.gt) {
 }
 
 const NARRATIVE_DISCLAIMER =
-  "This narrative describes risks supported by observed findings only.\nAdditional attack vectors may require deeper manual testing.";
+  "This analysis describes risks supported by the findings above. Additional vulnerabilities may exist that require deeper or authenticated testing to identify.";
 
 function findingRef(finding = {}, index = 0) {
   return String(finding.id || `F-${index + 1}`);
@@ -519,21 +521,28 @@ function computeEPSAndROI(findings) {
       ? Math.round(mappedFindings.reduce((sum, finding) => sum + finding.eps, 0) / mappedFindings.length)
       : 0;
 
+  let effortLabel = "Low effort (under 4 hours)";
+  if (maxHours > 16 || summary.critical > 0 || summary.high > 0) {
+    effortLabel = "High effort (1–3 days)";
+  } else if (maxHours > 4 || summary.medium > 0) {
+    effortLabel = "Medium effort (4–16 hours)";
+  }
+
   return {
     findings: mappedFindings,
     overallEps,
     remediationEffortRange: {
       minHours,
       maxHours,
-      label: `${minHours}-${maxHours} hours`
+      label: effortLabel
     },
     breachCostRangeInr: {
-      min: 5000000,
+      min: 2000000,
       max: 50000000,
-      label: "₹50L-₹5Cr"
+      label: "₹20L-₹5Cr"
     },
     estimatesDisclaimer:
-      "Estimates are based on industry averages and do not account for organization-specific infrastructure, data classification, or regulatory obligations."
+      "Estimates are based on CERT-In 2024 guidelines and are intended for CFO advisory purposes. Actual costs depend on organization-specific infrastructure, data classification, or regulatory obligations."
   };
 }
 
@@ -552,6 +561,37 @@ function computeFixRoadmap(findings) {
       quarter.push(f);
     }
   }
+
+  const CONFIDENCE_RANKS = {
+    CONFIRMED: 4,
+    STRONG_SIGNAL: 3,
+    WEAK_SIGNAL: 2,
+    INFORMATIONAL: 1
+  };
+
+  const SEVERITY_RANKS = {
+    CRITICAL: 5,
+    HIGH: 4,
+    MEDIUM: 3,
+    LOW: 2,
+    INFO: 1,
+    NOT_APPLICABLE: 0
+  };
+
+  const sortFn = (a, b) => {
+    const aConf = CONFIDENCE_RANKS[String(a.confidence || "").toUpperCase()] || 0;
+    const bConf = CONFIDENCE_RANKS[String(b.confidence || "").toUpperCase()] || 0;
+    if (bConf !== aConf) {
+      return bConf - aConf;
+    }
+    const aSev = SEVERITY_RANKS[String(a.severity || "").toUpperCase()] || 0;
+    const bSev = SEVERITY_RANKS[String(b.severity || "").toUpperCase()] || 0;
+    return bSev - aSev;
+  };
+
+  week1.sort(sortFn);
+  month1.sort(sortFn);
+  quarter.sort(sortFn);
 
   return { week1, month1, quarter };
 }
@@ -597,6 +637,9 @@ async function loadReportContext(engagementId) {
   });
   const evidenceHash = crypto.createHash("sha256").update(rawDataForHash).digest("hex");
 
+  const attackChainsResult = reportGeneratorService.buildAttackChains(enrichedFindings);
+  const hasAttackChains = attackChainsResult.chains.length > 0;
+
   return {
     engagement,
     plans,
@@ -614,7 +657,8 @@ async function loadReportContext(engagementId) {
       evidenceHash,
       remediationEffortRange,
       breachCostRangeInr,
-      estimatesDisclaimer
+      estimatesDisclaimer,
+      hasAttackChains
     }
   };
 }
@@ -686,6 +730,15 @@ function toTemplateData(context, options = {}) {
   const redacted = Boolean(options.redacted);
   const managerMode = options.mode === "manager";
   const developerMode = !managerMode;
+
+  let coverSubtitle = "";
+  if (context.intelligence?.hasAttackChains === false) {
+    coverSubtitle = "Attack Surface Assessment";
+  } else {
+    coverSubtitle = managerMode
+      ? "Executive & Risk Management Posture Summary"
+      : "Automated Security Validation & Attack Path Validation";
+  }
 
   const generatedAt = new Date().toLocaleString("en-IN", {
     timeZone: "Asia/Kolkata"
@@ -817,7 +870,11 @@ function toTemplateData(context, options = {}) {
     estimatesDisclaimer:
       context.intelligence.estimatesDisclaimer ||
       "Estimates are based on industry averages and do not account for organization-specific infrastructure, data classification, or regulatory obligations.",
-    executionTimeline
+    executionTimeline,
+    coverSubtitle,
+    toolchainIntegrity: context.execution.metricHonesty?.toolchainIntegrity?.status,
+    scanCoverageRate: context.execution.metricHonesty?.scanCoverageRate?.ratePercent,
+    probeSuccessRate: context.execution.metricHonesty?.probeSuccessRate?.ratePercent
   };
 }
 

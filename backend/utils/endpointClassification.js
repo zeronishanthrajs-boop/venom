@@ -1,12 +1,12 @@
 const CLASS_DEFINITIONS = [
   {
-    endpointType: "Administrative",
+    endpointType: "ADMIN",
     sensitivity: "CRITICAL",
     weight: 1.4,
     keywords: ["admin", "dashboard", "manage", "control", "cms", "panel", "staff"]
   },
   {
-    endpointType: "Authentication",
+    endpointType: "AUTH",
     sensitivity: "HIGH",
     weight: 1.2,
     keywords: [
@@ -21,13 +21,13 @@ const CLASS_DEFINITIONS = [
     ]
   },
   {
-    endpointType: "Functional",
+    endpointType: "FUNCTIONAL",
     sensitivity: "MEDIUM",
     weight: 1.0,
     keywords: ["search", "profile", "user", "comments", "products", "articles", "news"]
   },
   {
-    endpointType: "Informational",
+    endpointType: "INFORMATIONAL",
     sensitivity: "LOW",
     weight: 0.6,
     keywords: ["about", "faq", "robots", "rss", "feed", "sitemap", "contact"]
@@ -35,7 +35,7 @@ const CLASS_DEFINITIONS = [
 ];
 
 const DEFAULT_CLASSIFICATION = {
-  endpointType: "Functional",
+  endpointType: "FUNCTIONAL",
   sensitivity: "MEDIUM",
   weight: 1.0,
   matchedKeyword: "",

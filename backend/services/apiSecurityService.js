@@ -1,4 +1,4 @@
-﻿const axios = require("axios");
+const axios = require("axios");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const Engagement = require("../models/Engagement");
@@ -711,8 +711,30 @@ class ApiSecurityService {
         rootBodyFingerprint = normalizeBodyForFingerprint(rootResponse.body);
         candidates.push(...this.extractEndpointsFromHtml(rootResponse.body, targetUrl));
       }
-      for (const path of [...COMMON_API_PATHS, ...COMMON_WEB_PATHS]) {
-        candidates.push({ path, method: "GET", source: "fallback" });
+
+      let hasCustom404 = false;
+      const canaryResA = await this.safeRequest({
+        url: joinUrl(targetUrl, "/venom-canary-test-a7f3b2/"),
+        method: "GET",
+        timeout: 5000
+      });
+      const canaryResB = await this.safeRequest({
+        url: joinUrl(targetUrl, "/venom-canary-test-b9e4c1/"),
+        method: "GET",
+        timeout: 5000
+      });
+      if (canaryResA.status === 200 && canaryResB.status === 200) {
+        hasCustom404 = true;
+        logger.info(
+          { targetUrl },
+          "Custom 404 detected — fallback path list suppressed. Only discovered endpoints will be tested."
+        );
+      }
+
+      if (!hasCustom404) {
+        for (const path of [...COMMON_API_PATHS, ...COMMON_WEB_PATHS]) {
+          candidates.push({ path, method: "GET", source: "fallback" });
+        }
       }
 
       const validated = [];
@@ -876,7 +898,7 @@ class ApiSecurityService {
     const normalizedExploitConfidence = String(exploitConfidence || "weak signal")
       .trim()
       .toLowerCase();
-    const confidence =
+    const confidenceVal =
       normalizeConfidenceLevel(
         normalizeConfidenceLevel(normalizedDetectionConfidence) ||
           normalizeConfidenceLevel(normalizedExploitConfidence)
@@ -886,6 +908,23 @@ class ApiSecurityService {
         detectionConfidence: normalizedDetectionConfidence,
         exploitConfidence: normalizedExploitConfidence
       });
+
+    let confidence = confidenceVal;
+    let finalDetectionConfidence = normalizedDetectionConfidence;
+    let finalExploitConfidence = normalizedExploitConfidence;
+
+    const isInjectionOrReflection =
+      /injection|reflected|xss|ssti|reflection|sql/i.test(String(type || "").trim()) ||
+      /injection|reflected|xss|ssti|reflection|sql/i.test(String(title || "").trim()) ||
+      /injection|reflected|xss|ssti|reflection|sql/i.test(String(description || "").trim()) ||
+      /injection|reflected|xss|ssti|reflection|sql/i.test(String(testPerformed || "").trim());
+
+    if (this.wafDetected && isInjectionOrReflection) {
+      confidence = "WEAK_SIGNAL";
+      finalDetectionConfidence = "weak signal";
+      finalExploitConfidence = "weak signal";
+    }
+
     const manualValidationRequired = needsManualValidation(confidence);
     const effectiveSeverityReason =
       String(severityReason || "").trim() ||
@@ -933,8 +972,8 @@ class ApiSecurityService {
         normalizedReproductionSteps.length > 0
           ? normalizedReproductionSteps
           : ["Evidence capture failed — reproduction steps were not generated for this finding."],
-      detectionConfidence: normalizedDetectionConfidence,
-      exploitConfidence: normalizedExploitConfidence,
+      detectionConfidence: finalDetectionConfidence,
+      exploitConfidence: finalExploitConfidence,
       tags: ["api-security", String(type || "").toLowerCase()],
       metadata: {
         findingType: type,
@@ -1066,13 +1105,14 @@ class ApiSecurityService {
           : `Response returned HTTP ${Number(response.status || 0)} when unauthenticated request was sent.`
       ]
     });
+    const endpointContext = classifyEndpoint(requestPath);
     const finding = vulnerable
       ? this.buildFinding({
           type: "API_MISSING_AUTHENTICATION",
           title: `Unauthenticated endpoint exposed: ${requestPath}`,
           description:
             "Endpoint accepted request without Authorization header or API key.",
-          severity: "high",
+          severity: endpointContext.endpointType === "ADMIN" ? "critical" : "high",
           endpoint: requestPath,
           methodTested: endpoint.method,
           testPerformed: "Sent request without Authorization or API key headers.",
@@ -1223,10 +1263,10 @@ class ApiSecurityService {
     const requestUrl = joinUrl(targetUrl, requestPath);
     const endpointContext = classifyEndpoint(requestPath);
     const severityByEndpointType = {
-      Authentication: "high",
-      Administrative: "high",
-      Functional: "medium",
-      Informational: "low"
+      AUTH: "high",
+      ADMIN: "high",
+      FUNCTIONAL: "medium",
+      INFORMATIONAL: "low"
     };
     const contextualRateLimitSeverity =
       severityByEndpointType[endpointContext.endpointType] || "medium";
@@ -1665,6 +1705,7 @@ class ApiSecurityService {
         };
       }
 
+      this.wafDetected = false;
       logger.info({ engagementId, targetUrl }, "Starting API security scan");
       const scanStartedAt = Date.now();
       const discoveryResult = await this.discoverEndpoints(targetUrl);
@@ -1679,6 +1720,7 @@ class ApiSecurityService {
       const findings = [];
       const wafDetection = await this.runWafDetection(targetUrl);
       const wafDetected = Boolean(wafDetection?.detected);
+      this.wafDetected = wafDetected;
       if (wafDetected) {
         const provider = wafDetection.provider || "Unknown WAF";
         const reason = `WAF DETECTED: ${provider}. Payload-based findings may reflect WAF behavior.`;

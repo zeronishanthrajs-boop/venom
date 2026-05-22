@@ -440,3 +440,17 @@ If the repository is lost, follow this exact step-by-step sequence to reconstruc
 [2026-05-22T17:50:00Z] STATUS: resolved
 ---
 
+
+[2026-05-22T19:35:00Z] GROUP: 5, 6, 7, 8 FIX: Master Quality and Accuracy Overhaul
+[2026-05-22T19:35:00Z] ROOT CAUSE: Multi-group platform quality issues: 1) AI narratives lacked scoped disclaimer and qualitative effort tiers. 2) Success rate metric was combined, masking toolchain integrity and scan coverage. 3) Compliance statuses were underscore-separated instead of space-separated, and disclaimer was not CFO/CERT-In aligned. 4) Attack chains lacked standardization and subtitle override. 5) WAF pre-detection did not dynamically downgrade injection/reflection findings confidence to weak signal.
+[2026-05-22T19:35:00Z] CHANGE: 
+- Updated apiSecurityService.js to perform pre-probe WAF validation and downgrade injection/reflection findings to WEAK_SIGNAL when WAF is active.
+- Refactored complianceMapperService.js to use space-separated compliance statuses ("INSUFFICIENT DATA", "GAPS IDENTIFIED", "CONTROLS ASSESSED") and exact legal disclaimers.
+- Updated reportGeneratorService.js to standardize buildAttackChains names to 4 predefined paths ("Rate Limiting + Account Lockout", "Reflected Input + CSP", "Technology Disclosure + CVEs", "Unauthenticated Admin + High finding").
+- Enhanced reportGenerator.js to use qualitative effort tiers based on maxHours/severity, sorted roadmaps by confidence rank then severity rank (descending), formatted toolchain integrity, and exposed split metrics.
+- Updated report.html to dynamically render coverSubtitle and display a 2x3 grid of split metrics (Total Findings, Critical, High, Toolchain Integrity, Scan Coverage, Probe Success).
+[2026-05-22T19:35:00Z] FILES: backend/services/apiSecurityService.js, backend/services/complianceMapperService.js, backend/services/reportGeneratorService.js, backend/services/reportGenerator.js, backend/templates/report.html
+[2026-05-22T19:35:00Z] TESTS: 197 passing, 0 failing
+[2026-05-22T19:35:00Z] VERIFIED: Run npm test in backend/ directory. All 197 integration and unit tests completed successfully (0 failures).
+[2026-05-22T19:35:00Z] STATUS: resolved
+---
