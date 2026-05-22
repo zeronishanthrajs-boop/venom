@@ -12,7 +12,6 @@ import {
   fetchOrchestratorStatus,
   fetchDetailedExecutionReport,
   downloadBackendPdfReport,
-  downloadBackendMarkdownReport,
   ApiError,
   type ComplianceSummary,
   type DetailedExecutionReport,
