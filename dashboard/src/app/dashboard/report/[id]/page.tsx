@@ -614,18 +614,12 @@ export default function ReportPage() {
     try {
       const pdf = await downloadBackendPdfReport(session, engagementId);
       triggerBlobDownload(pdf, `venom-report-${engagementId}.pdf`);
-    } catch {
-      try {
-        const markdown = await downloadBackendMarkdownReport(session, engagementId);
-        const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
-        triggerBlobDownload(blob, `venom-report-${engagementId}.md`);
-      } catch (requestError) {
-        setError(
-          requestError instanceof Error
-            ? requestError
-            : "Report download failed."
-        );
-      }
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError
+          : "Report download failed."
+      );
     } finally {
       setDownloading(false);
     }

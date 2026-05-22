@@ -1277,7 +1277,7 @@ export async function downloadBackendPdfReport(
   }
 
   if (response.status === 202) {
-    const maxAttempts = 30;
+    const maxAttempts = 65;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 3000));
 

@@ -887,7 +887,7 @@ function renderHtmlFromTemplate(templateData) {
 async function renderPdfFromTemplate(templateData) {
   const html = renderHtmlFromTemplate(templateData);
 
-  const PDF_TIMEOUT_MS = 45000;
+  const PDF_TIMEOUT_MS = 180000;
   const pdfPromise = (async () => {
     let browser;
     try {
@@ -958,7 +958,7 @@ async function renderPdfFromTemplate(templateData) {
 
   const timeoutPromise = new Promise((_, reject) => {
     setTimeout(
-      () => reject(new Error("PDF generation timed out after 45s")),
+      () => reject(new Error("PDF generation timed out after 180s")),
       PDF_TIMEOUT_MS
     );
   });
