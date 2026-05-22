@@ -1,5 +1,14 @@
 import { refreshSession, type VenomSession } from "./session";
 
+export class ApiError extends Error {
+  errorType?: string;
+  constructor(message: string, errorType?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.errorType = errorType;
+  }
+}
+
 export type Engagement = {
   _id: string;
   name: string;
@@ -846,41 +855,51 @@ function throwApiError(response: Response, payload: unknown): never {
 
   if (!response.ok) {
     if (response.status === 401) {
-      throw new Error(
-        "Unauthorized request. Re-login and verify VENOM_BACKEND_API_KEY matches backend VENOM_API_KEY."
+      throw new ApiError(
+        "Unauthorized request. Re-login and verify VENOM_BACKEND_API_KEY matches backend VENOM_API_KEY.",
+        "UNAUTHORIZED"
       );
+    }
+
+    // Handle the explicit errorTypes returned by our route.ts bridge
+    if (typeof payload === "object" && payload !== null && "errorType" in payload) {
+      const eType = (payload as { errorType: string }).errorType;
+      const msg = (payload as { message?: string }).message || primaryMessage || "An error occurred";
+      throw new ApiError(msg, eType);
     }
 
     if (response.status === 404) {
       if (payloadError) {
-        throw new Error(payloadError);
+        throw new ApiError(payloadError, "NOT_FOUND");
       }
-      throw new Error(
-        "Backend route/service not found (404). Verify VENOM_BACKEND_BASE_URL points to the active Render backend."
+      throw new ApiError(
+        "Backend route/service not found (404). Verify VENOM_BACKEND_BASE_URL points to the active Render backend.",
+        "NOT_FOUND"
       );
     }
 
     if (response.status === 503) {
       const upstreamMessage = primaryMessage || "Backend unavailable";
       if (isReadinessHintRelevant) {
-        throw new Error(
-          `${upstreamMessage}. Check backend /ready, MongoDB health, and deployment status.`
+        throw new ApiError(
+          `${upstreamMessage}. Check backend /ready, MongoDB health, and deployment status.`,
+          "OVERLOADED"
         );
       }
-      throw new Error(upstreamMessage);
+      throw new ApiError(upstreamMessage, "OVERLOADED");
     }
 
     if (response.status === 504) {
-      throw new Error(
-        "Backend timed out (504). Investigate Render service responsiveness and upstream network path."
+      throw new ApiError(
+        "Backend timed out (504). Investigate Render service responsiveness and upstream network path.",
+        "SLOW_RESPONSE"
       );
     }
 
-    const message =
-      detailedMessage || "Request failed. Check API settings.";
-    throw new Error(message);
+    const message = detailedMessage || "Something went wrong. Please refresh and try again.";
+    throw new ApiError(message, "UNKNOWN");
   }
-  throw new Error("Unexpected error");
+  throw new ApiError("Unexpected error", "UNKNOWN");
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -1242,7 +1261,7 @@ export async function downloadBackendPdfReport(
   session: VenomSession,
   engagementId: string
 ): Promise<Blob> {
-  const response = await apiFetch(
+  let response = await apiFetch(
     `/api/reports/${encodeURIComponent(engagementId)}/pdf`,
     {
       method: "GET",
@@ -1255,6 +1274,51 @@ export async function downloadBackendPdfReport(
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throwApiError(response, payload);
+  }
+
+  if (response.status === 202) {
+    const maxAttempts = 30;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      const statusRes = await apiFetch(
+        `/api/reports/${encodeURIComponent(engagementId)}/pdf/status`,
+        {
+          method: "GET",
+          headers: buildHeaders(session),
+          cache: "no-store"
+        },
+        10000
+      );
+
+      if (!statusRes.ok) {
+        throw new Error("Failed to check PDF generation status.");
+      }
+
+      const statusPayload = await statusRes.json().catch(() => ({}));
+      if (statusPayload.status === "ready") {
+        response = await apiFetch(
+          `/api/reports/${encodeURIComponent(engagementId)}/pdf`,
+          {
+            method: "GET",
+            headers: buildHeaders(session),
+            cache: "no-store"
+          },
+          60000
+        );
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throwApiError(response, payload);
+        }
+        return response.blob();
+      }
+
+      if (statusPayload.status === "failed") {
+        throw new Error(statusPayload.error || "Background PDF generation failed.");
+      }
+    }
+
+    throw new Error("PDF generation timed out on the server. Please try downloading again.");
   }
 
   return response.blob();

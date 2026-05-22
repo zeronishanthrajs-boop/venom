@@ -21,38 +21,118 @@ async function resolveComplianceSection(engagementId, reportFindings = []) {
   return complianceMapperService.generateComplianceReport(reportFindings);
 }
 
+// ── Async PDF: kick off background generation, serve from cache ──
 router.get("/:engagementId/pdf", requireDb, async (req, res) => {
   try {
+    const { engagementId } = req.params;
     const mode = req.query.mode || "developer";
-    const pdf = await generatePdfReport(req.params.engagementId, { mode });
-    const filename = `VENOM-${mode.toUpperCase()}-Report-${req.params.engagementId}-${Date.now()}.pdf`;
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${filename}"`
-    );
-    res.setHeader("Content-Length", pdf.length);
-    return res.status(200).send(pdf);
+    const forceRegen = req.query.refresh === "1";
+
+    const engagement = await Engagement.findById(engagementId).select(
+      "pdfStatus pdfData pdfMode pdfGeneratedAt pdfError"
+    ).lean();
+
+    if (!engagement) {
+      return res.status(404).json({ error: "Engagement not found" });
+    }
+
+    // Serve cached PDF if ready and same mode and not a force regeneration
+    const cacheAgeMs = engagement.pdfGeneratedAt
+      ? Date.now() - new Date(engagement.pdfGeneratedAt).getTime()
+      : Infinity;
+    const cacheValid = engagement.pdfStatus === "ready"
+      && engagement.pdfData
+      && engagement.pdfMode === mode
+      && cacheAgeMs < 30 * 60 * 1000  // 30-minute cache TTL
+      && !forceRegen;
+
+    if (cacheValid) {
+      const filename = `VENOM-${mode.toUpperCase()}-Report-${engagementId}.pdf`;
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Length", engagement.pdfData.length);
+      return res.status(200).send(engagement.pdfData);
+    }
+
+    // If already generating, return 202 with poll hint
+    if (engagement.pdfStatus === "generating") {
+      return res.status(202).json({
+        status: "generating",
+        message: "PDF is being generated. Poll /pdf/status for readiness.",
+        pollUrl: `/api/reports/${engagementId}/pdf/status`
+      });
+    }
+
+    // Mark as generating and kick off background job
+    await Engagement.findByIdAndUpdate(engagementId, {
+      pdfStatus: "generating",
+      pdfMode: mode,
+      pdfStartedAt: new Date(),
+      pdfError: null
+    });
+
+    // Fire-and-forget background generation
+    setImmediate(async () => {
+      try {
+        const pdf = await generatePdfReport(engagementId, { mode });
+        await Engagement.findByIdAndUpdate(engagementId, {
+          pdfStatus: "ready",
+          pdfData: pdf,
+          pdfGeneratedAt: new Date(),
+          pdfError: null
+        });
+        logger.info({ engagementId, mode }, "PDF generated and cached");
+      } catch (bgError) {
+        logger.error({ engagementId, error: bgError?.message }, "Background PDF generation failed");
+        await Engagement.findByIdAndUpdate(engagementId, {
+          pdfStatus: "failed",
+          pdfError: bgError?.message || "Unknown error"
+        }).catch(() => {});
+      }
+    });
+
+    return res.status(202).json({
+      status: "generating",
+      message: "PDF generation started. Poll /pdf/status — ready in ~30s.",
+      pollUrl: `/api/reports/${engagementId}/pdf/status`
+    });
   } catch (error) {
-    logger.error(
-      { error: error?.message || String(error) },
-      "PDF generation failed"
-    );
+    logger.error({ error: error?.message || String(error) }, "PDF route error");
     if (error?.name === "CastError") {
       return res.status(400).json({ error: "Invalid engagement id" });
-    }
-    if (error?.code === "ENGAGEMENT_NOT_FOUND") {
-      return res.status(404).json({ error: "Engagement not found" });
     }
     return res.status(500).json({
       error: "PDF generation failed",
       reason: error?.message || "Unknown PDF error",
-      suggestion:
-        typeof error?.message === "string" && /timed out/i.test(error.message)
-          ? "Server is under load. Try again in 30 seconds."
-          : "Check Render logs for Chromium dependency errors.",
       fallback: `/api/reports/${req.params.engagementId}/md`
     });
+  }
+});
+
+// ── PDF status poll endpoint ──
+router.get("/:engagementId/pdf/status", requireDb, async (req, res) => {
+  try {
+    const engagement = await Engagement.findById(req.params.engagementId)
+      .select("pdfStatus pdfMode pdfStartedAt pdfGeneratedAt pdfError")
+      .lean();
+    if (!engagement) {
+      return res.status(404).json({ error: "Engagement not found" });
+    }
+    return res.status(200).json({
+      status: engagement.pdfStatus || "idle",
+      mode: engagement.pdfMode || "developer",
+      startedAt: engagement.pdfStartedAt,
+      generatedAt: engagement.pdfGeneratedAt,
+      error: engagement.pdfError || null,
+      downloadUrl: engagement.pdfStatus === "ready"
+        ? `/api/reports/${req.params.engagementId}/pdf`
+        : null
+    });
+  } catch (error) {
+    if (error?.name === "CastError") {
+      return res.status(400).json({ error: "Invalid engagement id" });
+    }
+    return res.status(500).json({ error: "Status check failed" });
   }
 });
 
@@ -130,16 +210,62 @@ router.get(
   requireDb,
   async (req, res, next) => {
     try {
-      const report = await reportGeneratorService.generateDetailedReport(
-        req.params.engagementId
-      );
-      const compliance = await resolveComplianceSection(
-        req.params.engagementId,
-        report.findings || []
-      );
-      return res.status(200).json({
-        ...report,
-        compliance
+      const { engagementId } = req.params;
+      const forceRefresh = req.query.refresh === "1";
+
+      const engagement = await Engagement.findById(engagementId)
+        .select("detailedReportCache detailedReportCachedAt status")
+        .lean();
+
+      if (!engagement) {
+        return res.status(404).json({ error: "Engagement not found" });
+      }
+
+      // Check if cache exists and is less than 5 minutes old
+      const cacheAgeMs = engagement.detailedReportCachedAt
+        ? Date.now() - new Date(engagement.detailedReportCachedAt).getTime()
+        : Infinity;
+      const isCacheValid = engagement.detailedReportCache
+        && cacheAgeMs < 5 * 60 * 1000 // 5-minute cache TTL
+        && !forceRefresh;
+
+      if (isCacheValid) {
+        return res.status(200).json(engagement.detailedReportCache);
+      }
+
+      // Trigger background generation
+      setImmediate(async () => {
+        try {
+          const report = await reportGeneratorService.generateDetailedReport(engagementId);
+          const compliance = await resolveComplianceSection(
+            engagementId,
+            report.findings || []
+          );
+          const cacheData = {
+            ...report,
+            compliance
+          };
+
+          await Engagement.findByIdAndUpdate(engagementId, {
+            detailedReportCache: cacheData,
+            detailedReportCachedAt: new Date()
+          });
+          logger.info({ engagementId }, "Detailed execution report cached successfully");
+        } catch (bgError) {
+          logger.error({ engagementId, error: bgError?.message }, "Background detailed report generation failed");
+        }
+      });
+
+      // If we have an older stale cache, we can return it as fallback with a processing header or flag,
+      // but the requirement says "return 202 to the UI immediately, indicating generating detailed execution report..."
+      // Let's return 202 to the UI, but if there's any cache (even stale) we can optionally mention it or just return 202.
+      // Let's match the exact requirement: "return 202 to the UI immediately"
+      return res.status(202).json({
+        status: "generating",
+        message: "Generating detailed execution report in the background...",
+        retryAfterMs: 3000,
+        // If we have stale cache, provide it so the UI has something to show, but still show loading/generating status
+        staleData: engagement.detailedReportCache || null
       });
     } catch (error) {
       if (error?.name === "CastError") {

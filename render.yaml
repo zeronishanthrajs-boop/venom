@@ -10,15 +10,15 @@ services:
       apt-get install -y --no-install-recommends nikto whatweb ffuf amass golang-go python3-pip;
       npm ci;
       python3 -m pip install --no-cache-dir sqlmap wafw00f semgrep trufflehog;
-      export GOBIN=/usr/local/bin;
+      export GOBIN=$HOME/go/bin;
       go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest;
       go install github.com/projectdiscovery/httpx/cmd/httpx@latest;
       go install github.com/projectdiscovery/katana/cmd/katana@latest;
       go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest;
       go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest;
       go install github.com/hahwul/dalfox/v2@latest;
-      nuclei -update-templates || true"
-    startCommand: npm start
+      $HOME/go/bin/nuclei -update-templates || true"
+    startCommand: PATH=$HOME/go/bin:$PATH npm start
     healthCheckPath: /health
     autoDeploy: true
     envVars:

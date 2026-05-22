@@ -5,14 +5,15 @@ import { useParams, useRouter } from "next/navigation";
 
 import Navigation from "@/components/Navigation";
 import {
-  downloadBackendMarkdownReport,
-  downloadBackendPdfReport,
-  fetchComplianceSummary,
-  fetchDetailedExecutionReport,
-  fetchDecisionBrief,
   fetchEngagementReport,
   fetchExecutionJobs,
+  fetchComplianceSummary,
+  fetchDecisionBrief,
   fetchOrchestratorStatus,
+  fetchDetailedExecutionReport,
+  downloadBackendPdfReport,
+  downloadBackendMarkdownReport,
+  ApiError,
   type ComplianceSummary,
   type DetailedExecutionReport,
   type DecisionBrief,
@@ -20,6 +21,7 @@ import {
   type ExecutionJob,
   type OrchestratorStatusResponse
 } from "@/lib/api";
+import ErrorBanner from "@/components/ErrorBanner";
 import { fetchSession, type VenomSession } from "@/lib/session";
 
 type FlattenedFinding = {
@@ -389,7 +391,7 @@ export default function ReportPage() {
 
   const [session, setSession] = useState<VenomSession | null>(null);
   const [report, setReport] = useState<EngagementReport | null>(null);
-  const [detailedReport, setDetailedReport] = useState<DetailedExecutionReport | null>(null);
+  const [detailedReport, setDetailedReport] = useState<any>(null);
   const [jobs, setJobs] = useState<ExecutionJob[]>([]);
   const [compliance, setCompliance] = useState<ComplianceSummary | null>(null);
   const [brief, setBrief] = useState<DecisionBrief | null>(null);
@@ -397,7 +399,7 @@ export default function ReportPage() {
     useState<OrchestratorStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<Error | ApiError | string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [kickoffStatus, setKickoffStatus] = useState<
@@ -407,6 +409,20 @@ export default function ReportPage() {
   const autoKickoffTriggered = useRef(false);
 
   const findings = useMemo(() => flattenFindings(jobs), [jobs]);
+
+  const effectiveDetailedReport = useMemo(() => {
+    if (!detailedReport) {
+      return null;
+    }
+    if (detailedReport.status === "generating") {
+      return detailedReport.staleData || null;
+    }
+    return detailedReport as DetailedExecutionReport;
+  }, [detailedReport]);
+
+  const isDetailedReportGenerating = useMemo(() => {
+    return detailedReport?.status === "generating";
+  }, [detailedReport]);
 
   const findingSummary = useMemo(
     () => ({
@@ -491,7 +507,7 @@ export default function ReportPage() {
         if (!cancelled) {
           setError(
             requestError instanceof Error
-              ? requestError.message
+              ? requestError
               : "Failed to load report."
           );
         }
@@ -606,7 +622,7 @@ export default function ReportPage() {
       } catch (requestError) {
         setError(
           requestError instanceof Error
-            ? requestError.message
+            ? requestError
             : "Report download failed."
         );
       }
@@ -673,9 +689,9 @@ export default function ReportPage() {
           </div>
 
           {error ? (
-            <p className="mt-4 rounded-lg border border-rose-500/45 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
-              {error}
-            </p>
+            <div className="mt-4">
+              <ErrorBanner error={error} onRetry={() => { setError(null); }} />
+            </div>
           ) : null}
 
           {isProcessing ? (
@@ -755,48 +771,55 @@ export default function ReportPage() {
               Scan Execution Details
             </h2>
 
-            {detailedReport?.executionDetails ? (
+            {effectiveDetailedReport?.executionDetails ? (
               <>
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
                   <div className="rounded-lg border border-slate-700 bg-slate-950/70 px-2 py-2 text-center">
                     <p className="text-lg font-semibold text-slate-100">
-                      {detailedReport.executionDetails.totalTests}
+                      {effectiveDetailedReport.executionDetails.totalTests}
                     </p>
                     <p className="text-[10px] uppercase tracking-wide text-slate-400">Tests Run</p>
                   </div>
                   <div className="rounded-lg border border-lime-500/45 bg-lime-500/10 px-2 py-2 text-center">
                     <p className="text-lg font-semibold text-lime-100">
-                      {detailedReport.executionDetails.passed}
+                      {effectiveDetailedReport.executionDetails.passed}
                     </p>
                     <p className="text-[10px] uppercase tracking-wide text-lime-200">Passed</p>
                   </div>
                   <div className="rounded-lg border border-rose-500/45 bg-rose-500/10 px-2 py-2 text-center">
                     <p className="text-lg font-semibold text-rose-100">
-                      {detailedReport.executionDetails.failed}
+                      {effectiveDetailedReport.executionDetails.failed}
                     </p>
                     <p className="text-[10px] uppercase tracking-wide text-rose-200">Vulnerable</p>
                   </div>
                   <div className="rounded-lg border border-amber-500/45 bg-amber-500/10 px-2 py-2 text-center">
                     <p className="text-lg font-semibold text-amber-100">
-                      {detailedReport.executionDetails.blocked + detailedReport.executionDetails.errored}
+                      {effectiveDetailedReport.executionDetails.blocked + effectiveDetailedReport.executionDetails.errored}
                     </p>
                     <p className="text-[10px] uppercase tracking-wide text-amber-200">Blocked/Error</p>
                   </div>
                   <div className="rounded-lg border border-cyan-500/45 bg-cyan-500/10 px-2 py-2 text-center">
                     <p className="text-lg font-semibold text-cyan-100">
-                      {detailedReport.executionDetails.totalTimeMs}ms
+                      {effectiveDetailedReport.executionDetails.totalTimeMs}ms
                     </p>
                     <p className="text-[10px] uppercase tracking-wide text-cyan-200">Total Time</p>
                   </div>
                 </div>
 
-                {detailedReport.executionDetails.timeline.length > 0 ? (
+                {isDetailedReportGenerating ? (
+                  <div className="mt-4 flex items-center gap-2 text-xs text-lime-400/80 animate-pulse">
+                    <div className="h-3 w-3 animate-spin rounded-full border border-slate-700 border-t-lime-400" />
+                    <span>Updating trace details in the background...</span>
+                  </div>
+                ) : null}
+
+                {effectiveDetailedReport.executionDetails.timeline.length > 0 ? (
                   <div className="mt-4">
                     <p className="text-xs uppercase tracking-[0.08em] text-slate-500">
                       Execution Timeline
                     </p>
                     <div className="mt-2 space-y-2">
-                      {detailedReport.executionDetails.timeline.slice(0, 25).map((item) => (
+                      {effectiveDetailedReport.executionDetails.timeline.slice(0, 25).map((item: any) => (
                         <div
                           key={item.testId}
                           className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${executionResultTone(
@@ -817,13 +840,13 @@ export default function ReportPage() {
                   </div>
                 ) : null}
 
-                {detailedReport.detailedFindings.length > 0 ? (
+                {effectiveDetailedReport.detailedFindings.length > 0 ? (
                   <div className="mt-4">
                     <p className="text-xs uppercase tracking-[0.08em] text-slate-500">
                       Finding Traceability
                     </p>
                     <div className="mt-2 space-y-2">
-                      {detailedReport.detailedFindings.slice(0, 12).map((finding) => (
+                      {effectiveDetailedReport.detailedFindings.slice(0, 12).map((finding: any) => (
                         <article
                           key={`${finding.id}-${finding.title}`}
                           className="rounded-lg border border-slate-700 bg-slate-950/65 p-3"
@@ -859,6 +882,11 @@ export default function ReportPage() {
                   </div>
                 ) : null}
               </>
+            ) : isDetailedReportGenerating ? (
+              <div className="mt-3 flex items-center gap-2 text-sm text-lime-400/80 animate-pulse">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-700 border-t-lime-400" />
+                <span>Generating detailed execution trace in the background...</span>
+              </div>
             ) : (
               <p className="mt-3 text-sm text-slate-400">
                 Detailed execution trace is not available yet.

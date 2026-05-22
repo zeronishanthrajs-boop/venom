@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import Navigation from "@/components/Navigation";
-import { fetchEngagements, type Engagement } from "@/lib/api";
+import { fetchEngagements, type Engagement, ApiError } from "@/lib/api";
 import { fetchSession, type VenomSession } from "@/lib/session";
+import ErrorBanner from "@/components/ErrorBanner";
 
 function formatDate(value?: string) {
   if (!value) {
@@ -39,45 +40,30 @@ export default function RecentScansPage() {
   const [session, setSession] = useState<VenomSession | null>(null);
   const [engagements, setEngagements] = useState<Engagement[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<Error | ApiError | string | null>(null);
+
+  const loadData = async () => {
+    setLoading(true);
+    setError(null);
+    const current = await fetchSession();
+    if (!current) {
+      router.replace("/login");
+      return;
+    }
+
+    setSession(current);
+    try {
+      const items = await fetchEngagements(current);
+      setEngagements(items);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError : "Failed to load scans.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    let mounted = true;
-
-    (async () => {
-      const current = await fetchSession();
-      if (!mounted) {
-        return;
-      }
-      if (!current) {
-        router.replace("/login");
-        return;
-      }
-
-      setSession(current);
-      try {
-        const items = await fetchEngagements(current);
-        if (mounted) {
-          setEngagements(items);
-        }
-      } catch (requestError) {
-        if (mounted) {
-          setError(
-            requestError instanceof Error
-              ? requestError.message
-              : "Failed to load scans."
-          );
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
+    loadData();
   }, [router]);
 
   const list = useMemo(() => engagements.slice(0, 30), [engagements]);
@@ -114,9 +100,7 @@ export default function RecentScansPage() {
         ) : null}
 
         {!loading && error ? (
-          <div className="rounded-2xl border border-rose-500/45 bg-rose-500/10 p-4 text-sm text-rose-200">
-            {error}
-          </div>
+          <ErrorBanner error={error} onRetry={loadData} />
         ) : null}
 
         {!loading && !error && list.length === 0 ? (

@@ -101,6 +101,29 @@ const engagementSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: null
     },
+    // PDF async generation cache
+    pdfStatus: {
+      type: String,
+      enum: ["idle", "generating", "ready", "failed"],
+      default: "idle"
+    },
+    pdfData: {
+      type: Buffer,
+      default: null
+    },
+    pdfMode: {
+      type: String,
+      default: "developer"
+    },
+    pdfStartedAt: { type: Date, default: null },
+    pdfGeneratedAt: { type: Date, default: null },
+    pdfError: { type: String, default: null },
+    // Detailed execution trace cache
+    detailedReportCache: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null
+    },
+    detailedReportCachedAt: { type: Date, default: null },
     completedAt: Date,
     createdBy: {
       type: String,

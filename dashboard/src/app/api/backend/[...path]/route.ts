@@ -123,38 +123,104 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  let upstreamResponse: Response;
+  let upstreamResponse: Response | null = null;
+  const maxRetries = 3;
+  const backoffDelays = [2000, 4000, 8000];
 
-  try {
-    upstreamResponse = await fetch(upstreamUrl, {
-      method,
-      headers: outboundHeaders,
-      body: bodyAllowed && rawBody ? rawBody : undefined,
-      cache: "no-store",
-      signal: controller.signal
-    });
-  } catch (error) {
-    clearTimeout(timeout);
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      upstreamResponse = await fetch(upstreamUrl, {
+        method,
+        headers: outboundHeaders,
+        body: bodyAllowed && rawBody ? rawBody : undefined,
+        cache: "no-store",
+        signal: controller.signal
+      });
 
-    if (error instanceof DOMException && error.name === "AbortError") {
+      if (upstreamResponse.status !== 502) {
+        break; 
+      }
+      
+      if (attempt < maxRetries) {
+        console.warn(`[Upstream] 502 Bad Gateway from backend. Retrying in ${backoffDelays[attempt]}ms... (Attempt ${attempt + 1}/${maxRetries})`);
+        await new Promise((resolve) => setTimeout(resolve, backoffDelays[attempt]));
+      } else {
+        clearTimeout(timeout);
+        return NextResponse.json(
+          {
+            errorType: "COLD_START",
+            message: "Backend is starting up. Retrying automatically..."
+          },
+          { status: 503 }
+        );
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        clearTimeout(timeout);
+        return NextResponse.json(
+          {
+            errorType: "SLOW_RESPONSE",
+            message: "This report is taking longer than expected to load. Retrying..."
+          },
+          { status: 504 }
+        );
+      }
+
+      const isConnectionRefused = error instanceof Error && (error.message.includes("ECONNREFUSED") || error.message.includes("fetch failed"));
+      
+      if (isConnectionRefused && attempt < maxRetries) {
+        console.warn(`[Upstream] Connection refused/failed. Retrying in ${backoffDelays[attempt]}ms... (Attempt ${attempt + 1}/${maxRetries})`);
+        await new Promise((resolve) => setTimeout(resolve, backoffDelays[attempt]));
+        continue;
+      }
+      
+      clearTimeout(timeout);
+      
+      if (isConnectionRefused && attempt >= maxRetries) {
+        return NextResponse.json(
+          {
+            errorType: "COLD_START",
+            message: "Backend is starting up. Please wait 30 seconds."
+          },
+          { status: 503 }
+        );
+      }
+
       return NextResponse.json(
         {
-          error: `Upstream timeout after ${timeoutMs}ms`
+          errorType: "UNKNOWN",
+          message: "Something went wrong. Please refresh and try again."
         },
-        { status: 504 }
+        { status: 502 }
       );
     }
+  }
 
-    const message =
-      error instanceof Error ? error.message : "Unknown upstream fetch error";
-    return NextResponse.json(
-      {
-        error: `Upstream fetch failed: ${message}`
-      },
-      { status: 502 }
-    );
-  } finally {
-    clearTimeout(timeout);
+  clearTimeout(timeout);
+  if (!upstreamResponse) {
+     return NextResponse.json({ errorType: "UNKNOWN", message: "Failed to fetch from upstream" }, { status: 502 });
+  }
+
+  // Handle downstream classifications based on upstream status
+  const is503 = upstreamResponse.status === 503;
+  const is504 = upstreamResponse.status === 504;
+  const is500 = upstreamResponse.status === 500;
+  
+  if (is503) {
+    return NextResponse.json({ errorType: "OVERLOADED", message: "Backend is busy. Please wait a moment." }, { status: 503 });
+  }
+
+  if (is504) {
+    return NextResponse.json({ errorType: "SLOW_RESPONSE", message: "This report is taking longer than expected to load. Retrying..." }, { status: 504 });
+  }
+
+  if (is500) {
+    const payload = await upstreamResponse.text().catch(() => "");
+    if (payload.includes("timed out")) {
+      return NextResponse.json({ errorType: "GENERATION_TIMEOUT", message: "Report generation timed out. Please try again." }, { status: 500 });
+    }
+    // Re-pack if not timeout
+    return new NextResponse(payload, { status: 500, headers: { "content-type": upstreamResponse.headers.get("content-type") || "text/plain" } });
   }
 
   const payload = await upstreamResponse.arrayBuffer();

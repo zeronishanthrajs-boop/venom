@@ -24,6 +24,40 @@ const app = createApp();
 const server = http.createServer(app);
 const port = process.env.PORT || 5000;
 
+let keepAliveInterval = null;
+
+function startKeepAlive() {
+  const externalUrl = process.env.RENDER_EXTERNAL_URL;
+  if (!externalUrl) {
+    logger.info("KEEPALIVE disabled — RENDER_EXTERNAL_URL not set.");
+    return;
+  }
+
+  const intervalMs = parseInt(process.env.KEEPALIVE_INTERVAL_MS, 10) || 600000;
+  
+  logger.info({ url: externalUrl, intervalMs }, "KEEPALIVE enabled.");
+  
+  keepAliveInterval = setInterval(async () => {
+    try {
+      const pingUrl = `${externalUrl.replace(/\/$/, '')}/health`;
+      const response = await fetch(pingUrl);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      logger.info({ url: pingUrl, status: response.status }, "KEEPALIVE ping successful");
+    } catch (error) {
+      logger.warn({ error: error.message }, "KEEPALIVE ping failed");
+    }
+  }, intervalMs);
+}
+
+function stopKeepAlive() {
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
+  }
+}
+
 async function bootstrap() {
   await connectDB();
   const toolchainStatus = await verifyToolchainAtStartup().catch((error) => {
@@ -41,6 +75,7 @@ async function bootstrap() {
   startResearchJob();
   startMonitoringJob();
   initWebSocketServer(server);
+  startKeepAlive();
   server.listen(port, () => {
     logger.info(
       {
@@ -60,6 +95,7 @@ async function shutdown() {
     stopResearchJob();
     stopMonitoringJob();
     closeWebSocketServer();
+    stopKeepAlive();
     await new Promise((resolve) => {
       server.close(() => resolve());
     });

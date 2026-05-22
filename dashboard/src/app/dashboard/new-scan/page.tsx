@@ -4,8 +4,9 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import Navigation from "@/components/Navigation";
-import { createEngagement } from "@/lib/api";
+import { createEngagement, ApiError } from "@/lib/api";
 import { fetchSession, type VenomSession } from "@/lib/session";
+import ErrorBanner from "@/components/ErrorBanner";
 
 function normalizeTarget(value: string) {
   const trimmed = value.trim();
@@ -22,7 +23,7 @@ export default function NewScanPage() {
   const router = useRouter();
   const [targetUrl, setTargetUrl] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<Error | ApiError | string | null>(null);
 
   const cleanTarget = useMemo(() => normalizeTarget(targetUrl), [targetUrl]);
 
@@ -36,7 +37,7 @@ export default function NewScanPage() {
   }
 
   async function handleStartScan() {
-    setError("");
+    setError(null);
     if (!cleanTarget) {
       setError("Please enter a target URL.");
       return;
@@ -72,11 +73,7 @@ export default function NewScanPage() {
 
       router.push(`/dashboard/report/${engagement._id}`);
     } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Failed to start scan."
-      );
+      setError(requestError instanceof Error ? requestError : "Failed to start scan.");
     } finally {
       setLoading(false);
     }
@@ -124,9 +121,7 @@ export default function NewScanPage() {
             </button>
 
             {error ? (
-              <p className="rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
-                {error}
-              </p>
+              <ErrorBanner error={error} onRetry={handleStartScan} />
             ) : null}
           </div>
 

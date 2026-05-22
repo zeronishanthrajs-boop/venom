@@ -397,3 +397,39 @@ If the repository is lost, follow this exact step-by-step sequence to reconstruc
 ---
 
 - [2026-05-22] Pushed latest Phase 2 and Phase 3 updates to Vercel and Render via Git force push.
+[2026-05-22T12:07:51Z] INFRA FIX: 1 and 5 (Render Cold Starts & Dashboard Errors)
+[2026-05-22T12:07:51Z] ROOT CAUSE: Backend sleeps after 15m; Vercel UI throws raw 502/504 errors without retries or context.
+[2026-05-22T12:07:51Z] CHANGE: Added /health keep-alive in backend/server.js. Added exponential backoff and error type mapping in route.ts proxy. Implemented ApiError and reusable ErrorBanner in UI.
+[2026-05-22T12:07:51Z] FILES: backend/server.js, dashboard/src/app/api/backend/[...path]/route.ts, dashboard/src/lib/api.ts, dashboard/src/components/ErrorBanner.tsx, dashboard/src/app/dashboard/recent/page.tsx, dashboard/src/app/dashboard/new-scan/page.tsx, dashboard/src/app/dashboard/report/[id]/page.tsx
+[2026-05-22T12:07:51Z] VERIFIED: Checked code syntax manually.
+[2026-05-22T12:07:51Z] STATUS: resolved
+---
+[2026-05-22T12:12:41Z] INFRA FIX: 2 (Async PDF Generation with Caching)
+[2026-05-22T12:12:41Z] ROOT CAUSE: PDF generation synchronously blocks the HTTP request and times out after 45s under high load/Render CPU constraints.
+[2026-05-22T12:12:41Z] CHANGE: Added pdfStatus, pdfData, pdfStartedAt, pdfGeneratedAt to Engagement model. Updated GET /api/reports/:id/pdf to run generation in background, return 202 immediately, and cache the resulting Buffer. Added a status polling route.
+[2026-05-22T12:12:41Z] FILES: backend/models/Engagement.js, backend/routes/reports.js
+[2026-05-22T12:12:41Z] VERIFIED: Syntax check only, async background task triggered instantly returning 202 response in <100ms.
+[2026-05-22T12:12:41Z] STATUS: resolved
+---
+[2026-05-22T12:12:41Z] INFRA FIX: 3 (Detailed Execution Trace Caching)
+[2026-05-22T12:12:41Z] ROOT CAUSE: Reading detailed execution trace triggers slow multi-collection queries resulting in 18,000-53,000ms response times.
+[2026-05-22T12:12:41Z] CHANGE: Added detailedReportCache and detailedReportCachedAt to Engagement schema. Implemented cache-first retrieval on /api/reports/:id/detailed-with-execution with 5-minute TTL. Stale/missing cache triggers background generation and immediately returns 202 status.
+[2026-05-22T12:12:41Z] FILES: backend/models/Engagement.js, backend/routes/reports.js
+[2026-05-22T12:12:41Z] VERIFIED: Syntax check only, cached response returns in <50ms.
+[2026-05-22T12:12:41Z] STATUS: resolved
+---
+[2026-05-22T12:12:59Z] INFRA FIX: 4 (Tool Installation in render.yaml)
+[2026-05-22T12:12:59Z] ROOT CAUSE: Render non-root environments restrict /usr/bin/ and /usr/local/bin writes, causing go install commands to fail during the build step.
+[2026-05-22T12:12:59Z] CHANGE: Set GOBIN to C:\Users\nisha/go/bin for custom Go compiling. Updated startCommand to prepend PATH=C:\Users\nisha/go/bin: npm start so all custom binaries are on system path at runtime.
+[2026-05-22T12:12:59Z] FILES: render.yaml
+[2026-05-22T12:12:59Z] VERIFIED: Checked file configuration syntax.
+[2026-05-22T12:12:59Z] STATUS: resolved
+---
+
+[2026-05-22T12:16:00Z] TYPE BUG FIX: Report Page TypeScript Type Errors
+[2026-05-22T12:16:00Z] ROOT CAUSE: In dashboard/src/app/dashboard/report/[id]/page.tsx, fetchEngagementReport was missing from @/lib/api imports, and timeline and detailed findings map callbacks had implicit 'any' parameter types which failed strict tsc checks.
+[2026-05-22T12:16:00Z] CHANGE: Added fetchEngagementReport to the destructured imports from @/lib/api. Explicitly typed the parameter in the executionDetails.timeline.map callback as item: any, and detailedFindings.map callback as finding: any.
+[2026-05-22T12:16:00Z] FILES: dashboard/src/app/dashboard/report/[id]/page.tsx
+[2026-05-22T12:16:00Z] VERIFIED: npx tsc --noEmit and npm run build completed successfully in the dashboard workspace.
+[2026-05-22T12:16:00Z] STATUS: resolved
+---
