@@ -1,4 +1,4 @@
-﻿const Engagement = require("../models/Engagement");
+const Engagement = require("../models/Engagement");
 const ExecutionJob = require("../models/ExecutionJob");
 const executionLoggerService = require("./executionLoggerService");
 const complianceMapperService = require("./complianceMapperService");
@@ -204,7 +204,7 @@ function deriveRiskRating(findings = []) {
 
 function deriveDensityLabel(rawDeduction = 0) {
   if (rawDeduction >= 200) {
-    return "CRITICAL FINDING DENSITY - IMMEDIATE ACTION REQUIRED";
+    return "CRITICAL FINDING DENSITY — IMMEDIATE ACTION REQUIRED";
   }
   if (rawDeduction >= 100) {
     return "HIGH FINDING DENSITY";

@@ -73,8 +73,7 @@ const executionJobSchema = new mongoose.Schema(
           },
           confidence: {
             type: String,
-            enum: ["CONFIRMED", "STRONG_SIGNAL", "WEAK_SIGNAL", "INFORMATIONAL"],
-            default: "WEAK_SIGNAL"
+            enum: ["CONFIRMED", "STRONG_SIGNAL", "WEAK_SIGNAL", "INFORMATIONAL"]
           },
           manualValidationRequired: {
             type: Boolean,
