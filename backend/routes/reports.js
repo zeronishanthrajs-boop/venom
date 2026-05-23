@@ -12,6 +12,48 @@ const reportGeneratorService = require("../services/reportGeneratorService");
 const complianceMapperService = require("../services/complianceMapperService");
 
 const router = express.Router();
+const REPORT_MODES = new Set(["developer", "manager"]);
+
+function normalizeReportMode(value) {
+  const normalized = String(value || "developer").trim().toLowerCase();
+  return REPORT_MODES.has(normalized) ? normalized : "developer";
+}
+
+function toPdfBuffer(pdfData) {
+  if (!pdfData) {
+    return null;
+  }
+
+  if (Buffer.isBuffer(pdfData)) {
+    return pdfData;
+  }
+
+  if (pdfData instanceof Uint8Array) {
+    return Buffer.from(pdfData);
+  }
+
+  if (typeof pdfData === "object") {
+    // Lean queries can return BSON Binary instead of Node Buffer.
+    if (pdfData._bsontype === "Binary" && pdfData.buffer) {
+      const binaryBytes = Buffer.from(pdfData.buffer);
+      const rawPosition = Number(pdfData.position);
+      const byteLength = Number.isFinite(rawPosition)
+        ? Math.max(0, Math.min(rawPosition, binaryBytes.length))
+        : binaryBytes.length;
+      return binaryBytes.subarray(0, byteLength);
+    }
+
+    // Defensive support for serialized buffer-like payloads.
+    if (pdfData.type === "Buffer" && Array.isArray(pdfData.data)) {
+      return Buffer.from(pdfData.data);
+    }
+    if (Array.isArray(pdfData.data)) {
+      return Buffer.from(pdfData.data);
+    }
+  }
+
+  return null;
+}
 
 async function resolveComplianceSection(engagementId, reportFindings = []) {
   const engagement = await Engagement.findById(engagementId).lean();
@@ -25,7 +67,7 @@ async function resolveComplianceSection(engagementId, reportFindings = []) {
 router.get("/:engagementId/pdf", requireDb, async (req, res) => {
   try {
     const { engagementId } = req.params;
-    const mode = req.query.mode || "developer";
+    const mode = normalizeReportMode(req.query.mode);
     const forceRegen = req.query.refresh === "1";
 
     logger.info({ engagementId, mode, forceRegen }, "PDF route invoked");
@@ -49,11 +91,23 @@ router.get("/:engagementId/pdf", requireDb, async (req, res) => {
       && !forceRegen;
 
     if (cacheValid) {
-      const filename = `VENOM-${mode.toUpperCase()}-Report-${engagementId}.pdf`;
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-      res.setHeader("Content-Length", engagement.pdfData.length);
-      return res.status(200).send(engagement.pdfData);
+      const pdfBuffer = toPdfBuffer(engagement.pdfData);
+      if (!pdfBuffer || pdfBuffer.length === 0) {
+        logger.warn(
+          { engagementId, mode, pdfType: engagement.pdfData?.constructor?.name || typeof engagement.pdfData },
+          "Cached PDF payload is unreadable; falling back to regeneration"
+        );
+        await Engagement.findByIdAndUpdate(engagementId, {
+          pdfStatus: "failed",
+          pdfError: "Cached PDF payload was unreadable."
+        }).catch(() => {});
+      } else {
+        const filename = `VENOM-${mode.toUpperCase()}-Report-${engagementId}.pdf`;
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader("Content-Length", String(pdfBuffer.length));
+        return res.status(200).send(pdfBuffer);
+      }
     }
 
     // If already generating, return 202 with poll hint

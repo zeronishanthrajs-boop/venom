@@ -26,6 +26,12 @@ function authHeaders() {
   };
 }
 
+function parseBinaryResponse(res, callback) {
+  const chunks = [];
+  res.on("data", (chunk) => chunks.push(chunk));
+  res.on("end", () => callback(null, Buffer.concat(chunks)));
+}
+
 function buildEngagementPayload(name = "Report Generation Test") {
   return {
     name,
@@ -226,6 +232,31 @@ test("GET /api/reports/:engagementId/hardened returns structured report", async 
   assert.ok(Array.isArray(response.body.findings));
   assert.ok(response.body.findings[0].what);
   assert.ok(response.body.findings[0].fix);
+});
+
+test("GET /api/reports/:engagementId/pdf serves cached binary data from lean BSON Binary", async () => {
+  const engagement = await Engagement.create(buildEngagementPayload("Cached PDF route"));
+  const pdfBytes = Buffer.from("%PDF-1.4\n%VENOM\n", "utf8");
+
+  await Engagement.findByIdAndUpdate(engagement._id, {
+    pdfStatus: "ready",
+    pdfMode: "developer",
+    pdfGeneratedAt: new Date(),
+    pdfError: null,
+    pdfData: pdfBytes
+  });
+
+  const response = await request(app)
+    .get(`/api/reports/${engagement._id}/pdf`)
+    .set(authHeaders())
+    .buffer(true)
+    .parse(parseBinaryResponse);
+
+  assert.equal(response.status, 200);
+  assert.ok(String(response.headers["content-type"] || "").includes("application/pdf"));
+  assert.equal(response.headers["content-length"], String(pdfBytes.length));
+  assert.ok(Buffer.isBuffer(response.body));
+  assert.deepEqual(response.body, pdfBytes);
 });
 
 test("generateDetailedReport includes execution summary and trace details", async () => {
