@@ -168,6 +168,7 @@ router.get("/:engagementId/pdf", requireDb, async (req, res) => {
       issue: issueCode,
       stage: "pdf-route-handler",
       error: "PDF generation failed",
+      message: error?.message || "Unknown PDF error",
       reason: error?.message || "Unknown PDF error",
       fallback: `/api/reports/${req.params.engagementId}/md`
     });

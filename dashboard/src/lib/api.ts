@@ -840,7 +840,7 @@ function throwApiError(response: Response, payload: unknown): never {
       ? ((payload as { suggestion: string }).suggestion || "").trim()
       : "";
 
-  const primaryMessage = payloadError || payloadReason;
+  const primaryMessage = payloadReason || payloadError;
   const normalizedPrimary = primaryMessage.toLowerCase();
   const isReadinessHintRelevant =
     normalizedPrimary.includes("database is not connected") ||
