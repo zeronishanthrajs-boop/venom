@@ -144,10 +144,16 @@ router.get("/:engagementId/pdf", requireDb, async (req, res) => {
       pollUrl: `/api/reports/${engagementId}/pdf/status`
     });
   } catch (error) {
+    const issueCode = String(error?.message || "").startsWith("ISSUE-REPORT")
+      ? String(error.message).split(":")[0]
+      : "ISSUE-REPORT-PDF-ROUTE";
+
     logger.error(
       {
         engagementId: req.params.engagementId,
         mode: req.query.mode || "developer",
+        routeStage: "pdf-route-handler",
+        issue: issueCode,
         error: error?.message || String(error),
         stack: error?.stack || "",
         query: req.query
@@ -159,9 +165,8 @@ router.get("/:engagementId/pdf", requireDb, async (req, res) => {
     }
     return res.status(500).json({
       errorType: "PDF_ROUTE_ERROR",
-      issue: String(error?.message || "").startsWith("ISSUE-REPORT")
-        ? String(error.message).split(":")[0]
-        : "PDF_ROUTE_FATAL",
+      issue: issueCode,
+      stage: "pdf-route-handler",
       error: "PDF generation failed",
       reason: error?.message || "Unknown PDF error",
       fallback: `/api/reports/${req.params.engagementId}/md`

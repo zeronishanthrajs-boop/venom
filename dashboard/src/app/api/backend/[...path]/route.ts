@@ -215,12 +215,26 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
   }
 
   if (is500) {
-    const payload = await upstreamResponse.text().catch(() => "");
-    if (payload.includes("timed out")) {
-      return NextResponse.json({ errorType: "GENERATION_TIMEOUT", message: "Report generation timed out. Please try again." }, { status: 500 });
+    const payloadText = await upstreamResponse.text().catch(() => "");
+    const contentType = upstreamResponse.headers.get("content-type") || "";
+    if (payloadText.includes("timed out")) {
+      return NextResponse.json(
+        { errorType: "GENERATION_TIMEOUT", message: "Report generation timed out. Please try again." },
+        { status: 500 }
+      );
     }
-    // Re-pack if not timeout
-    return new NextResponse(payload, { status: 500, headers: { "content-type": upstreamResponse.headers.get("content-type") || "text/plain" } });
+
+    if (contentType.includes("application/json")) {
+      return new NextResponse(payloadText, {
+        status: 500,
+        headers: { "content-type": "application/json" }
+      });
+    }
+
+    return new NextResponse(payloadText, {
+      status: 500,
+      headers: { "content-type": contentType || "text/plain" }
+    });
   }
 
   const payload = await upstreamResponse.arrayBuffer();

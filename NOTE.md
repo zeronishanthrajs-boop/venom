@@ -241,18 +241,13 @@ In the event of a total repository or environment loss, this ledger acts as the 
     3.  **Integration Testing (`backend/tests/integration/securityTrends.test.js`)**:
         *   Asserts correct category mapping, weighted scoring rules, date-sorting behavior, and the AI Risk calculation boundaries.
 
----
+### Current Patch: 2026-05-23 — PDF generation diagnostics and dashboard backend bridge
+*   **Backend PDF diagnostics** (`backend/routes/reports.js`): enhanced `/api/reports/:engagementId/pdf` error responses with `errorType`, `issue`, `stage`, `reason`, and `fallback` metadata for clearer failure triage.
+*   **PDF generation issue markers** (`backend/services/reportGenerator.js`): preserved explicit `ISSUE-REPORT-PDF-*` error markers during HTML render, Chromium path resolution, browser launch, PDF generation, and timeout failure stages.
+*   **Production auth visibility** (`backend/middleware/auth.js`): added `AUTH_MISCONFIGURED` response details and an explicit `ISSUE-BACKEND-AUTH-MISCONFIGURED` marker when `VENOM_API_KEY` is missing in production.
+*   **Error handler transparency** (`backend/middleware/errorHandler.js`): now preserves known issue messages in production for `ISSUE-REPORT*`, `ISSUE-BACKEND*`, and PDF/auth diagnostics instead of sanitizing them away.
+*   **Dashboard bridge pass-through** (`dashboard/src/app/api/backend/[...path]/route.ts`): forwards upstream backend JSON 500 payloads and content-types cleanly so UI consumers can surface the real backend failure reason.
 
-## 2. Directory & Component Blueprint
-
-### Database Schemas (`backend/models/*`)
-*   `Engagement.js`: Manages engagement lifecycle state. Extended with `complianceReport` schema object.
-*   `ExecutionJob.js`: Captures runtime job states and persists primary findings.
-*   `ExecutionLog.js`: Immutable collection logging granular test execution traces and parameters.
-
-### Core Business Services (`backend/services/*`)
-*   `secretsDetectionService.js`: Implements secret-matching regex patterns and remediation content.
-*   `supplyChainService.js`: Parses manifests and evaluates outdated dependencies against vulnerability rules.
 *   `cloudMisconfigService.js`: Inspects S3, IAM, and Security Group configurations.
 *   `reportGeneratorService.js`: Compiles the cybersecurity executive summaries and detailed logs.
 *   `executionLoggerService.js`: Persists and retrieves immutable execution logs.

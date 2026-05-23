@@ -53,7 +53,10 @@ module.exports = function authMiddleware(req, res, next) {
   if (process.env.NODE_ENV === "production" && !configuredApiKey) {
     logger.error("Authentication misconfigured: VENOM_API_KEY missing in production");
     return res.status(500).json({
-      error: "Server auth misconfigured"
+      errorType: "AUTH_MISCONFIGURED",
+      issue: "ISSUE-BACKEND-AUTH-MISCONFIGURED",
+      error: "Server auth misconfigured",
+      reason: "VENOM_API_KEY is required in production and is not configured."
     });
   }
 

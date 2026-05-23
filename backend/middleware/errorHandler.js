@@ -8,10 +8,19 @@ const SAFE_ERROR_MESSAGES = {
 };
 
 function sanitizeError(error) {
+  const rawMessage = error?.message || "Internal server error";
+  const isKnownIssue =
+    typeof rawMessage === "string" &&
+    (rawMessage.startsWith("ISSUE-REPORT") || rawMessage.startsWith("ISSUE-BACKEND") ||
+      rawMessage.includes("PDF generation") || rawMessage.includes("Server auth misconfigured"));
+
   if (process.env.NODE_ENV === "production") {
+    if (isKnownIssue) {
+      return rawMessage;
+    }
     return SAFE_ERROR_MESSAGES[error?.constructor?.name] || "Internal server error";
   }
-  return error?.message || "Internal server error";
+  return rawMessage;
 }
 
 module.exports = function errorHandler(error, _req, res, _next) {
