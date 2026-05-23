@@ -247,6 +247,7 @@ In the event of a total repository or environment loss, this ledger acts as the 
 *   **Production auth visibility** (`backend/middleware/auth.js`): added `AUTH_MISCONFIGURED` response details and an explicit `ISSUE-BACKEND-AUTH-MISCONFIGURED` marker when `VENOM_API_KEY` is missing in production.
 *   **Error handler transparency** (`backend/middleware/errorHandler.js`): now preserves known issue messages in production for `ISSUE-REPORT*`, `ISSUE-BACKEND*`, and PDF/auth diagnostics instead of sanitizing them away.
 *   **Dashboard bridge pass-through** (`dashboard/src/app/api/backend/[...path]/route.ts`): forwards upstream backend JSON 500 payloads and content-types cleanly so UI consumers can surface the real backend failure reason.
+*   **Dashboard proxy header hardening** (`dashboard/src/app/api/backend/[...path]/route.ts`): sanitizes forwarded header values for `content-type`, `x-user-id`, and `x-user-role` to prevent invalid character header failures.
 *   **Dashboard UI error prioritization** (`dashboard/src/lib/api.ts`): now prefers backend `reason` payloads over generic `error` when displaying failures, ensuring issue-level diagnostics are visible.
 *   **Backend PDF route message payload** (`backend/routes/reports.js`): includes explicit `message` alongside `reason` to support frontend diagnostics and reduce generic masking.
 

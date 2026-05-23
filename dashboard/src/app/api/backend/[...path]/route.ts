@@ -23,6 +23,17 @@ type RouteContext = {
   params: Promise<{ path: string[] }>;
 };
 
+function sanitizeHeaderValue(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  if (/[^\x20-\x7E]/.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
 function getBackendBaseUrl() {
   const configured =
     process.env.VENOM_BACKEND_BASE_URL?.trim() ||
@@ -109,13 +120,26 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
 
   const outboundHeaders = new Headers();
   outboundHeaders.set("x-api-key", backendApiKey);
-  outboundHeaders.set("x-user-id", session.email);
-  outboundHeaders.set("x-user-role", session.role);
 
-  const incomingContentType = request.headers.get("content-type");
+  const incomingContentType = sanitizeHeaderValue(request.headers.get("content-type"));
   if (incomingContentType) {
     outboundHeaders.set("content-type", incomingContentType);
   }
+
+  const safeUserId = sanitizeHeaderValue(session.email);
+  const safeUserRole = sanitizeHeaderValue(session.role);
+  if (!safeUserId || !safeUserRole) {
+    return NextResponse.json(
+      {
+        errorType: "INVALID_HEADER_VALUE",
+        message: "Invalid header value detected in proxy session data."
+      },
+      { status: 500 }
+    );
+  }
+
+  outboundHeaders.set("x-user-id", safeUserId);
+  outboundHeaders.set("x-user-role", safeUserRole);
 
   const method = request.method.toUpperCase();
   const bodyAllowed = !["GET", "HEAD"].includes(method);
@@ -231,15 +255,17 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
       });
     }
 
+    const safeErrorContentType = sanitizeHeaderValue(contentType) || "text/plain";
     return new NextResponse(payloadText, {
       status: 500,
-      headers: { "content-type": contentType || "text/plain" }
+      headers: { "content-type": safeErrorContentType }
     });
+
   }
 
   const payload = await upstreamResponse.arrayBuffer();
   const responseHeaders = new Headers();
-  const contentType = upstreamResponse.headers.get("content-type");
+  const contentType = sanitizeHeaderValue(upstreamResponse.headers.get("content-type"));
   if (contentType) {
     responseHeaders.set("content-type", contentType);
   }
@@ -294,3 +320,4 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204 });
 }
+
