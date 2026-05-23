@@ -1,10 +1,11 @@
 const crypto = require("node:crypto");
-const { WebSocketServer } = require("ws");
+const { WebSocket, WebSocketServer } = require("ws");
 const { logger } = require("../config/logger");
 
 const roomMap = new Map();
 const socketMeta = new WeakMap();
 let wss = null;
+let heartbeatTimer = null;
 
 function getRealtimeSecret() {
   return (
@@ -21,6 +22,17 @@ function getTokenTtlMs() {
   );
   if (!Number.isFinite(parsed) || parsed < 60000) {
     return 600000;
+  }
+  return parsed;
+}
+
+function getHeartbeatIntervalMs() {
+  const parsed = Number.parseInt(
+    String(process.env.VENOM_REALTIME_HEARTBEAT_MS || "30000"),
+    10
+  );
+  if (!Number.isFinite(parsed) || parsed < 10000) {
+    return 30000;
   }
   return parsed;
 }
@@ -115,6 +127,12 @@ function removeSocketFromRoom(engagementId, socket) {
   }
 }
 
+function cleanupSocket(socket) {
+  const currentMeta = socketMeta.get(socket);
+  removeSocketFromRoom(currentMeta?.engagementId || "global", socket);
+  socketMeta.delete(socket);
+}
+
 function broadcastToRoom(engagementId, event, data) {
   const key = String(engagementId || "global");
   const room = roomMap.get(key);
@@ -129,7 +147,7 @@ function broadcastToRoom(engagementId, event, data) {
   });
 
   for (const socket of room) {
-    if (socket.readyState === 1) {
+    if (socket.readyState === WebSocket.OPEN) {
       socket.send(message);
     }
   }
@@ -145,7 +163,7 @@ function broadcastToAll(event, data) {
     timestamp: new Date().toISOString()
   });
   for (const socket of wss.clients) {
-    if (socket.readyState === 1) {
+    if (socket.readyState === WebSocket.OPEN) {
       socket.send(message);
     }
   }
@@ -194,6 +212,32 @@ function initWebSocketServer(server) {
     }
   });
 
+  heartbeatTimer = setInterval(() => {
+    if (!wss) {
+      return;
+    }
+    for (const socket of wss.clients) {
+      if (socket.isAlive === false) {
+        cleanupSocket(socket);
+        try {
+          socket.terminate();
+        } catch {
+          // no-op
+        }
+        continue;
+      }
+      socket.isAlive = false;
+      try {
+        socket.ping();
+      } catch {
+        // no-op
+      }
+    }
+  }, getHeartbeatIntervalMs());
+  if (typeof heartbeatTimer.unref === "function") {
+    heartbeatTimer.unref();
+  }
+
   wss.on("connection", (socket, req) => {
     const requestUrl = new URL(req.url, "http://localhost");
     const token = requestUrl.searchParams.get("token");
@@ -225,7 +269,11 @@ function initWebSocketServer(server) {
       role: verification.payload.role,
       engagementId: engagementId || null
     };
+    socket.isAlive = true;
     socketMeta.set(socket, meta);
+    socket.on("pong", () => {
+      socket.isAlive = true;
+    });
 
     if (engagementId) {
       addSocketToRoom(engagementId, socket);
@@ -246,10 +294,15 @@ function initWebSocketServer(server) {
     );
 
     socket.on("close", () => {
-      const currentMeta = socketMeta.get(socket);
-      removeSocketFromRoom(currentMeta?.engagementId || "global", socket);
-      socketMeta.delete(socket);
+      cleanupSocket(socket);
     });
+  });
+
+  wss.on("close", () => {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
   });
 
   logger.info({ path: "/ws" }, "Realtime WebSocket server initialized");
@@ -259,6 +312,10 @@ function initWebSocketServer(server) {
 function closeWebSocketServer() {
   if (!wss) {
     return;
+  }
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
   }
   for (const socket of wss.clients) {
     try {
@@ -285,6 +342,7 @@ module.exports = {
   broadcastResearchUpdate,
   __internal: {
     signPayload,
-    getTokenTtlMs
+    getTokenTtlMs,
+    getHeartbeatIntervalMs
   }
 };

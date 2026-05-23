@@ -8,6 +8,7 @@ const { notifyCriticalFindings } = require("./notifier");
 const { broadcastToolResult, broadcastFinding } = require("./realtimeServer");
 const { translateAllFindings } = require("./translator");
 const { assertExecutionAllowed } = require("./trustControl");
+const { withMemoryHeavyTaskLock } = require("../utils/memoryHeavyTaskGate");
 const { logger } = require("../config/logger");
 const {
   classifyError,
@@ -104,6 +105,18 @@ function getToolTimeoutWithBufferMs(tool) {
     toInteger(process.env.TOOL_TIMEOUT_BUFFER_MS, 15000)
   );
   return baseTimeoutMs + timeoutBufferMs;
+}
+
+const MEMORY_INTENSIVE_TOOL_IDS = new Set([
+  "nmap_tcp_scan",
+  "nuclei_scan",
+  "nikto_scan",
+  "sqlmap_detect",
+  "zap_baseline_passive"
+]);
+
+function isMemoryIntensiveTool(toolId) {
+  return MEMORY_INTENSIVE_TOOL_IDS.has(String(toolId || ""));
 }
 
 function runToolWithHardTimeout(toolId, targetUrl, timeoutMs) {
@@ -203,9 +216,11 @@ async function executeEngagementTool({
 
   try {
     const toolTimeoutMs = getToolTimeoutWithBufferMs(tool);
-    const output = toCamelCaseDeep(
-      await runToolWithHardTimeout(toolId, targetUrl, toolTimeoutMs)
-    );
+    const executeTool = async () =>
+      toCamelCaseDeep(await runToolWithHardTimeout(toolId, targetUrl, toolTimeoutMs));
+    const output = isMemoryIntensiveTool(toolId)
+      ? await withMemoryHeavyTaskLock(toolId, executeTool)
+      : await executeTool();
     if (output?.status === "NOT_APPLICABLE") {
       job.status = "not_applicable";
     } else if (output?.status === "TOOL_NOT_INSTALLED") {

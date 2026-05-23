@@ -97,7 +97,10 @@ async function getMongoClient() {
       maxPoolSize: 10,
       minPoolSize: 1
     });
-    globalThis.__venomDashboardMongoPromise = client.connect();
+    globalThis.__venomDashboardMongoPromise = client.connect().catch((error) => {
+      globalThis.__venomDashboardMongoPromise = undefined;
+      throw error;
+    });
   }
   return globalThis.__venomDashboardMongoPromise;
 }

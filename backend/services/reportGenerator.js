@@ -14,6 +14,7 @@ const { deduplicateFindings } = require("../utils/deduplicateFindings");
 const { callGeminiText } = require("./geminiClient");
 const reportGeneratorService = require("./reportGeneratorService");
 const { deriveConfidenceLevel, needsManualValidation } = require("../utils/confidenceModel");
+const { withMemoryHeavyTaskLock } = require("../utils/memoryHeavyTaskGate");
 const { logger } = require("../config/logger");
 
 const TEMPLATE_PATH = path.join(__dirname, "../templates/report.html");
@@ -892,7 +893,7 @@ async function renderPdfFromTemplate(templateData) {
     issueStage = "prepare-pdf-generation";
 
     const PDF_TIMEOUT_MS = 180000;
-    const pdfPromise = (async () => {
+    const pdfPromise = withMemoryHeavyTaskLock("report_pdf_generation", async () => {
       let browser;
       try {
         issueStage = "resolve-chromium-path";
@@ -976,7 +977,7 @@ async function renderPdfFromTemplate(templateData) {
           await browser.close().catch(() => {});
         }
       }
-    })();
+    });
 
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(

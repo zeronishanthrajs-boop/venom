@@ -58,3 +58,16 @@ test("verifyRealtimeToken rejects expired token", () => {
   assert.equal(result.valid, false);
   assert.equal(result.reason, "expired");
 });
+
+test("heartbeat interval enforces safe minimum", () => {
+  const previous = process.env.VENOM_REALTIME_HEARTBEAT_MS;
+  process.env.VENOM_REALTIME_HEARTBEAT_MS = "1000";
+  assert.equal(__internal.getHeartbeatIntervalMs(), 30000);
+  process.env.VENOM_REALTIME_HEARTBEAT_MS = "45000";
+  assert.equal(__internal.getHeartbeatIntervalMs(), 45000);
+  if (previous === undefined) {
+    delete process.env.VENOM_REALTIME_HEARTBEAT_MS;
+  } else {
+    process.env.VENOM_REALTIME_HEARTBEAT_MS = previous;
+  }
+});

@@ -2,7 +2,7 @@ services:
   - type: web
     name: venom-backend
     env: node
-    plan: free
+    plan: starter
     rootDir: backend
     buildCommand: >-
       bash -lc "set -euo pipefail;
@@ -61,7 +61,9 @@ services:
       - key: GEMINI_CHAIN_ENABLED
         value: "true"
       - key: MAX_CONCURRENT_TARGETS
-        value: "3"
+        value: "1"
+      - key: MAX_CONCURRENT_MEMORY_HEAVY_TASKS
+        value: "1"
       - key: ENABLE_PROMPT_EVOLUTION_JOB
         value: "false"
       - key: PROMPT_EVOLUTION_CRON
@@ -98,6 +100,12 @@ services:
         value: "20000"
       - key: NVD_NO_KEY_DELAY_MS
         value: "6000"
+      - key: NVD_MAX_ATTEMPTS
+        value: "4"
+      - key: NVD_KEYED_DELAY_MS
+        value: "700"
+      - key: NVD_MAX_BACKOFF_MS
+        value: "60000"
       - key: NVD_API_KEY
         sync: false
       - key: ENABLE_DOCKER_TOOLS
@@ -138,6 +146,8 @@ services:
         sync: false
       - key: VENOM_REALTIME_TOKEN_TTL_MS
         value: "600000"
+      - key: VENOM_REALTIME_HEARTBEAT_MS
+        value: "30000"
       - key: DEFAULT_STARTUP_PROFILE
         value: "true"
       - key: TRANSLATE_FINDINGS_ON_COMPLETE

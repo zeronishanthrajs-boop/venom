@@ -36,6 +36,92 @@ const TARGET_TYPE_MAP = {
   cloud: "network"
 };
 
+let nextNvdRequestAtMs = 0;
+
+function sleep(ms) {
+  const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+  return new Promise((resolve) => setTimeout(resolve, safeMs));
+}
+
+function toInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getNvdApiKey() {
+  return String(process.env.NVD_API_KEY || "").trim();
+}
+
+function getNvdNoKeyDelayMs() {
+  return Math.max(toInteger(process.env.NVD_NO_KEY_DELAY_MS, 6000), 1000);
+}
+
+function getNvdMaxAttempts() {
+  return Math.max(toInteger(process.env.NVD_MAX_ATTEMPTS, 4), 1);
+}
+
+function parseRetryAfterMs(value) {
+  if (value === undefined || value === null) {
+    return 0;
+  }
+  const asNumber = Number.parseInt(String(value).trim(), 10);
+  if (Number.isFinite(asNumber) && asNumber > 0) {
+    return asNumber * 1000;
+  }
+  const asDateMs = Date.parse(String(value));
+  if (Number.isFinite(asDateMs) && asDateMs > Date.now()) {
+    return asDateMs - Date.now();
+  }
+  return 0;
+}
+
+function shouldRetryNvdStatus(statusCode) {
+  return [403, 429, 500, 502, 503, 504].includes(Number(statusCode || 0));
+}
+
+function getNvdMinRequestGapMs(hasApiKey) {
+  if (hasApiKey) {
+    return Math.max(toInteger(process.env.NVD_KEYED_DELAY_MS, 700), 200);
+  }
+  return getNvdNoKeyDelayMs();
+}
+
+async function throttleNvdRequests(hasApiKey) {
+  const minGapMs = getNvdMinRequestGapMs(hasApiKey);
+  const nowMs = Date.now();
+  const scheduledAtMs = Math.max(nowMs, nextNvdRequestAtMs);
+  nextNvdRequestAtMs = scheduledAtMs + minGapMs;
+  const waitMs = scheduledAtMs - nowMs;
+  if (waitMs > 0) {
+    await sleep(waitMs);
+  }
+}
+
+function computeNvdBackoffMs({ attempt, retryAfterMs, hasApiKey }) {
+  const attemptNumber = Math.max(Number(attempt || 1), 1);
+  const baseDelayMs = hasApiKey
+    ? Math.max(toInteger(process.env.NVD_BACKOFF_BASE_KEYED_MS, 750), 250)
+    : getNvdNoKeyDelayMs();
+  const exponentialDelayMs = Math.min(
+    baseDelayMs * 2 ** (attemptNumber - 1),
+    Math.max(toInteger(process.env.NVD_MAX_BACKOFF_MS, 60000), baseDelayMs)
+  );
+  if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    return Math.max(retryAfterMs, exponentialDelayMs);
+  }
+  return exponentialDelayMs;
+}
+
+function getNvdRequestHeaders(baseHeaders = {}) {
+  const apiKey = getNvdApiKey();
+  return apiKey
+    ? {
+        ...baseHeaders,
+        apiKey
+      }
+    : { ...baseHeaders };
+}
+
 function normalizeText(value, max = 280) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   if (!text) {
@@ -187,18 +273,18 @@ function mapNvdToPatternCandidate(entry) {
   };
 }
 
-async function safeFetch(source) {
-  try {
-    const baseConfig = {
-      timeout: 20000,
-      headers: { "User-Agent": "VENOM-ResearchEngine/3.0" }
-    };
+async function fetchNvdFeed(source, baseConfig) {
+  const yesterday = new Date(Date.now() - 86400000).toISOString();
+  const today = new Date().toISOString();
+  const maxAttempts = getNvdMaxAttempts();
+  const hasApiKey = Boolean(getNvdApiKey());
 
-    if (source.type === "nvd") {
-      const yesterday = new Date(Date.now() - 86400000).toISOString();
-      const today = new Date().toISOString();
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await throttleNvdRequests(hasApiKey);
       const response = await axios.get(source.url, {
         ...baseConfig,
+        headers: getNvdRequestHeaders(baseConfig.headers),
         params: {
           pubStartDate: yesterday,
           pubEndDate: today,
@@ -208,6 +294,44 @@ async function safeFetch(source) {
       return Array.isArray(response.data?.vulnerabilities)
         ? response.data.vulnerabilities.slice(0, 10)
         : [];
+    } catch (error) {
+      const statusCode = Number(error?.response?.status || 0);
+      if (attempt >= maxAttempts || !shouldRetryNvdStatus(statusCode)) {
+        throw error;
+      }
+      const retryAfterMs = parseRetryAfterMs(error?.response?.headers?.["retry-after"]);
+      const backoffMs = computeNvdBackoffMs({
+        attempt,
+        retryAfterMs,
+        hasApiKey
+      });
+      logger.warn(
+        {
+          source: source.name,
+          statusCode,
+          attempt,
+          maxAttempts,
+          backoffMs
+        },
+        "NVD request failed, retrying with backoff"
+      );
+      // eslint-disable-next-line no-await-in-loop
+      await sleep(backoffMs);
+    }
+  }
+
+  return [];
+}
+
+async function safeFetch(source) {
+  try {
+    const baseConfig = {
+      timeout: 20000,
+      headers: { "User-Agent": "VENOM-ResearchEngine/3.0" }
+    };
+
+    if (source.type === "nvd") {
+      return await fetchNvdFeed(source, baseConfig);
     }
 
     if (source.type === "cisa") {
@@ -583,6 +707,13 @@ module.exports = {
     inferTargetType,
     buildAssessmentSequence,
     mapCisaKevToPatternCandidate,
-    mapGithubAdvisoryToPatternCandidate
+    mapGithubAdvisoryToPatternCandidate,
+    mapNvdToPatternCandidate,
+    parseRetryAfterMs,
+    shouldRetryNvdStatus,
+    computeNvdBackoffMs,
+    getNvdRequestHeaders,
+    fetchNvdFeed,
+    safeFetch
   }
 };

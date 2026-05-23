@@ -139,29 +139,95 @@ function normalizeIp(value: string) {
   return normalized.trim();
 }
 
-function toIpBucket(value: string) {
+function toBoundedInteger(value: string | undefined, fallback: number, min: number, max: number) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function getIpv4BucketOctets() {
+  return toBoundedInteger(
+    process.env.VENOM_DASHBOARD_IPV4_BUCKET_OCTETS,
+    2,
+    1,
+    4
+  );
+}
+
+function getIpv6BucketSegments() {
+  return toBoundedInteger(
+    process.env.VENOM_DASHBOARD_IPV6_BUCKET_SEGMENTS,
+    3,
+    1,
+    8
+  );
+}
+
+function toIpv4Bucket(ip: string, octets: number) {
+  const parts = ip.split(".");
+  if (parts.length !== 4) {
+    return ip;
+  }
+  if (octets >= 4) {
+    return parts.join(".");
+  }
+  return `${parts.slice(0, octets).join(".")}.*`;
+}
+
+function toIpv6Bucket(ip: string, segments: number) {
+  const parts = ip.split(":").filter(Boolean);
+  if (parts.length === 0) {
+    return ip;
+  }
+  const boundedSegments = Math.min(Math.max(segments, 1), parts.length);
+  if (boundedSegments >= parts.length) {
+    return parts.join(":");
+  }
+  return `${parts.slice(0, boundedSegments).join(":")}:*`;
+}
+
+function uniqueBuckets(values: string[]) {
+  const buckets = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const normalized = String(value || "").trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    buckets.push(normalized);
+  }
+  return buckets;
+}
+
+function buildIpBucketCandidates(value: string) {
   const ip = normalizeIp(value);
   if (!ip) {
-    return "";
+    return [];
   }
 
   if (ip.includes(".")) {
-    const parts = ip.split(".");
-    if (parts.length !== 4) {
-      return ip;
-    }
-    return `${parts[0]}.${parts[1]}.${parts[2]}.*`;
+    const preferred = toIpv4Bucket(ip, getIpv4BucketOctets());
+    // Keep legacy /24 compatibility for pre-existing sessions.
+    const legacy = toIpv4Bucket(ip, 3);
+    return uniqueBuckets([preferred, legacy]);
   }
 
   if (ip.includes(":")) {
-    const parts = ip.split(":").filter(Boolean);
-    if (parts.length <= 4) {
-      return `${parts.join(":")}:*`;
-    }
-    return `${parts.slice(0, 4).join(":")}:*`;
+    const preferred = toIpv6Bucket(ip, getIpv6BucketSegments());
+    // Keep legacy /64 compatibility for pre-existing sessions.
+    const legacy = toIpv6Bucket(ip, 4);
+    return uniqueBuckets([preferred, legacy]);
   }
 
-  return ip;
+  return [ip];
+}
+
+function toIpBucket(value: string) {
+  const candidates = buildIpBucketCandidates(value);
+  return candidates[0] || "";
 }
 
 function normalizeUserAgent(value: string) {
@@ -182,16 +248,24 @@ function buildContextBinding(context: AuthRequestContext) {
   };
 }
 
+function matchesContextIpHash(expectedHash: string, contextIp: string | null) {
+  if (!enforceIpBinding()) {
+    return false;
+  }
+  const candidates = buildIpBucketCandidates(contextIp || "");
+  if (candidates.length === 0) {
+    return false;
+  }
+  return candidates.some((bucket) => safeCompare(expectedHash, hashValue(bucket)));
+}
+
 function verifyContextBinding(payload: AuthTokenPayload, context: AuthRequestContext) {
   const binding = buildContextBinding(context);
   if (!safeCompare(payload.uaHash, binding.uaHash)) {
     return false;
   }
   if (payload.ipHash) {
-    if (!binding.ipHash) {
-      return false;
-    }
-    if (!safeCompare(payload.ipHash, binding.ipHash)) {
+    if (!matchesContextIpHash(payload.ipHash, context.ip)) {
       return false;
     }
   }

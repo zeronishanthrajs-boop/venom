@@ -283,7 +283,7 @@ test("refresh rotates refresh token", async () => {
   assert.notEqual(before, after);
 });
 
-test("ip binding allows same bucket and blocks different bucket", async () => {
+test("ip binding allows subnet rotation within /16 and blocks outside /16", async () => {
   const jar = new CookieJar();
   await login(jar, {
     ip: "198.51.100.10",
@@ -300,7 +300,7 @@ test("ip binding allows same bucket and blocks different bucket", async () => {
 
   const differentBucket = await callDashboard("/api/auth/session", {
     jar,
-    ip: "198.51.101.9",
+    ip: "198.52.101.9",
     userAgent: TEST_USER_AGENT
   });
   assert.equal(differentBucket.response.status, 200);
