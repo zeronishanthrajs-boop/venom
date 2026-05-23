@@ -23,7 +23,7 @@ type RouteContext = {
   params: Promise<{ path: string[] }>;
 };
 
-function sanitizeHeaderValue(value) {
+function sanitizeHeaderValue(value: string | null): string | null {
   if (typeof value !== "string") {
     return null;
   }
