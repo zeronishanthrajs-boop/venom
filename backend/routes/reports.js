@@ -64,12 +64,28 @@ router.get("/:engagementId/pdf", requireDb, async (req, res) => {
     }
 
     // Mark as generating and kick off background job
-    await Engagement.findByIdAndUpdate(engagementId, {
-      pdfStatus: "generating",
-      pdfMode: mode,
-      pdfStartedAt: new Date(),
-      pdfError: null
-    });
+    const updateResult = await Engagement.findByIdAndUpdate(
+      engagementId,
+      {
+        pdfStatus: "generating",
+        pdfMode: mode,
+        pdfStartedAt: new Date(),
+        pdfError: null
+      },
+      { new: true }
+    );
+
+    if (!updateResult) {
+      logger.error(
+        { engagementId, mode, query: req.query },
+        "Failed to mark engagement PDF as generating"
+      );
+      return res.status(500).json({
+        errorType: "ENGAGEMENT_UPDATE_FAILED",
+        error: "Unable to update engagement PDF state",
+        fallback: `/api/reports/${engagementId}/md`
+      });
+    }
 
     // Fire-and-forget background generation
     setImmediate(async () => {
@@ -83,7 +99,14 @@ router.get("/:engagementId/pdf", requireDb, async (req, res) => {
         });
         logger.info({ engagementId, mode }, "PDF generated and cached");
       } catch (bgError) {
-        logger.error({ engagementId, error: bgError?.message }, "Background PDF generation failed");
+        logger.error(
+          {
+            engagementId,
+            error: bgError?.message || String(bgError),
+            stack: bgError?.stack || ""
+          },
+          "Background PDF generation failed"
+        );
         await Engagement.findByIdAndUpdate(engagementId, {
           pdfStatus: "failed",
           pdfError: bgError?.message || "Unknown error"
@@ -97,11 +120,21 @@ router.get("/:engagementId/pdf", requireDb, async (req, res) => {
       pollUrl: `/api/reports/${engagementId}/pdf/status`
     });
   } catch (error) {
-    logger.error({ error: error?.message || String(error) }, "PDF route error");
+    logger.error(
+      {
+        engagementId: req.params.engagementId,
+        mode: req.query.mode || "developer",
+        error: error?.message || String(error),
+        stack: error?.stack || "",
+        query: req.query
+      },
+      "PDF route error"
+    );
     if (error?.name === "CastError") {
       return res.status(400).json({ error: "Invalid engagement id" });
     }
     return res.status(500).json({
+      errorType: "PDF_ROUTE_ERROR",
       error: "PDF generation failed",
       reason: error?.message || "Unknown PDF error",
       fallback: `/api/reports/${req.params.engagementId}/md`

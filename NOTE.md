@@ -607,6 +607,13 @@ eportGeneratorService.js now extracts and elevates OWASP tags so they render per
 ---
 
 
+[2026-05-23T07:26:35Z] BUG FIX: Dashboard build stability and backend PDF diagnostics
+[2026-05-23T07:26:35Z] ROOT CAUSE: `dashboard/next.config.ts` used invalid ESM `__dirname` inside `turbopack.root`, which can destabilize Vercel builds. The backend report PDF route also lacked structured failure diagnostics and could return a generic 500 without clear state-update failure reporting.
+[2026-05-23T07:26:35Z] CHANGE: Updated `dashboard/next.config.ts` to `turbopack: {}`. Enhanced `backend/routes/reports.js` with structured error logging, explicit `errorType: "PDF_ROUTE_ERROR"`, a defensive `Engagement.findByIdAndUpdate()` failure response, and richer async background failure logging.
+[2026-05-23T07:26:35Z] FILES: dashboard/next.config.ts, backend/routes/reports.js
+[2026-05-23T07:26:35Z] VERIFIED: `backend/routes/reports.js` has no parse errors; `dashboard/next.config.ts` no longer uses invalid ESM `__dirname`.
+[2026-05-23T07:26:35Z] STATUS: resolved
+---
 [2026-05-22T19:35:00Z] GROUP: 5, 6, 7, 8 FIX: Master Quality and Accuracy Overhaul
 [2026-05-22T19:35:00Z] ROOT CAUSE: Multi-group platform quality issues: 1) AI narratives lacked scoped disclaimer and qualitative effort tiers. 2) Success rate metric was combined, masking toolchain integrity and scan coverage. 3) Compliance statuses were underscore-separated instead of space-separated, and disclaimer was not CFO/CERT-In aligned. 4) Attack chains lacked standardization and subtitle override. 5) WAF pre-detection did not dynamically downgrade injection/reflection findings confidence to weak signal.
 [2026-05-22T19:35:00Z] CHANGE: 
@@ -633,7 +640,7 @@ eportGeneratorService.js now extracts and elevates OWASP tags so they render per
 
 
 =======================================================
-VENOM CODEBASE AUDIT — 2026-05-22T19:35:20.985Z
+VENOM CODEBASE AUDIT — 2026-05-23T07:26:35.581Z
 Complete wiring map. Read before touching anything.
 =======================================================
 
