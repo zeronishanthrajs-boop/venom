@@ -14,6 +14,7 @@ const { deduplicateFindings } = require("../utils/deduplicateFindings");
 const { callGeminiText } = require("./geminiClient");
 const reportGeneratorService = require("./reportGeneratorService");
 const { deriveConfidenceLevel, needsManualValidation } = require("../utils/confidenceModel");
+const { logger } = require("../config/logger");
 
 const TEMPLATE_PATH = path.join(__dirname, "../templates/report.html");
 
@@ -885,85 +886,119 @@ function renderHtmlFromTemplate(templateData) {
 }
 
 async function renderPdfFromTemplate(templateData) {
-  const html = renderHtmlFromTemplate(templateData);
+  let issueStage = "render-html-template";
+  try {
+    const html = renderHtmlFromTemplate(templateData);
+    issueStage = "prepare-pdf-generation";
 
-  const PDF_TIMEOUT_MS = 180000;
-  const pdfPromise = (async () => {
-    let browser;
-    try {
-      let chromiumPath = process.env.CHROMIUM_PATH || "";
-      let launchArgs = [
-        ...chromium.args,
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--single-process"
-      ];
-      let headlessMode = chromium.headless ?? true;
-      let sparticuzPathError = null;
+    const PDF_TIMEOUT_MS = 180000;
+    const pdfPromise = (async () => {
+      let browser;
+      try {
+        issueStage = "resolve-chromium-path";
+        let chromiumPath = process.env.CHROMIUM_PATH || "";
+        let launchArgs = [
+          ...chromium.args,
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--single-process"
+        ];
+        let headlessMode = chromium.headless ?? true;
+        let sparticuzPathError = null;
 
-      const localPath = resolveLocalChromiumPath();
-      if (!chromiumPath) {
-        try {
-          chromiumPath = await chromium.executablePath();
-        } catch (error) {
-          sparticuzPathError = error;
+        const localPath = resolveLocalChromiumPath();
+        if (!chromiumPath) {
+          try {
+            chromiumPath = await chromium.executablePath();
+          } catch (error) {
+            sparticuzPathError = error;
+          }
         }
-      }
 
-      if (process.platform === "win32" && localPath) {
-        chromiumPath = localPath;
-        launchArgs = ["--disable-dev-shm-usage", "--disable-gpu"];
-        headlessMode = true;
-      } else if (!chromiumPath || !fs.existsSync(chromiumPath)) {
-        if (localPath) {
+        issueStage = "select-chromium-executable";
+        if (process.platform === "win32" && localPath) {
           chromiumPath = localPath;
-          launchArgs = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"];
+          launchArgs = ["--disable-dev-shm-usage", "--disable-gpu"];
           headlessMode = true;
+        } else if (!chromiumPath || !fs.existsSync(chromiumPath)) {
+          if (localPath) {
+            chromiumPath = localPath;
+            launchArgs = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"];
+            headlessMode = true;
+          }
+        }
+
+        if (!chromiumPath || !fs.existsSync(chromiumPath)) {
+          const extra =
+            sparticuzPathError && sparticuzPathError instanceof Error
+              ? ` (${sparticuzPathError.message})`
+              : "";
+          throw new Error(
+            `ISSUE-REPORT-CHROMIUM-MISSING: No Chromium executable found. Set CHROMIUM_PATH for local PDF generation${extra}.`
+          );
+        }
+
+        issueStage = "launch-browser";
+        browser = await puppeteer.launch({
+          args: launchArgs,
+          defaultViewport: chromium.defaultViewport,
+          executablePath: chromiumPath,
+          headless: headlessMode
+        });
+
+        issueStage = "open-page";
+        const page = await browser.newPage();
+        await page.setContent(html, { waitUntil: "domcontentloaded" });
+
+        issueStage = "generate-pdf";
+        const pdf = await page.pdf({
+          format: "A4",
+          printBackground: true,
+          margin: { top: "0", right: "0", bottom: "0", left: "0" }
+        });
+        return Buffer.from(pdf);
+      } catch (error) {
+        const issueMessage = `ISSUE-REPORT-PDF-${issueStage}: ${error?.message || String(error)}`;
+        logger.error(
+          {
+            issueStage,
+            issueMessage,
+            error: error?.message || String(error),
+            stack: error?.stack || ""
+          },
+          "PDF generation failed inside renderPdfFromTemplate"
+        );
+        throw new Error(issueMessage);
+      } finally {
+        if (browser) {
+          await browser.close().catch(() => {});
         }
       }
+    })();
 
-      if (!chromiumPath || !fs.existsSync(chromiumPath)) {
-        const extra =
-          sparticuzPathError && sparticuzPathError instanceof Error
-            ? ` (${sparticuzPathError.message})`
-            : "";
-        throw new Error(
-          `No Chromium executable found. Set CHROMIUM_PATH for local PDF generation${extra}.`
-        );
-      }
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error("ISSUE-REPORT-PDF-TIMEOUT: PDF generation timed out after 180s")),
+        PDF_TIMEOUT_MS
+      );
+    });
 
-      browser = await puppeteer.launch({
-        args: launchArgs,
-        defaultViewport: chromium.defaultViewport,
-        executablePath: chromiumPath,
-        headless: headlessMode
-      });
-
-      const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: "domcontentloaded" });
-      const pdf = await page.pdf({
-        format: "A4",
-        printBackground: true,
-        margin: { top: "0", right: "0", bottom: "0", left: "0" }
-      });
-      return Buffer.from(pdf);
-    } finally {
-      if (browser) {
-        await browser.close().catch(() => {});
-      }
-    }
-  })();
-
-  const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(
-      () => reject(new Error("PDF generation timed out after 180s")),
-      PDF_TIMEOUT_MS
+    return Promise.race([pdfPromise, timeoutPromise]);
+  } catch (error) {
+    const issueMessage = `ISSUE-REPORT-PDF-${issueStage}: ${error?.message || String(error)}`;
+    logger.error(
+      {
+        issueStage,
+        issueMessage,
+        error: error?.message || String(error),
+        stack: error?.stack || ""
+      },
+      "PDF render failure"
     );
-  });
-
-  return Promise.race([pdfPromise, timeoutPromise]);
+    throw new Error(issueMessage);
+  }
 }
 
 async function generatePdfReport(engagementId, options = {}) {

@@ -28,6 +28,8 @@ router.get("/:engagementId/pdf", requireDb, async (req, res) => {
     const mode = req.query.mode || "developer";
     const forceRegen = req.query.refresh === "1";
 
+    logger.info({ engagementId, mode, forceRegen }, "PDF route invoked");
+
     const engagement = await Engagement.findById(engagementId).select(
       "pdfStatus pdfData pdfMode pdfGeneratedAt pdfError"
     ).lean();
@@ -64,24 +66,46 @@ router.get("/:engagementId/pdf", requireDb, async (req, res) => {
     }
 
     // Mark as generating and kick off background job
-    const updateResult = await Engagement.findByIdAndUpdate(
-      engagementId,
-      {
-        pdfStatus: "generating",
-        pdfMode: mode,
-        pdfStartedAt: new Date(),
-        pdfError: null
-      },
-      { new: true }
-    );
+    let updateResult;
+    try {
+      updateResult = await Engagement.findByIdAndUpdate(
+        engagementId,
+        {
+          pdfStatus: "generating",
+          pdfMode: mode,
+          pdfStartedAt: new Date(),
+          pdfError: null
+        },
+        { new: true }
+      );
+    } catch (updateError) {
+      logger.error(
+        {
+          engagementId,
+          mode,
+          query: req.query,
+          error: updateError?.message || String(updateError),
+          stack: updateError?.stack || ""
+        },
+        "ISSUE-REPORT-PDF-ROUTE-UPDATE: Failed to mark engagement PDF as generating"
+      );
+      return res.status(500).json({
+        errorType: "ENGAGEMENT_UPDATE_FAILED",
+        issue: "ISSUE-REPORT-PDF-ROUTE-UPDATE",
+        error: "Unable to update engagement PDF state",
+        reason: updateError?.message || "Unknown error",
+        fallback: `/api/reports/${engagementId}/md`
+      });
+    }
 
     if (!updateResult) {
       logger.error(
         { engagementId, mode, query: req.query },
-        "Failed to mark engagement PDF as generating"
+        "ISSUE-REPORT-PDF-ROUTE-UPDATE: Engagement update returned null"
       );
       return res.status(500).json({
         errorType: "ENGAGEMENT_UPDATE_FAILED",
+        issue: "ISSUE-REPORT-PDF-ROUTE-UPDATE-NO-ENGAGEMENT",
         error: "Unable to update engagement PDF state",
         fallback: `/api/reports/${engagementId}/md`
       });
@@ -135,6 +159,9 @@ router.get("/:engagementId/pdf", requireDb, async (req, res) => {
     }
     return res.status(500).json({
       errorType: "PDF_ROUTE_ERROR",
+      issue: String(error?.message || "").startsWith("ISSUE-REPORT")
+        ? String(error.message).split(":")[0]
+        : "PDF_ROUTE_FATAL",
       error: "PDF generation failed",
       reason: error?.message || "Unknown PDF error",
       fallback: `/api/reports/${req.params.engagementId}/md`
