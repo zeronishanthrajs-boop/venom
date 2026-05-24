@@ -74,6 +74,11 @@ function toExecutionFinding(finding = {}, index = 0, executionMeta = null, targe
       finding.recommendation ||
       finding.remediation ||
       "Enforce strict API authentication, authorization, and validation controls.",
+    confidence: finding.confidence || finding.evidenceStrength || "",
+    evidenceStrength: finding.evidenceStrength || finding.confidence || "",
+    verificationMode: finding.verificationMode || finding.metadata?.verificationMode || "",
+    exploitabilityScore: finding.exploitabilityScore,
+    exploitabilityBand: finding.exploitabilityBand || "",
     source: finding.source || "api_security",
     tags: Array.isArray(finding.tags) ? finding.tags : ["api-security"],
     evidence: evidenceValue,
@@ -91,6 +96,15 @@ function toExecutionFinding(finding = {}, index = 0, executionMeta = null, targe
       methodTested: finding.methodTested || finding.metadata?.methodTested || "GET",
       testPerformed: finding.testPerformed || finding.metadata?.testPerformed || "",
       responseObserved: finding.responseObserved || finding.metadata?.responseObserved || "",
+      confidence: finding.confidence || finding.metadata?.confidence || "",
+      evidenceStrength:
+        finding.evidenceStrength || finding.metadata?.evidenceStrength || "",
+      verificationMode:
+        finding.verificationMode || finding.metadata?.verificationMode || "",
+      exploitabilityScore:
+        finding.exploitabilityScore ?? finding.metadata?.exploitabilityScore ?? null,
+      exploitabilityBand:
+        finding.exploitabilityBand || finding.metadata?.exploitabilityBand || "",
       findingType,
       evidence: evidenceValue,
       discoveryVector,
@@ -167,6 +181,8 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
         scanLimitations: result.scanLimitations || [],
         discoveryAudit: result.discoveryAudit || [],
         defenseSignals: result.defenseSignals || [],
+        infrastructureFingerprint: result.infrastructureFingerprint || null,
+        authProfiles: result.authProfiles || [],
         error: result.error || null
       },
       findings: normalizedFindings,
@@ -199,6 +215,8 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
       testId: executionMeta.testId,
       count: normalizedFindings.length,
       summary: summarizeBySeverity(normalizedFindings),
+      infrastructureFingerprint: result.infrastructureFingerprint || null,
+      authProfiles: result.authProfiles || [],
       findings: normalizedFindings
     });
   } catch (error) {

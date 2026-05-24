@@ -8,7 +8,8 @@ const { classifyEndpoint } = require("../utils/endpointClassification");
 const {
   deriveConfidenceLevel,
   needsManualValidation,
-  confidenceRank
+  confidenceRank,
+  deriveVerificationMode
 } = require("../utils/confidenceModel");
 
 function asArray(value) {
@@ -64,10 +65,12 @@ function countBySeverity(findings = []) {
 }
 
 const FINDING_IMPACT_WEIGHTS = {
-  CONFIRMED: 25,
-  STRONG_SIGNAL: 15,
-  CONFIGURATION_GAP: 5,
-  INFORMATIONAL: 2
+  CONFIRMED: 24,
+  LIKELY: 15,
+  WEAK: 8,
+  CDN_INFLUENCED: 5,
+  THEORETICAL: 3,
+  UNVERIFIED: 2
 };
 const REQUIRED_TOOLCHAIN = [
   "nikto",
@@ -101,26 +104,17 @@ function isConfigurationFinding(finding = {}) {
 
 function deriveImpactLevel(finding = {}) {
   const confidence = deriveConfidenceLevel(finding);
-  if (confidence === "CONFIRMED") {
-    return "CONFIRMED";
+  if (FINDING_IMPACT_WEIGHTS[confidence] !== undefined) {
+    return confidence;
   }
-  if (confidence === "STRONG_SIGNAL") {
-    return "STRONG_SIGNAL";
-  }
-  if (confidence === "INFORMATIONAL") {
-    return "INFORMATIONAL";
-  }
-  if (confidence === "WEAK_SIGNAL" || isConfigurationFinding(finding)) {
-    return "CONFIGURATION_GAP";
+  if (isConfigurationFinding(finding)) {
+    return "THEORETICAL";
   }
   const severity = normalizeSeverity(finding?.severity);
-  if (severity === "critical" || severity === "high") {
-    return "STRONG_SIGNAL";
-  }
-  if (severity === "medium" || severity === "low") {
-    return "CONFIGURATION_GAP";
-  }
-  return "INFORMATIONAL";
+  if (severity === "critical" || severity === "high") return "LIKELY";
+  if (severity === "medium") return "WEAK";
+  if (severity === "low") return "THEORETICAL";
+  return "UNVERIFIED";
 }
 
 function resolveEndpointContext(finding = {}) {
@@ -485,14 +479,29 @@ class ReportGeneratorService {
         String(finding?.severityReason || finding?.metadata?.severityReason || "").trim() ||
         `Severity aligned to ${endpointContext.endpointType.toLowerCase()} endpoint context (${endpointContext.sensitivity}).`;
       const confidence = deriveConfidenceLevel(finding);
+      const verificationMode = deriveVerificationMode(finding);
+      const evidenceStrength = String(
+        finding?.evidenceStrength || finding?.metadata?.evidenceStrength || confidence
+      ).toUpperCase();
       const manualValidationRequired = needsManualValidation(confidence);
+      const explicitExploitabilityScore =
+        finding?.exploitabilityScore ?? finding?.metadata?.exploitabilityScore ?? null;
+      let normalizedSeverity = normalizeSeverity(finding?.severity);
+      if (/content-security-policy|missing csp|csp/i.test(findingSearchText(finding))) {
+        const hasXssSink =
+          /xss|reflected|dom sink|unsafe-inline|unsafe-eval/i.test(findingSearchText(finding)) ||
+          Boolean(finding?.metadata?.xssSinkDetected);
+        if (!hasXssSink) {
+          normalizedSeverity = "info";
+        }
+      }
       const reproductionSteps = Array.isArray(finding?.reproductionSteps)
         ? finding.reproductionSteps.filter((step) => String(step || "").trim().length > 0)
         : [];
       return {
         id: index + 1,
         title: finding?.title || "Untitled finding",
-        severity: String(normalizeSeverity(finding?.severity)).toUpperCase(),
+        severity: String(normalizedSeverity).toUpperCase(),
         type: normalizedType,
         what: finding?.description || "No description provided.",
         how: discoveryVector,
@@ -504,6 +513,9 @@ class ReportGeneratorService {
         endpointSensitivity: endpointContext.sensitivity,
         severityReason,
         confidence,
+        evidenceStrength,
+        verificationMode,
+        exploitabilityScore: explicitExploitabilityScore,
         manualValidationRequired,
         manualValidationNote: manualValidationRequired
           ? "Manual validation recommended before treating as confirmed vulnerability."
@@ -531,6 +543,9 @@ class ReportGeneratorService {
           endpointContext,
           severityReason,
           confidence,
+          evidenceStrength,
+          verificationMode,
+          exploitabilityScore: explicitExploitabilityScore,
           manualValidationRequired,
           manualValidationNote: manualValidationRequired
             ? "Manual validation recommended before treating as confirmed vulnerability."
@@ -582,7 +597,6 @@ class ReportGeneratorService {
   }
 
   calculateSecurityScore(findings = [], jobs = []) {
-    let score = 100;
     const formula = {
       startsAt: 100,
       findingImpacts: [],
@@ -590,16 +604,53 @@ class ReportGeneratorService {
       bonuses: [],
       rawDeduction: 0,
       unclampedScore: 100,
-      clamp: "0-100"
+      clamp: "0-100",
+      categoryWeights: {
+        authentication: 0.3,
+        infrastructure: 0.25,
+        browser: 0.2,
+        api: 0.25
+      }
     };
 
     const impactCounts = {
       CONFIRMED: 0,
-      STRONG_SIGNAL: 0,
-      CONFIGURATION_GAP: 0,
-      INFORMATIONAL: 0
+      LIKELY: 0,
+      WEAK: 0,
+      CDN_INFLUENCED: 0,
+      THEORETICAL: 0,
+      UNVERIFIED: 0
     };
 
+    const categoryDeductions = {
+      authentication: 0,
+      infrastructure: 0,
+      browser: 0,
+      api: 0
+    };
+
+    const classifyFindingCategories = (finding = {}) => {
+      const text = findingSearchText(finding);
+      const categories = new Set();
+      if (/auth|login|signin|session|token|password|mfa|credential|rate.?limit|throttl|bola/.test(text)) {
+        categories.add("authentication");
+      }
+      if (/csp|xss|dom|clickjack|iframe|trusted types|referrer-policy|coop|coep|corp|unsafe-inline|unsafe-eval/.test(text)) {
+        categories.add("browser");
+      }
+      if (/api_|graphql|injection|endpoint|broken object/i.test(String(finding?.type || "")) || /api|graphql|endpoint|sql/.test(text)) {
+        categories.add("api");
+      }
+      if (/waf|cdn|cloudflare|akamai|fastly|imperva|server header|x-powered-by|infrastructure|tls|hsts|misconfig/.test(text)) {
+        categories.add("infrastructure");
+      }
+      if (categories.size === 0) {
+        categories.add("api");
+      }
+      return [...categories];
+    };
+
+    let rawScore = 100;
     let findingDeductionTotal = 0;
     for (const finding of findings) {
       const impactLevel = deriveImpactLevel(finding);
@@ -607,24 +658,25 @@ class ReportGeneratorService {
       const baseWeight = FINDING_IMPACT_WEIGHTS[impactLevel] || 0;
       const endpointContext = resolveEndpointContext(finding);
       const endpointWeight = Number(endpointContext?.weight || 1);
+      const defenseDiscount =
+        impactLevel === "CDN_INFLUENCED" || finding?.metadata?.cdnInfluenced ? 0.6 : 1;
+      const routeLegitimacyDiscount =
+        finding?.metadata?.routeLegitimacy === "UNCERTAIN"
+          ? 0.85
+          : finding?.metadata?.routeLegitimacy === "LIKELY_FAKE"
+            ? 0.6
+            : 1;
+      const weightedDeduction = Number(
+        (baseWeight * endpointWeight * defenseDiscount * routeLegitimacyDiscount).toFixed(2)
+      );
 
-      let weightedDeduction = 0;
-      if (impactLevel === "CONFIRMED") {
-        weightedDeduction = 25;
-      } else if (impactLevel === "STRONG_SIGNAL") {
-        weightedDeduction = 15;
-      } else if (impactLevel === "CONFIGURATION_GAP") {
-        if (["AUTH", "ADMIN", "FUNCTIONAL"].includes(endpointContext.endpointType)) {
-          weightedDeduction = 8;
-        } else {
-          weightedDeduction = 5;
-        }
-      } else if (impactLevel === "INFORMATIONAL") {
-        weightedDeduction = 2;
+      rawScore -= weightedDeduction;
+      findingDeductionTotal += weightedDeduction;
+      const buckets = classifyFindingCategories(finding);
+      for (const bucket of buckets) {
+        categoryDeductions[bucket] += weightedDeduction;
       }
 
-      score -= weightedDeduction;
-      findingDeductionTotal += weightedDeduction;
       formula.findingImpacts.push({
         findingId: String(finding?.id || ""),
         title: String(finding?.title || "Untitled finding"),
@@ -633,6 +685,8 @@ class ReportGeneratorService {
         endpointType: endpointContext.endpointType,
         endpointSensitivity: endpointContext.sensitivity,
         endpointWeight,
+        routeLegitimacy: finding?.metadata?.routeLegitimacy || "UNVERIFIED",
+        categories: buckets,
         deduction: weightedDeduction
       });
     }
@@ -647,27 +701,16 @@ class ReportGeneratorService {
     );
 
     let probeDeductionTotal = 0;
-    for (const job of failedJobs) {
-      if (getJobErrorCode(job) === "TOOL_NOT_INSTALLED") {
-        continue;
-      }
-      score -= 3;
-      probeDeductionTotal += 3;
+    for (const job of [...failedJobs, ...timeoutJobs]) {
+      if (getJobErrorCode(job) === "TOOL_NOT_INSTALLED") continue;
+      const status = normalizeJobStatus(job.status) === "timeout" ? "TIMEOUT" : "FAILED";
+      const penalty = 2.5;
+      rawScore -= penalty;
+      probeDeductionTotal += penalty;
       formula.probeDeductions.push({
         toolId: job.toolId,
-        status: "FAILED",
-        deduction: 3,
-        reason: getJobFailureReason(job)
-      });
-    }
-
-    for (const job of timeoutJobs) {
-      score -= 3;
-      probeDeductionTotal += 3;
-      formula.probeDeductions.push({
-        toolId: job.toolId,
-        status: "TIMEOUT",
-        deduction: 3,
+        status,
+        deduction: penalty,
         reason: getJobFailureReason(job)
       });
     }
@@ -680,7 +723,6 @@ class ReportGeneratorService {
         type: "WAF_BLOCK"
       });
     }
-
     for (const job of jobs) {
       const explicitSignals = Array.isArray(job?.output?.defenseSignals)
         ? job.output.defenseSignals
@@ -697,31 +739,26 @@ class ReportGeneratorService {
         });
       }
     }
-
-    for (const signal of defenseSignals) {
-      score += 3;
+    const defenseBonus = Math.min(10, defenseSignals.length * 1.5);
+    rawScore += defenseBonus;
+    if (defenseBonus > 0) {
       formula.bonuses.push({
-        toolId: signal.toolId,
-        status: signal.type,
-        bonus: 3,
-        reason: signal.reason
+        type: "defense_signals",
+        bonus: defenseBonus,
+        signals: defenseSignals.length
       });
     }
 
     const successfulCleanCategories = new Set();
     for (const job of jobs) {
-      if (normalizeJobStatus(job.status) !== "success") {
-        continue;
-      }
+      if (normalizeJobStatus(job.status) !== "success") continue;
       const jobFindings = collectJobFindings(job);
-      if (jobFindings.length > 0) {
-        continue;
-      }
+      if (jobFindings.length > 0) continue;
       successfulCleanCategories.add(String(job.toolId || "unknown"));
     }
-    const successBonus = Math.min(10, successfulCleanCategories.size * 2);
+    const successBonus = Math.min(8, successfulCleanCategories.size * 1.5);
+    rawScore += successBonus;
     if (successBonus > 0) {
-      score += successBonus;
       formula.bonuses.push({
         type: "clean_categories",
         categories: [...successfulCleanCategories].slice(0, 5),
@@ -740,39 +777,61 @@ class ReportGeneratorService {
     );
     const unreliable =
       reliabilityJobs.length > 0 && failedOrTimedOut.length > reliabilityJobs.length / 2;
-    const rawDeduction = findingDeductionTotal + probeDeductionTotal;
-    formula.rawDeduction = rawDeduction;
-    formula.unclampedScore = Math.round(score);
 
-    const finalScore = Math.max(0, Math.min(100, Math.round(score)));
-    const densityLabel = finalScore === 0 ? deriveDensityLabel(rawDeduction) : "";
-    const scoreFloorReached = finalScore === 0 && formula.unclampedScore < 0;
-    const scoreFloorMessage = scoreFloorReached
-      ? [
-          "Score floor reached.",
-          `${findings.length} findings identified.`,
-          "Score reflects cumulative finding impact rather than confirmed catastrophic compromise."
-        ].join("\n")
-      : "";
+    formula.rawDeduction = Number((findingDeductionTotal + probeDeductionTotal).toFixed(2));
+    formula.unclampedScore = Math.round(rawScore);
+    const finalScore = Math.max(0, Math.min(100, Math.round(rawScore)));
+    const densityLabel = deriveDensityLabel(formula.rawDeduction);
+    const scoreFloorReached = finalScore === 0;
+
+    const categoryScores = {
+      authentication: Math.max(0, Math.min(100, Math.round(100 - categoryDeductions.authentication))),
+      infrastructure: Math.max(0, Math.min(100, Math.round(100 - categoryDeductions.infrastructure))),
+      browser: Math.max(0, Math.min(100, Math.round(100 - categoryDeductions.browser))),
+      api: Math.max(0, Math.min(100, Math.round(100 - categoryDeductions.api)))
+    };
+
+    const weightedTransparentScore = Math.round(
+      categoryScores.authentication * formula.categoryWeights.authentication +
+        categoryScores.infrastructure * formula.categoryWeights.infrastructure +
+        categoryScores.browser * formula.categoryWeights.browser +
+        categoryScores.api * formula.categoryWeights.api
+    );
+    const blendedScore = Math.round(Math.min(finalScore, weightedTransparentScore));
+
+    const riskRating =
+      blendedScore < 35
+        ? "HIGH"
+        : blendedScore < 60
+          ? "MEDIUM"
+          : deriveRiskRating(findings);
 
     return {
-      score: finalScore,
+      score: Math.max(0, Math.min(100, blendedScore)),
       maxScore: 100,
       densityLabel,
-      rawDeduction,
-      riskRating: deriveRiskRating(findings),
+      rawDeduction: formula.rawDeduction,
+      riskRating,
       reliable: !unreliable,
       reliabilityStatus: unreliable ? "UNRELIABLE" : "RELIABLE",
       unreliableReason: unreliable
-        ? "Score could not be accurately calculated because too many scan probes failed. Address probe failures to get an accurate score."
+        ? "Score confidence is reduced because many scan probes failed. Fix probe reliability and rescan."
         : "",
       failedProbeCount: failedJobs.length,
       timeoutProbeCount: timeoutJobs.length,
       blockedProbeCount: blockedJobs.length,
       toolUnavailableCount: toolUnavailableJobs.length,
       scoreFloorReached,
-      scoreFloorMessage,
+      scoreFloorMessage: scoreFloorReached
+        ? "Security score reached the minimum floor due to extensive confirmed findings and deductions."
+        : "",
       impactCounts,
+      categoryScores: {
+        "Authentication Security": categoryScores.authentication,
+        "Infrastructure Hardening": categoryScores.infrastructure,
+        "Browser Security": categoryScores.browser,
+        "API Security": categoryScores.api
+      },
       formula
     };
   }
@@ -899,6 +958,25 @@ class ReportGeneratorService {
       });
     }
 
+    const authSurfaceSignals = has(/auth|login|signin|credential|password|session/);
+    const noMfaSignals = has(/no mfa|without mfa|mfa not|2fa not|two-factor not/);
+    const weakPasswordSignals = has(/weak password|password policy/);
+    if (
+      rateLimitSignals.length > 0 &&
+      authSurfaceSignals.length > 0 &&
+      (noMfaSignals.length > 0 || weakPasswordSignals.length > 0)
+    ) {
+      chains.push({
+        chain: "Credential Stuffing -> Account Takeover",
+        findingIds: [
+          ...rateLimitSignals,
+          ...authSurfaceSignals,
+          ...noMfaSignals,
+          ...weakPasswordSignals
+        ].map((item) => item.id)
+      });
+    }
+
     const reflectedInputSignals = has(/reflected|xss|input reflection/);
     const cspSignals = has(/content-security-policy|missing csp/);
     if (reflectedInputSignals.length > 0 && cspSignals.length > 0) {
@@ -914,6 +992,15 @@ class ReportGeneratorService {
       chains.push({
         chain: "Technology Disclosure + CVEs",
         findingIds: [...versionDisclosureSignals, ...cveSignals].map((item) => item.id)
+      });
+    }
+
+    const openRedirectSignals = has(/open redirect|redirect parameter|url redirect/);
+    const oauthSignals = has(/oauth|oidc|token endpoint|authorization code/);
+    if (openRedirectSignals.length > 0 && oauthSignals.length > 0) {
+      chains.push({
+        chain: "Open Redirect + OAuth Flow -> Token Theft Risk",
+        findingIds: [...openRedirectSignals, ...oauthSignals].map((item) => item.id)
       });
     }
 

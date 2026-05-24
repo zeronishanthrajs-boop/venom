@@ -1,32 +1,50 @@
-const CONFIDENCE_LEVELS = ["CONFIRMED", "STRONG_SIGNAL", "WEAK_SIGNAL", "INFORMATIONAL"];
+const CONFIDENCE_LEVELS = [
+  "CONFIRMED",
+  "LIKELY",
+  "WEAK",
+  "THEORETICAL",
+  "UNVERIFIED",
+  "CDN_INFLUENCED"
+];
+
+const CONFIDENCE_ALIASES = {
+  STRONG_SIGNAL: "LIKELY",
+  WEAK_SIGNAL: "WEAK",
+  INFORMATIONAL: "THEORETICAL",
+  POSSIBLE: "THEORETICAL",
+  PROBABLE: "LIKELY"
+};
 
 const CONFIDENCE_ORDER = {
-  CONFIRMED: 4,
-  STRONG_SIGNAL: 3,
-  WEAK_SIGNAL: 2,
-  INFORMATIONAL: 1
+  CONFIRMED: 6,
+  LIKELY: 5,
+  WEAK: 4,
+  CDN_INFLUENCED: 3,
+  THEORETICAL: 2,
+  UNVERIFIED: 1
 };
 
 function normalizeConfidenceLevel(value, fallback = "") {
   const normalized = String(value || "").trim().toUpperCase().replace(/\s+/g, "_");
-  if (CONFIDENCE_LEVELS.includes(normalized)) {
-    return normalized;
+  const canonical = CONFIDENCE_ALIASES[normalized] || normalized;
+  if (CONFIDENCE_LEVELS.includes(canonical)) {
+    return canonical;
   }
   return fallback;
 }
 
 function severityFallbackConfidence(severity = "") {
   const normalized = String(severity || "").trim().toLowerCase();
-  if (normalized === "critical") {
-    return "CONFIRMED";
+  if (normalized === "critical" || normalized === "high") {
+    return "LIKELY";
   }
-  if (normalized === "high") {
-    return "STRONG_SIGNAL";
+  if (normalized === "medium") {
+    return "WEAK";
   }
-  if (normalized === "medium" || normalized === "low") {
-    return "WEAK_SIGNAL";
+  if (normalized === "low") {
+    return "THEORETICAL";
   }
-  return "INFORMATIONAL";
+  return "UNVERIFIED";
 }
 
 function deriveConfidenceLevel(finding = {}) {
@@ -34,11 +52,50 @@ function deriveConfidenceLevel(finding = {}) {
     normalizeConfidenceLevel(finding?.confidence) ||
     normalizeConfidenceLevel(finding?.detectionConfidence) ||
     normalizeConfidenceLevel(finding?.exploitConfidence) ||
-    normalizeConfidenceLevel(finding?.metadata?.confidence);
+    normalizeConfidenceLevel(finding?.evidenceStrength) ||
+    normalizeConfidenceLevel(finding?.metadata?.confidence) ||
+    normalizeConfidenceLevel(finding?.metadata?.evidenceStrength);
   if (explicit) {
     return explicit;
   }
+
+  if (finding?.metadata?.cdnInfluenced === true) {
+    return "CDN_INFLUENCED";
+  }
   return severityFallbackConfidence(finding?.severity);
+}
+
+function deriveVerificationMode(finding = {}) {
+  const explicitMode =
+    String(finding?.verificationMode || finding?.metadata?.verificationMode || "")
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, "_");
+  const supportedModes = new Set([
+    "OBSERVED",
+    "INFERRED",
+    "CONFIRMED",
+    "EXPLOITED",
+    "PARTIALLY_VALIDATED"
+  ]);
+  if (supportedModes.has(explicitMode)) {
+    return explicitMode;
+  }
+
+  const confidence = deriveConfidenceLevel(finding);
+  if (finding?.metadata?.exploited === true) {
+    return "EXPLOITED";
+  }
+  if (confidence === "CONFIRMED") {
+    return "CONFIRMED";
+  }
+  if (confidence === "LIKELY") {
+    return "PARTIALLY_VALIDATED";
+  }
+  if (confidence === "WEAK" || confidence === "CDN_INFLUENCED") {
+    return "OBSERVED";
+  }
+  return "INFERRED";
 }
 
 function needsManualValidation(confidence = "") {
@@ -46,14 +103,14 @@ function needsManualValidation(confidence = "") {
 }
 
 function confidenceRank(confidence = "") {
-  return CONFIDENCE_ORDER[normalizeConfidenceLevel(confidence, "INFORMATIONAL")] || 0;
+  return CONFIDENCE_ORDER[normalizeConfidenceLevel(confidence, "UNVERIFIED")] || 0;
 }
 
 module.exports = {
   CONFIDENCE_LEVELS,
   normalizeConfidenceLevel,
   deriveConfidenceLevel,
+  deriveVerificationMode,
   needsManualValidation,
   confidenceRank
 };
-

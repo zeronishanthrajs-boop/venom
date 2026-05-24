@@ -489,10 +489,16 @@ function computeEPSAndROI(findings) {
     let eps = 20;
     if (confidence === "CONFIRMED") {
       eps = 90;
-    } else if (confidence === "STRONG_SIGNAL") {
+    } else if (confidence === "LIKELY") {
       eps = 70;
-    } else if (confidence === "WEAK_SIGNAL") {
+    } else if (confidence === "WEAK") {
       eps = 45;
+    } else if (confidence === "CDN_INFLUENCED") {
+      eps = 30;
+    } else if (confidence === "THEORETICAL") {
+      eps = 20;
+    } else if (confidence === "UNVERIFIED") {
+      eps = 15;
     }
     return {
       ...finding,
@@ -565,10 +571,12 @@ function computeFixRoadmap(findings) {
   }
 
   const CONFIDENCE_RANKS = {
-    CONFIRMED: 4,
-    STRONG_SIGNAL: 3,
-    WEAK_SIGNAL: 2,
-    INFORMATIONAL: 1
+    CONFIRMED: 6,
+    LIKELY: 5,
+    WEAK: 4,
+    CDN_INFLUENCED: 3,
+    THEORETICAL: 2,
+    UNVERIFIED: 1
   };
 
   const SEVERITY_RANKS = {
@@ -840,7 +848,7 @@ function toTemplateData(context, options = {}) {
         title: finding.title || "Untitled finding",
         severity,
         severityClass: SEVERITY_CLASS[severity] || "info",
-        confidence: finding.confidence || "WEAK_SIGNAL",
+        confidence: finding.confidence || "UNVERIFIED",
         manualValidationRequired: Boolean(finding.manualValidationRequired),
         manualValidationNote: finding.manualValidationNote || "",
         tagsStr: Array.isArray(finding.tags) ? finding.tags.join(", ") : "",

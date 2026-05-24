@@ -81,11 +81,24 @@ async function connectDB() {
     return;
   }
 
-  memoryServer = await MongoMemoryServer.create({
+  const memoryLaunchTimeout = toPositiveInteger(
+    process.env.MONGOMS_LAUNCH_TIMEOUT_MS,
+    30000
+  );
+  const memoryServerOptions = {
     instance: {
-      dbName: process.env.INMEMORY_DB_NAME || "venom_dev"
+      dbName: process.env.INMEMORY_DB_NAME || "venom_dev",
+      launchTimeout: memoryLaunchTimeout
     }
-  });
+  };
+
+  if (process.env.MONGOMS_BINARY_VERSION) {
+    memoryServerOptions.binary = {
+      version: process.env.MONGOMS_BINARY_VERSION
+    };
+  }
+
+  memoryServer = await MongoMemoryServer.create(memoryServerOptions);
   const memoryUri = memoryServer.getUri();
   await mongoose.connect(memoryUri);
   connectionSource = "in-memory";

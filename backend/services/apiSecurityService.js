@@ -4,12 +4,25 @@ const { promisify } = require("node:util");
 const Engagement = require("../models/Engagement");
 const executionLoggerService = require("./executionLoggerService");
 const { logger } = require("../config/logger");
-const { classifyEndpoint } = require("../utils/endpointClassification");
+const {
+  classifyEndpoint,
+  isLowSensitivityInformational,
+  requiresStrictRateLimiting
+} = require("../utils/endpointClassification");
 const {
   deriveConfidenceLevel,
   needsManualValidation,
-  normalizeConfidenceLevel
+  normalizeConfidenceLevel,
+  deriveVerificationMode
 } = require("../utils/confidenceModel");
+const { detectInfrastructureFingerprint } = require("../utils/infrastructureFingerprint");
+const {
+  buildResponseSnapshot,
+  diffResponseSnapshots,
+  evaluateGenericResponsePattern,
+  routeLegitimacyBand
+} = require("../utils/responseDiffEngine");
+const { calculateExploitabilityScore } = require("../utils/exploitabilityScoring");
 const {
   createStructuredError,
   logError,
@@ -117,6 +130,25 @@ const SQL_ERROR_PATTERNS = [
   /quoted string not properly terminated/i,
   /odbc|jdbc|sqlite|postgresql|mariadb/i
 ];
+const THROTTLE_HEADER_HINTS = [
+  "retry-after",
+  "x-ratelimit-limit",
+  "x-ratelimit-remaining",
+  "x-ratelimit-reset",
+  "ratelimit-limit",
+  "ratelimit-remaining",
+  "ratelimit-reset"
+];
+const CHALLENGE_PATTERNS = [
+  /captcha/i,
+  /checking your browser/i,
+  /attention required/i,
+  /verify you are human/i,
+  /js challenge/i,
+  /bot protection/i
+];
+const EVIDENCE_STRENGTH_LEVELS = ["CONFIRMED", "LIKELY", "WEAK", "THEORETICAL", "UNVERIFIED", "CDN_INFLUENCED"];
+const VERIFICATION_MODES = ["OBSERVED", "INFERRED", "CONFIRMED", "EXPLOITED", "PARTIALLY_VALIDATED"];
 const SEVERITY_ORDER = ["info", "low", "medium", "high", "critical"];
 
 function normalizeSeverityValue(value) {
@@ -250,10 +282,157 @@ function normalizeBodyForFingerprint(body) {
   return asString(body).replace(/\s+/g, " ").trim();
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function average(values = []) {
+  const filtered = values.filter((value) => Number.isFinite(Number(value)));
+  if (filtered.length === 0) return 0;
+  const sum = filtered.reduce((acc, value) => acc + Number(value), 0);
+  return Number((sum / filtered.length).toFixed(2));
+}
+
+function median(values = []) {
+  const filtered = values
+    .filter((value) => Number.isFinite(Number(value)))
+    .map((value) => Number(value))
+    .sort((a, b) => a - b);
+  if (filtered.length === 0) return 0;
+  const middle = Math.floor(filtered.length / 2);
+  if (filtered.length % 2 === 0) {
+    return Number(((filtered[middle - 1] + filtered[middle]) / 2).toFixed(2));
+  }
+  return filtered[middle];
+}
+
+function normalizeEvidenceStrength(value, fallback = "UNVERIFIED") {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+  if (EVIDENCE_STRENGTH_LEVELS.includes(normalized)) {
+    return normalized;
+  }
+  return fallback;
+}
+
+function normalizeVerificationMode(value, fallback = "INFERRED") {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+  if (VERIFICATION_MODES.includes(normalized)) {
+    return normalized;
+  }
+  return fallback;
+}
+
 class ApiSecurityService {
   constructor(httpClient = axios, executionLogger = executionLoggerService) {
     this.httpClient = httpClient;
     this.executionLogger = executionLogger;
+    this.wafDetected = false;
+    this.infrastructureFingerprint = null;
+    this.authProfiles = [];
+  }
+
+  buildAuthProfiles(engagement = {}) {
+    const profiles = [];
+    const seen = new Set();
+    const pushProfile = (name, headers = {}, source = "manual") => {
+      const normalizedHeaders = {};
+      for (const [rawKey, rawValue] of Object.entries(headers || {})) {
+        const key = String(rawKey || "").trim();
+        const value = String(rawValue || "").trim();
+        if (!key || !value) continue;
+        normalizedHeaders[key] = value;
+      }
+      if (Object.keys(normalizedHeaders).length === 0) return;
+      const key = `${name}:${JSON.stringify(normalizedHeaders)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      profiles.push({ name, headers: normalizedHeaders, source });
+    };
+
+    if (process.env.VENOM_AUTH_COOKIE) {
+      pushProfile(
+        "cookie",
+        { Cookie: process.env.VENOM_AUTH_COOKIE },
+        "env:VENOM_AUTH_COOKIE"
+      );
+    }
+    if (process.env.VENOM_AUTH_BEARER) {
+      pushProfile(
+        "jwt",
+        { Authorization: `Bearer ${process.env.VENOM_AUTH_BEARER}` },
+        "env:VENOM_AUTH_BEARER"
+      );
+    }
+    if (process.env.VENOM_AUTH_HEADER_NAME && process.env.VENOM_AUTH_HEADER_VALUE) {
+      pushProfile(
+        "custom-header",
+        {
+          [process.env.VENOM_AUTH_HEADER_NAME]: process.env.VENOM_AUTH_HEADER_VALUE
+        },
+        "env:VENOM_AUTH_HEADER_NAME"
+      );
+    }
+
+    try {
+      const roleHeaders = JSON.parse(process.env.VENOM_ROLE_AUTH_HEADERS_JSON || "{}");
+      for (const [roleName, roleHeadersValue] of Object.entries(roleHeaders || {})) {
+        pushProfile(
+          `role:${roleName}`,
+          roleHeadersValue && typeof roleHeadersValue === "object" ? roleHeadersValue : {},
+          "env:VENOM_ROLE_AUTH_HEADERS_JSON"
+        );
+      }
+    } catch (error) {
+      logWarn(
+        logger,
+        {},
+        "VENOM_ROLE_AUTH_HEADERS_JSON could not be parsed; skipping role-based auth profiles.",
+        error
+      );
+    }
+
+    const engagementAuth = asObject(engagement?.authorization?.scanAuth || engagement?.scanAuth);
+    if (engagementAuth.cookie) {
+      pushProfile("cookie", { Cookie: engagementAuth.cookie }, "engagement.scanAuth.cookie");
+    }
+    if (engagementAuth.jwt) {
+      pushProfile(
+        "jwt",
+        { Authorization: `Bearer ${engagementAuth.jwt}` },
+        "engagement.scanAuth.jwt"
+      );
+    }
+    if (engagementAuth.oauthBearer) {
+      pushProfile(
+        "oauth",
+        { Authorization: `Bearer ${engagementAuth.oauthBearer}` },
+        "engagement.scanAuth.oauthBearer"
+      );
+    }
+    if (engagementAuth.headers && typeof engagementAuth.headers === "object") {
+      pushProfile("custom-header", engagementAuth.headers, "engagement.scanAuth.headers");
+    }
+
+    return profiles;
+  }
+
+  resolveAuthHeaders(profileName = "") {
+    const target = String(profileName || "unauthenticated").trim();
+    const profile = this.authProfiles.find((item) => item.name === target);
+    return profile ? asObject(profile.headers) : {};
+  }
+
+  summarizeAuthProfiles() {
+    return this.authProfiles.map((profile) => ({
+      name: profile.name,
+      source: profile.source
+    }));
   }
 
   parseOpenApiSpec(spec = {}) {
@@ -279,23 +458,38 @@ class ApiSecurityService {
   }
 
   deduplicateEndpoints(endpoints = []) {
-    const seen = new Set();
-    const deduped = [];
+    const grouped = new Map();
     for (const endpoint of endpoints) {
       const path = normalizePath(endpoint.path);
       const method = String(endpoint.method || "GET").toUpperCase();
       const key = `${method}:${path}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      deduped.push({
+      const candidate = {
+        ...asObject(endpoint),
         path,
         method,
         source: endpoint.source || "probe"
-      });
+      };
+      if (!grouped.has(key)) {
+        grouped.set(key, candidate);
+        continue;
+      }
+      const existing = grouped.get(key);
+      const existingScore = Number(existing?.endpointExistenceScore || 0);
+      const nextScore = Number(candidate?.endpointExistenceScore || 0);
+      if (nextScore > existingScore) {
+        grouped.set(key, {
+          ...existing,
+          ...candidate,
+          source: existing.source || candidate.source
+        });
+      } else {
+        grouped.set(key, {
+          ...existing,
+          source: existing.source || candidate.source
+        });
+      }
     }
-    return deduped;
+    return [...grouped.values()];
   }
 
   toDiscoveryAuditMessage(responseStatus, path) {
@@ -322,6 +516,7 @@ class ApiSecurityService {
     method = "GET",
     source = "probe",
     rootBodyFingerprint = "",
+    baselineSnapshots = [],
     discoveryAudit = [],
     scanLimitations = []
   }) {
@@ -359,6 +554,28 @@ class ApiSecurityService {
     }
 
     const statusCode = Number(response.status || 0);
+    let existence = this.computeEndpointExistenceConfidence({
+      requestPath: normalizedPath,
+      response,
+      baselineSnapshots,
+      source,
+      infrastructureFingerprint: this.infrastructureFingerprint || {}
+    });
+    let authenticatedProbeResult = null;
+    if (Array.isArray(this.authProfiles) && this.authProfiles.length > 0) {
+      authenticatedProbeResult = await this.evaluateAuthenticatedEndpointProbe({
+        targetUrl,
+        path: normalizedPath,
+        method: probeMethod,
+        baselineSnapshots
+      });
+      if (authenticatedProbeResult?.confirmed) {
+        existence.score = clamp(existence.score + 18, 0, 100);
+        existence.confidence = existence.score >= 75 ? "HIGH" : existence.score >= 45 ? "MEDIUM" : "LOW";
+        existence.routeLegitimacy = routeLegitimacyBand(existence.score);
+        existence.reason = `${existence.reason} Authenticated profile confirmed route behavior and increased endpoint confidence.`;
+      }
+    }
     if (this.isDiscoveryStatusEligible(statusCode)) {
       const contentType = String(response.headers?.["content-type"] || "").toLowerCase();
       const currentBodyFingerprint =
@@ -388,13 +605,47 @@ class ApiSecurityService {
         method: probeMethod,
         source,
         statusCode,
+        endpointExistenceConfidence: existence.confidence,
+        endpointExistenceScore: existence.score,
+        routeLegitimacy: existence.routeLegitimacy,
         action: "queued",
-        message: `Path responded ${statusCode} â€” endpoint considered valid and queued for API tests`
+        message: `Path responded ${statusCode} — queued for API tests with endpoint confidence ${existence.confidence} (${existence.score}/100).`
       });
+      if (authenticatedProbeResult) {
+        discoveryAudit.push({
+          path: normalizedPath,
+          method: probeMethod,
+          source,
+          statusCode,
+          action: "auth_probe",
+          routeLegitimacy: existence.routeLegitimacy,
+          endpointExistenceConfidence: existence.confidence,
+          endpointExistenceScore: existence.score,
+          message: authenticatedProbeResult.confirmed
+            ? `Authenticated profile '${authenticatedProbeResult.profilesTested[0].profileName}' confirmed route behavior and increased endpoint confidence.`
+            : "Authenticated profiles were tested but did not provide independent route confirmation."
+        });
+      }
+      if (existence.confidence === "LOW") {
+        discoveryAudit.push({
+          path: normalizedPath,
+          method: probeMethod,
+          source,
+          statusCode,
+          action: "skeptical",
+          message:
+            "Low endpoint existence confidence detected. Route may be generic fallback/CDN-influenced and should be interpreted cautiously."
+        });
+      }
       return {
         path: normalizedPath,
         method: probeMethod,
-        source
+        source,
+        endpointExistenceConfidence: existence.confidence,
+        endpointExistenceScore: existence.score,
+        endpointExistenceReason: existence.reason,
+        routeLegitimacy: existence.routeLegitimacy,
+        likelyGenericFallback: existence.likelyGeneric
       };
     }
 
@@ -487,6 +738,129 @@ class ApiSecurityService {
         timeout: errorCode === "ECONNABORTED" || /timeout/i.test(error?.message || "")
       };
     }
+  }
+
+  hasThrottleHeaders(headers = {}) {
+    const normalized = Object.keys(asObject(headers)).map((key) =>
+      String(key || "").trim().toLowerCase()
+    );
+    return THROTTLE_HEADER_HINTS.some((headerName) => normalized.includes(headerName));
+  }
+
+  hasChallengePattern(body = "") {
+    const text = asString(body);
+    return CHALLENGE_PATTERNS.some((pattern) => pattern.test(text));
+  }
+
+  async evaluateAuthenticatedEndpointProbe({
+    targetUrl,
+    path,
+    method = "GET",
+    baselineSnapshots = []
+  }) {
+    if (!Array.isArray(this.authProfiles) || this.authProfiles.length === 0) {
+      return null;
+    }
+
+    const testedProfiles = [];
+    let confirmed = false;
+
+    for (const profile of this.authProfiles.slice(0, 2)) {
+      const response = await this.safeRequest({
+        url: joinUrl(targetUrl, path),
+        method,
+        headers: profile.headers
+      });
+      const snapshot = buildResponseSnapshot(response);
+      const genericAssessment = evaluateGenericResponsePattern(snapshot, baselineSnapshots);
+      const profileConfirmed =
+        response.status >= 200 &&
+        response.status < 400 &&
+        !genericAssessment.likelyGeneric;
+      testedProfiles.push({
+        profileName: profile.name,
+        statusCode: Number(response.status || 0),
+        headers: sanitizeHeadersForEvidence(response.headers || {}),
+        bodyExcerpt: trimBodyExcerpt(response.body, 200),
+        genericSimilarity: genericAssessment.similarity || 0,
+        genericFallback: genericAssessment.likelyGeneric,
+        confirmed: profileConfirmed
+      });
+      if (profileConfirmed) {
+        confirmed = true;
+        break;
+      }
+    }
+
+    return {
+      profilesTested: testedProfiles,
+      confirmed,
+      testedCount: testedProfiles.length
+    };
+  }
+
+  async fingerprintInfrastructure(targetUrl) {
+    const rootResponse = await this.safeRequest({
+      url: joinUrl(targetUrl, "/"),
+      method: "GET",
+      timeout: 8000
+    });
+    const canaryResponse = await this.safeRequest({
+      url: joinUrl(targetUrl, `/venom-fp-${Date.now()}-${Math.floor(Math.random() * 1000)}`),
+      method: "GET",
+      timeout: 8000
+    });
+
+    const rootFingerprint = detectInfrastructureFingerprint({
+      headers: rootResponse.headers,
+      body: rootResponse.body,
+      targetUrl
+    });
+    const canaryFingerprint = detectInfrastructureFingerprint({
+      headers: canaryResponse.headers,
+      body: canaryResponse.body,
+      targetUrl
+    });
+
+    const merged = {
+      targetUrl,
+      serverHeader: rootFingerprint.serverHeader || canaryFingerprint.serverHeader || "",
+      xPoweredBy: rootFingerprint.xPoweredBy || canaryFingerprint.xPoweredBy || "",
+      waf: [...new Set([...(rootFingerprint.waf || []), ...(canaryFingerprint.waf || [])])],
+      cdn: [...new Set([...(rootFingerprint.cdn || []), ...(canaryFingerprint.cdn || [])])],
+      hosting: [
+        ...new Set([...(rootFingerprint.hosting || []), ...(canaryFingerprint.hosting || [])])
+      ],
+      appStack: [
+        ...new Set([...(rootFingerprint.appStack || []), ...(canaryFingerprint.appStack || [])])
+      ],
+      edgeCache: Boolean(rootFingerprint.edgeCache || canaryFingerprint.edgeCache),
+      defenseSignals: {
+        jsChallenge: Boolean(
+          rootFingerprint.defenseSignals?.jsChallenge ||
+            canaryFingerprint.defenseSignals?.jsChallenge
+        ),
+        captcha: Boolean(
+          rootFingerprint.defenseSignals?.captcha ||
+            canaryFingerprint.defenseSignals?.captcha
+        ),
+        botManager: Boolean(
+          rootFingerprint.defenseSignals?.botManager ||
+            canaryFingerprint.defenseSignals?.botManager
+        )
+      },
+      confidence:
+        rootFingerprint.confidence === "HIGH" || canaryFingerprint.confidence === "HIGH"
+          ? "HIGH"
+          : rootFingerprint.confidence === "MEDIUM" || canaryFingerprint.confidence === "MEDIUM"
+            ? "MEDIUM"
+            : "LOW",
+      evidence: [...(rootFingerprint.evidence || []), ...(canaryFingerprint.evidence || [])],
+      rootSnapshot: buildResponseSnapshot(rootResponse),
+      canarySnapshot: buildResponseSnapshot(canaryResponse)
+    };
+
+    return merged;
   }
 
   async runWafDetection(targetUrl) {
@@ -631,6 +1005,108 @@ class ApiSecurityService {
     };
   }
 
+  computeEndpointExistenceConfidence({
+    requestPath,
+    response,
+    baselineSnapshots = [],
+    source = "probe",
+    infrastructureFingerprint = {}
+  }) {
+    const snapshot = buildResponseSnapshot(response);
+    const genericAssessment = evaluateGenericResponsePattern(snapshot, baselineSnapshots);
+    const hints = [];
+    let score = 50;
+
+    const edgeSignalDetected =
+      Boolean(infrastructureFingerprint?.cdn?.length) ||
+      Boolean(infrastructureFingerprint?.waf?.length) ||
+      Boolean(infrastructureFingerprint?.defenseSignals?.jsChallenge) ||
+      Boolean(infrastructureFingerprint?.defenseSignals?.captcha);
+
+    if (genericAssessment.likelyGeneric) {
+      score -= genericAssessment.confidence === "HIGH" ? 35 : 22;
+      hints.push(genericAssessment.reason);
+    } else {
+      score += 15;
+      hints.push("Response differs from generic fallback baseline.");
+    }
+
+    const pathText = String(requestPath || "");
+    const queryText = pathText.includes("?") ? pathText.split("?")[1] : "";
+    if (queryText) {
+      const params = new URLSearchParams(queryText);
+      for (const [, value] of params.entries()) {
+        if (!value) continue;
+        if (asString(response.body).includes(String(value))) {
+          score += 15;
+          hints.push("Observed parameter reflection in response body.");
+          break;
+        }
+      }
+    }
+
+    if (snapshot.statusCode >= 200 && snapshot.statusCode < 400) {
+      score += 10;
+    }
+    if (snapshot.statusCode === 403 && genericAssessment.likelyGeneric) {
+      score -= 18;
+      hints.push(
+        "HTTP 403 mirrors fallback response pattern; endpoint may be synthetic or edge-blocked."
+      );
+      if (edgeSignalDetected) {
+        score -= 15;
+        hints.push(
+          "Observed CDN/WAF fingerprints together with uniform deny behavior, suggesting edge-layer or generic deny behavior rather than application routing."
+        );
+      }
+    }
+    if (snapshot.statusCode === 403 && !genericAssessment.likelyGeneric && edgeSignalDetected) {
+      score -= 10;
+      hints.push(
+        "Uniform 403 response from a route with infrastructure fingerprints; endpoint existence remains uncertain due to probable edge-layer filtering."
+      );
+    }
+    if (source === "openapi") {
+      score += 12;
+      hints.push("Endpoint came from OpenAPI specification.");
+    }
+    if (this.hasChallengePattern(response.body)) {
+      score -= 10;
+      hints.push("Challenge-page markers observed; route behavior may be defense-influenced.");
+    }
+
+    const bounded = clamp(score, 0, 100);
+    const confidenceLevel = bounded >= 75 ? "HIGH" : bounded >= 45 ? "MEDIUM" : "LOW";
+    const legitimacyBand = routeLegitimacyBand(bounded);
+
+    return {
+      score: bounded,
+      confidence: confidenceLevel,
+      routeLegitimacy: legitimacyBand,
+      confidence: confidenceLevel,
+      routeLegitimacy: legitimacyBand,
+      likelyGeneric: genericAssessment.likelyGeneric,
+      reason: hints.join(" "),
+      genericSimilarity: genericAssessment.similarity || null
+    };
+  }
+
+  extractRouteCandidatesFromJs(body = "", sourcePath = "") {
+    const text = asString(body);
+    const pathMatches = text.match(/["'`](\/(?:api|admin|graphql)[^"'`\s]*)["'`]/gi) || [];
+    return pathMatches
+      .map((match) => {
+        const cleaned = String(match || "").replace(/^["'`]|["'`]$/g, "").trim();
+        if (!cleaned.startsWith("/")) return null;
+        return {
+          path: cleaned,
+          method: "GET",
+          source: sourcePath ? `js:${sourcePath}` : "js"
+        };
+      })
+      .filter(Boolean);
+  }
+
   async discoverEndpoints(targetUrl) {
     const discoveryAudit = [];
     const scanLimitations = [];
@@ -659,6 +1135,24 @@ class ApiSecurityService {
     }
     if (Array.isArray(reconResult.endpoints) && reconResult.endpoints.length > 0) {
       candidates.push(...reconResult.endpoints);
+    }
+
+    const baselineSnapshots = [];
+    const canaryResA = await this.safeRequest({
+      url: joinUrl(targetUrl, "/venom-canary-test-a7f3b2/"),
+      method: "GET",
+      timeout: 5000
+    });
+    const canaryResB = await this.safeRequest({
+      url: joinUrl(targetUrl, "/venom-canary-test-b9e4c1/"),
+      method: "GET",
+      timeout: 5000
+    });
+    if (canaryResA.ok) {
+      baselineSnapshots.push(buildResponseSnapshot(canaryResA));
+    }
+    if (canaryResB.ok) {
+      baselineSnapshots.push(buildResponseSnapshot(canaryResB));
     }
 
     let openApiCandidates = [];
@@ -710,19 +1204,97 @@ class ApiSecurityService {
       ) {
         rootBodyFingerprint = normalizeBodyForFingerprint(rootResponse.body);
         candidates.push(...this.extractEndpointsFromHtml(rootResponse.body, targetUrl));
+
+        const scriptSrcMatches =
+          asString(rootResponse.body).match(/<script[^>]+src=["']([^"']+)["']/gi) || [];
+        const parsedScripts = scriptSrcMatches
+          .map((rawMatch) => {
+            const match = rawMatch.match(/src=["']([^"']+)["']/i);
+            return match ? String(match[1] || "").trim() : "";
+          })
+          .filter(Boolean)
+          .slice(0, 10);
+        for (const scriptSrc of parsedScripts) {
+          try {
+            const resolved = new URL(scriptSrc, targetUrl);
+            if (resolved.hostname !== new URL(targetUrl).hostname) {
+              continue;
+            }
+            // eslint-disable-next-line no-await-in-loop
+            const scriptResponse = await this.safeRequest({
+              url: resolved.toString(),
+              method: "GET",
+              timeout: 6000
+            });
+            if (!scriptResponse.ok || scriptResponse.status >= 400) {
+              continue;
+            }
+            candidates.push(
+              ...this.extractRouteCandidatesFromJs(
+                scriptResponse.body,
+                `${resolved.pathname}${resolved.search || ""}`
+              )
+            );
+          } catch (error) {
+            logWarn(
+              logger,
+              { scriptSrc, targetUrl },
+              "Failed to parse or fetch JavaScript route candidate during recon.",
+              error
+            );
+          }
+        }
+      }
+
+      const robotsResponse = await this.safeRequest({
+        url: joinUrl(targetUrl, "/robots.txt"),
+        method: "GET",
+        timeout: 5000
+      });
+      if (robotsResponse.ok && robotsResponse.status >= 200 && robotsResponse.status < 300) {
+        const lines = asString(robotsResponse.body).split(/\r?\n/);
+        for (const line of lines) {
+          const cleaned = String(line || "").trim();
+          if (!cleaned || cleaned.startsWith("#")) continue;
+          const directiveMatch = cleaned.match(/^(allow|disallow|sitemap)\s*:\s*(.+)$/i);
+          if (!directiveMatch) continue;
+          const directive = String(directiveMatch[1] || "").toLowerCase();
+          const value = String(directiveMatch[2] || "").trim();
+          if (directive === "sitemap") {
+            try {
+              const sitemapUrl = new URL(value, targetUrl).toString();
+              // eslint-disable-next-line no-await-in-loop
+              const sitemapResponse = await this.safeRequest({
+                url: sitemapUrl,
+                method: "GET",
+                timeout: 7000
+              });
+              const locMatches = asString(sitemapResponse.body).match(/<loc>([^<]+)<\/loc>/gi) || [];
+              for (const loc of locMatches.slice(0, 60)) {
+                const parsedLoc = loc.match(/<loc>([^<]+)<\/loc>/i);
+                if (!parsedLoc) continue;
+                try {
+                  const resolved = new URL(parsedLoc[1], targetUrl);
+                  if (resolved.hostname !== new URL(targetUrl).hostname) continue;
+                  candidates.push({
+                    path: `${resolved.pathname || "/"}${resolved.search || ""}`,
+                    method: "GET",
+                    source: "sitemap"
+                  });
+                } catch {
+                  // ignore malformed loc item
+                }
+              }
+            } catch {
+              // ignore malformed sitemap directive
+            }
+          } else if (value.startsWith("/")) {
+            candidates.push({ path: value, method: "GET", source: "robots" });
+          }
+        }
       }
 
       let hasCustom404 = false;
-      const canaryResA = await this.safeRequest({
-        url: joinUrl(targetUrl, "/venom-canary-test-a7f3b2/"),
-        method: "GET",
-        timeout: 5000
-      });
-      const canaryResB = await this.safeRequest({
-        url: joinUrl(targetUrl, "/venom-canary-test-b9e4c1/"),
-        method: "GET",
-        timeout: 5000
-      });
       if (canaryResA.status === 200 && canaryResB.status === 200) {
         hasCustom404 = true;
         logger.info(
@@ -747,6 +1319,7 @@ class ApiSecurityService {
           method: candidate.method,
           source: candidate.source || "probe",
           rootBodyFingerprint,
+          baselineSnapshots,
           discoveryAudit,
           scanLimitations
         });
@@ -772,6 +1345,7 @@ class ApiSecurityService {
         method: candidate.method,
         source: candidate.source || "probe",
         rootBodyFingerprint: "",
+        baselineSnapshots,
         discoveryAudit,
         scanLimitations
       });
@@ -887,31 +1461,41 @@ class ApiSecurityService {
     reproductionSteps = [],
     detectionConfidence = "strong signal",
     exploitConfidence = "weak signal",
-    severityReason = ""
+    severityReason = "",
+    evidenceStrength = "",
+    verificationMode = "",
+    metadata = {}
   }) {
     const endpointContext = classifyEndpoint(endpoint);
     const normalizedBaseSeverity = normalizeSeverityValue(severity);
     const contextualSeverity = contextualizeSeverity(normalizedBaseSeverity, endpointContext);
-    const normalizedDetectionConfidence = String(detectionConfidence || "strong signal")
+    const normalizedDetectionConfidence = String(detectionConfidence || "weak")
       .trim()
-      .toLowerCase();
-    const normalizedExploitConfidence = String(exploitConfidence || "weak signal")
+      .toUpperCase();
+    const normalizedExploitConfidence = String(exploitConfidence || "weak")
       .trim()
-      .toLowerCase();
+      .toUpperCase();
+    const metadataObject = asObject(metadata);
     const confidenceVal =
-      normalizeConfidenceLevel(
-        normalizeConfidenceLevel(normalizedDetectionConfidence) ||
-          normalizeConfidenceLevel(normalizedExploitConfidence)
-      ) ||
+      normalizeConfidenceLevel(evidenceStrength) ||
+      normalizeConfidenceLevel(normalizedDetectionConfidence) ||
+      normalizeConfidenceLevel(normalizedExploitConfidence) ||
       deriveConfidenceLevel({
         severity: contextualSeverity,
         detectionConfidence: normalizedDetectionConfidence,
-        exploitConfidence: normalizedExploitConfidence
+        exploitConfidence: normalizedExploitConfidence,
+        metadata: metadataObject
       });
 
-    let confidence = confidenceVal;
-    let finalDetectionConfidence = normalizedDetectionConfidence;
-    let finalExploitConfidence = normalizedExploitConfidence;
+    let confidence = normalizeEvidenceStrength(confidenceVal, "UNVERIFIED");
+    let finalDetectionConfidence = normalizeEvidenceStrength(
+      normalizeConfidenceLevel(normalizedDetectionConfidence, "UNVERIFIED"),
+      "UNVERIFIED"
+    );
+    let finalExploitConfidence = normalizeEvidenceStrength(
+      normalizeConfidenceLevel(normalizedExploitConfidence, "UNVERIFIED"),
+      "UNVERIFIED"
+    );
 
     const isInjectionOrReflection =
       /injection|reflected|xss|ssti|reflection|sql/i.test(String(type || "").trim()) ||
@@ -919,13 +1503,37 @@ class ApiSecurityService {
       /injection|reflected|xss|ssti|reflection|sql/i.test(String(description || "").trim()) ||
       /injection|reflected|xss|ssti|reflection|sql/i.test(String(testPerformed || "").trim());
 
-    if (this.wafDetected && isInjectionOrReflection) {
-      confidence = "WEAK_SIGNAL";
-      finalDetectionConfidence = "weak signal";
-      finalExploitConfidence = "weak signal";
+    const likelyDefenseInfluenced =
+      this.wafDetected ||
+      metadataObject.cdnInfluenced === true ||
+      this.hasChallengePattern(metadataObject?.responseBody || "") ||
+      Boolean(this.infrastructureFingerprint?.defenseSignals?.jsChallenge) ||
+      Boolean(this.infrastructureFingerprint?.defenseSignals?.captcha);
+
+    if (likelyDefenseInfluenced && isInjectionOrReflection) {
+      confidence = "CDN_INFLUENCED";
+      finalDetectionConfidence = "CDN_INFLUENCED";
+      finalExploitConfidence = "CDN_INFLUENCED";
     }
 
     const manualValidationRequired = needsManualValidation(confidence);
+    const normalizedType = String(type || "").toUpperCase();
+    const endpointExistenceConfidence = String(
+      metadataObject.endpointExistenceConfidence || ""
+    ).toUpperCase();
+    const skepticChecks = [
+      {
+        question: "Could this be caused by CDN/WAF behavior?",
+        answer: likelyDefenseInfluenced ? "Possible - defense-layer influence detected." : "Less likely."
+      },
+      {
+        question: "Could this endpoint be a generic fallback route?",
+        answer:
+          endpointExistenceConfidence === "LOW"
+            ? "Possible - endpoint existence confidence is low."
+            : "No generic fallback similarity signal observed."
+      }
+    ];
     const effectiveSeverityReason =
       String(severityReason || "").trim() ||
       `Severity adjusted from '${normalizedBaseSeverity.toUpperCase()}' to '${contextualSeverity.toUpperCase()}' based on ${endpointContext.endpointType.toLowerCase()} endpoint context (${endpointContext.sensitivity}).`;
@@ -942,6 +1550,30 @@ class ApiSecurityService {
                 ? evidence
                 : "Evidence capture failed — no request/response snapshot was recorded by the scanner."
           };
+    const exploitability = calculateExploitabilityScore(
+      {
+        type: normalizedType,
+        title,
+        description,
+        severity: contextualSeverity,
+        endpointType: endpointContext.endpointType,
+        metadata: {
+          ...metadataObject,
+          endpointExistenceConfidence
+        }
+      },
+      {
+        defenseSignals: [
+          ...(this.wafDetected ? [{ type: "WAF_DETECTED" }] : []),
+          ...(likelyDefenseInfluenced ? [{ type: "CDN_DEFENSE" }] : [])
+        ],
+        authenticatedScan: this.authProfiles.length > 0
+      }
+    );
+    const resolvedVerificationMode = normalizeVerificationMode(
+      verificationMode || deriveVerificationMode({ confidence }),
+      "INFERRED"
+    );
     return {
       id: `${idPrefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
       type,
@@ -958,12 +1590,19 @@ class ApiSecurityService {
       responseObserved,
       endpointType: endpointContext.endpointType,
       endpointSensitivity: endpointContext.sensitivity,
+      attackSurfaceCategory: endpointContext.attackSurfaceCategory,
+      exploitRelevance: endpointContext.exploitRelevance,
       severityReason: effectiveSeverityReason,
       confidence,
+      evidenceStrength: confidence,
+      verificationMode: resolvedVerificationMode,
       manualValidationRequired,
       manualValidationNote: manualValidationRequired
         ? "Manual validation recommended before treating as confirmed vulnerability."
         : "",
+      exploitabilityScore: exploitability.score,
+      exploitabilityBand: exploitability.band,
+      exploitabilityFactors: exploitability.factors,
       evidence: safeEvidence,
       discoveryVector:
         String(discoveryVector || "").trim() ||
@@ -976,6 +1615,7 @@ class ApiSecurityService {
       exploitConfidence: finalExploitConfidence,
       tags: ["api-security", String(type || "").toLowerCase()],
       metadata: {
+        ...metadataObject,
         findingType: type,
         endpoint,
         methodTested,
@@ -984,10 +1624,21 @@ class ApiSecurityService {
         endpointContext,
         severityReason: effectiveSeverityReason,
         confidence,
+        evidenceStrength: confidence,
+        verificationMode: resolvedVerificationMode,
         manualValidationRequired,
         manualValidationNote: manualValidationRequired
           ? "Manual validation recommended before treating as confirmed vulnerability."
           : "",
+        exploitabilityScore: exploitability.score,
+        exploitabilityBand: exploitability.band,
+        exploitabilityFactors: exploitability.factors,
+        endpointExistenceConfidence:
+          endpointExistenceConfidence ||
+          String(metadataObject.endpointExistenceConfidence || "").toUpperCase() ||
+          "UNVERIFIED",
+        skepticChecks,
+        cdnInfluenced: likelyDefenseInfluenced,
         discoveryVector:
           String(discoveryVector || "").trim() ||
           "Evidence capture failed — discovery vector was not supplied by this scanner step.",
@@ -1112,7 +1763,7 @@ class ApiSecurityService {
           title: `Unauthenticated endpoint exposed: ${requestPath}`,
           description:
             "Endpoint accepted request without Authorization header or API key.",
-          severity: endpointContext.endpointType === "ADMIN" ? "critical" : "high",
+          severity: endpointContext.endpointType === "ADMIN_PANEL" ? "critical" : "high",
           endpoint: requestPath,
           methodTested: endpoint.method,
           testPerformed: "Sent request without Authorization or API key headers.",
@@ -1128,7 +1779,16 @@ class ApiSecurityService {
             `Expected secure behavior: HTTP 401/403. Observed during scan: HTTP ${Number(response.status || 0)}.`
           ],
           remediation:
-            "Add authentication middleware (e.g., auth guard) before this route and enforce token/API-key validation."
+            "Add authentication middleware (e.g., auth guard) before this route and enforce token/API-key validation.",
+          evidenceStrength: "LIKELY",
+          verificationMode: "OBSERVED",
+          metadata: {
+            endpointExistenceConfidence: endpoint.endpointExistenceConfidence || "MEDIUM",
+            routeLegitimacy: endpoint.routeLegitimacy || "UNVERIFIED",
+            rootCauseKey: `API_MISSING_AUTHENTICATION::${endpointContext.endpointType}`,
+            vulnerabilityClass: "MISSING_AUTHENTICATION",
+            attackSurfaceCategory: endpointContext.attackSurfaceCategory
+          }
         })
       : null;
 
@@ -1157,6 +1817,7 @@ class ApiSecurityService {
       return null;
     }
     const requestMethod = endpoint.method === "HEAD" ? "GET" : endpoint.method;
+    const endpointContext = classifyEndpoint(originalPath);
     const requestUrl = joinUrl(targetUrl, incrementedPath);
 
     const response = await this.safeRequest({
@@ -1201,7 +1862,16 @@ class ApiSecurityService {
             "Compare response data against the authenticated user's own object; access to another user's data indicates broken object-level authorization."
           ],
           remediation:
-            "Validate object ownership before returning data by comparing the authenticated user ID to the resource owner ID."
+            "Validate object ownership before returning data by comparing the authenticated user ID to the resource owner ID.",
+          evidenceStrength: "LIKELY",
+          verificationMode: "OBSERVED",
+          metadata: {
+            endpointExistenceConfidence: endpoint.endpointExistenceConfidence || "MEDIUM",
+            routeLegitimacy: endpoint.routeLegitimacy || "UNVERIFIED",
+            rootCauseKey: `API_BROKEN_OBJECT_LEVEL_AUTHORIZATION::${endpointContext.endpointType}`,
+            vulnerabilityClass: "BROKEN_OBJECT_LEVEL_AUTHORIZATION",
+            attackSurfaceCategory: endpointContext.attackSurfaceCategory
+          }
         })
       : null;
 
@@ -1226,6 +1896,18 @@ class ApiSecurityService {
   async runRateLimitTest(targetUrl, endpoint, engagementId, options = {}) {
     const requestPath = this.materializePath(endpoint.path);
     const requestMethod = endpoint.method === "HEAD" ? "GET" : endpoint.method;
+    const endpointContext = classifyEndpoint(requestPath);
+    if (isLowSensitivityInformational(endpointContext)) {
+      if (Array.isArray(options?.defenseSignals)) {
+        options.defenseSignals.push({
+          type: "RATE_LIMIT_NOT_REQUIRED",
+          endpoint: requestPath,
+          reason:
+            "Endpoint classified as low-sensitivity public content. Missing throttling is informational and excluded from vulnerability findings."
+        });
+      }
+      return null;
+    }
     const requestCount = 20;
     const responses = [];
     const startedAt = Date.now();
@@ -1254,6 +1936,49 @@ class ApiSecurityService {
         : responses
             .slice(0, first429Index)
             .filter((item) => item.status >= 200 && item.status < 300).length;
+    const baselineDurations = responses.slice(0, 5).map((item) => Number(item.durationMs || 0));
+    const burstDurations = responses.slice(5).map((item) => Number(item.durationMs || 0));
+    const baselineMedian = median(baselineDurations);
+    const burstTailMedian = median(burstDurations.slice(-6));
+    const latencyRatio =
+      baselineMedian > 0 ? Number((burstTailMedian / baselineMedian).toFixed(2)) : 1;
+    const baselineSnapshot = responses[4] ? buildResponseSnapshot(responses[4]) : null;
+    const burstSnapshot =
+      responses[responses.length - 1]
+        ? buildResponseSnapshot(responses[responses.length - 1])
+        : null;
+    const responseDiff =
+      baselineSnapshot && burstSnapshot
+        ? diffResponseSnapshots(baselineSnapshot, burstSnapshot)
+        : {
+            statusChanged: false,
+            bodyChanged: false,
+            headersChanged: false,
+            changedHeaders: [],
+            durationChangeRatio: 1,
+            retryAfterIntroduced: false,
+            redirectChanged: false
+          };
+    const throttleHeaderSeen = responses.some((item) => this.hasThrottleHeaders(item.headers || {}));
+    const challengeDetected = responses.some((item) => this.hasChallengePattern(item.body));
+    const networkResets = responses.filter((item) => item.ok === false).length;
+    const explicitBlocking =
+      first429Index !== -1 ||
+      throttleHeaderSeen ||
+      responseDiff.retryAfterIntroduced ||
+      statusTimeline.some((statusCode) => statusCode === 503 || statusCode === 509);
+    const silentThrottling =
+      first429Index === -1 &&
+      (latencyRatio >= 4 ||
+        (latencyRatio >= 3 && (responseDiff.bodyChanged || responseDiff.statusChanged)) ||
+        networkResets > 0 ||
+        challengeDetected);
+    const adaptiveDefense =
+      Boolean(this.infrastructureFingerprint?.waf?.length) ||
+      Boolean(this.infrastructureFingerprint?.cdn?.length) ||
+      Boolean(this.infrastructureFingerprint?.defenseSignals?.jsChallenge) ||
+      Boolean(this.infrastructureFingerprint?.defenseSignals?.captcha) ||
+      challengeDetected;
     const representative = responses[0] || {
       status: 0,
       body: null,
@@ -1261,45 +1986,67 @@ class ApiSecurityService {
       durationMs: totalDuration
     };
     const requestUrl = joinUrl(targetUrl, requestPath);
-    const endpointContext = classifyEndpoint(requestPath);
     const severityByEndpointType = {
-      AUTH: "high",
-      ADMIN: "high",
-      FUNCTIONAL: "medium",
-      INFORMATIONAL: "low"
+      AUTH_ENDPOINT: "high",
+      ADMIN_PANEL: "high",
+      PAYMENT: "high",
+      USER_DATA: "high",
+      FILE_UPLOAD: "high",
+      API: "medium",
+      SEARCH: "medium",
+      INTERNAL: "medium",
+      UNKNOWN: "medium",
+      BLOG_CONTENT: "low",
+      STATIC_CONTENT: "low"
     };
     const contextualRateLimitSeverity =
       severityByEndpointType[endpointContext.endpointType] || "medium";
-    let defenseReason = null;
-    if (first429Index !== -1) {
-      defenseReason = `Rate limiting was actively enforced on ${requestPath} after ${first429Index} requests.`;
-      if (Array.isArray(options.defenseSignals)) {
-        options.defenseSignals.push({
-          type: "RATE_LIMIT_ENFORCED",
-          reason: defenseReason
-        });
-      }
-    } else if (successfulResponses < requestCount && representative.status >= 400) {
-      defenseReason = `WAF or network control blocked probe on ${requestPath} after ${successfulResponses} requests.`;
-      if (Array.isArray(options.defenseSignals)) {
-        options.defenseSignals.push({
-          type: "WAF_BLOCK",
-          reason: defenseReason
-        });
-      }
+    let defenseReason = "";
+    if (explicitBlocking) {
+      defenseReason =
+        first429Index !== -1
+          ? `Explicit throttling detected via HTTP 429 at request ${first429Index + 1}.`
+          : "Throttle-related headers or retry semantics were observed.";
+    } else if (silentThrottling) {
+      defenseReason =
+        "Probable silent throttling detected through latency inflation, response mutation, challenge behavior, or connection resets.";
+    } else if (adaptiveDefense) {
+      defenseReason =
+        "Edge-defense infrastructure (CDN/WAF/bot challenge) is present and may apply adaptive throttling without standard 429 responses.";
+    }
+    if (defenseReason && Array.isArray(options.defenseSignals)) {
+      options.defenseSignals.push({
+        type: explicitBlocking
+          ? "RATE_LIMIT_ENFORCED"
+          : silentThrottling
+            ? "SILENT_THROTTLING"
+            : "ADAPTIVE_DEFENSE",
+        endpoint: requestPath,
+        method: requestMethod,
+        reason: defenseReason,
+        latencyRatio,
+        first429AtRequest: first429Index === -1 ? null : first429Index + 1
+      });
     }
 
+    const strictRateLimitExpected = requiresStrictRateLimiting(endpointContext);
+    const likelyFakeRoute =
+      String(endpoint.endpointExistenceConfidence || "").toUpperCase() === "LOW" ||
+      endpoint.likelyGenericFallback === true;
+    const hasThrottleSignal = explicitBlocking || silentThrottling || adaptiveDefense;
+
     const finding =
-      first429Index === -1
+      !hasThrottleSignal && strictRateLimitExpected && !likelyFakeRoute
         ? this.buildFinding({
           type: "API_MISSING_RATE_LIMIT",
-          title: `No standard rate limiting detected on ${requestPath}`,
-          description: `${requestCount} sequential rapid requests did not trigger a standard HTTP 429 Too Many Requests response.`,
+          title: `Insufficient request throttling on ${requestPath}`,
+          description:
+            "Endpoint accepted sustained rapid requests without explicit blocking, adaptive challenge, progressive delay control, or lockout-like response behavior.",
           severity: contextualRateLimitSeverity,
           endpoint: requestPath,
           methodTested: requestMethod,
           testPerformed: `Executed ${requestCount} sequential rapid unauthenticated requests.`,
-          responseObserved: `First 429 index: -1. Successful requests: ${successfulResponses}/${requestCount}.`,
+          responseObserved: `No reliable throttling signal observed. Success ${successfulResponses}/${requestCount}. Latency ratio ${latencyRatio}x.`,
           evidence: {
             request: {
               url: requestUrl,
@@ -1320,22 +2067,43 @@ class ApiSecurityService {
               received429: first429Index !== -1,
               first429AtRequest: first429Index === -1 ? null : first429Index + 1,
               totalDurationMs: totalDuration,
-              testedThreshold: requestCount
+              testedThreshold: requestCount,
+              explicitBlocking,
+              silentThrottling,
+              adaptiveDefense,
+              latencyRatio,
+              baselineMedianMs: baselineMedian,
+              burstTailMedianMs: burstTailMedian,
+              responseDiff,
+              networkResets,
+              challengeDetected
             },
             notes: [
-              "Rate limit probe found no standard 429 HTTP response code.",
-              defenseReason ? defenseReason : "All requests succeeded without throttling."
+              "Layer 1 (explicit blocking): no dependable throttling response observed.",
+              "Layer 2 (silent throttling): no meaningful latency/protocol degradation pattern observed.",
+              "Layer 3 (adaptive defense): no challenge-based throttling signal observed."
             ]
           },
           discoveryVector:
-            "Rate limit probe: bulk rapid requests sent to test threshold enforcement.",
+            "Rate limit probe: layered rate-limit analysis, explicit status checks, response diffing, latency trend analysis, and adaptive defense inference.",
           reproductionSteps: [
-            `for i in {1..${requestCount}}; do curl -s -o /dev/null -w "%{http_code}\\n" -X ${requestMethod} '${requestUrl}'; done`,
-            "Check for HTTP 429 or appropriate throttle response."
+            `for i in {1..${requestCount}}; do curl -s -o /dev/null -w "%{http_code} %{time_total}\\n" -X ${requestMethod} '${requestUrl}'; done`,
+            "Validate whether burst traffic triggers 429, Retry-After, challenge pages, progressive delay, or lockout behavior."
           ],
           remediation:
-            "Apply request throttling (for example: 60 requests/minute for public endpoints and 20 requests/minute for authenticated/session endpoints).",
-          severityReason: `Rate-limiting severity mapped by endpoint class '${endpointContext.endpointType}' (${endpointContext.sensitivity}).`
+            "Implement endpoint-aware throttling, account lockout, CAPTCHA/behavioral checks, and MFA for high-risk authentication flows.",
+          severityReason:
+            `Endpoint class '${endpointContext.endpointType}' requires strict throttling due to ${endpointContext.attackSurfaceCategory} attack-surface relevance.`,
+          evidenceStrength: "LIKELY",
+          verificationMode: "OBSERVED",
+          metadata: {
+            endpointExistenceConfidence: endpoint.endpointExistenceConfidence || "MEDIUM",
+            routeLegitimacy: endpoint.routeLegitimacy || "UNVERIFIED",
+            responseBody: asString(representative.body).slice(0, 500),
+            rootCauseKey: `API_MISSING_RATE_LIMIT::${endpointContext.endpointType}`,
+            vulnerabilityClass: "INSUFFICIENT_REQUEST_THROTTLING",
+            attackSurfaceCategory: endpointContext.attackSurfaceCategory
+          }
         })
         : null;
 
@@ -1350,23 +2118,18 @@ class ApiSecurityService {
         successfulResponses,
         successfulBeforeThrottle,
         first429AtRequest: first429Index === -1 ? null : first429Index + 1,
-        statusCodeHistogram: statusCounts
+        statusCodeHistogram: statusCounts,
+        explicitBlocking,
+        silentThrottling,
+        adaptiveDefense,
+        latencyRatio,
+        challengeDetected,
+        networkResets
       },
       response: representative,
       finding,
       durationMs: totalDuration
     });
-
-    if (first429Index !== -1 && Array.isArray(options?.defenseSignals)) {
-      options.defenseSignals.push({
-        type: "RATE_LIMIT_ENFORCED",
-        endpoint: requestPath,
-        method: requestMethod,
-        first429AtRequest: first429Index + 1,
-        requestCount,
-        durationMs: totalDuration
-      });
-    }
 
     if (finding) {
       finding.metadata.requestCount = requestCount;
@@ -1375,7 +2138,17 @@ class ApiSecurityService {
       finding.metadata.first429AtRequest = first429Index === -1 ? null : first429Index + 1;
       finding.metadata.statusCodeHistogram = statusCounts;
       finding.metadata.statusCodesByRequest = statusTimeline;
-      finding.responseObserved = `No HTTP 429 responses. ${requestCount}/${requestCount} requests succeeded in ${totalDuration}ms.`;
+      finding.metadata.layeredRateLimit = {
+        explicitBlocking,
+        silentThrottling,
+        adaptiveDefense,
+        latencyRatio,
+        responseDiff,
+        defenseReason,
+        challengeDetected,
+        networkResets
+      };
+      finding.responseObserved = `No explicit throttle response. ${successfulResponses}/${requestCount} requests succeeded in ${totalDuration}ms.`;
     }
 
     return finding;
@@ -1464,8 +2237,16 @@ class ApiSecurityService {
               "Apply strict schema validation and output encoding; reject unsafe payloads before business logic.",
             detectionConfidence: "weak signal",
             exploitConfidence: "weak signal",
+            evidenceStrength: "WEAK",
+            verificationMode: "OBSERVED",
             severityReason:
-              "Reflection signal without confirmed execution path is treated as informational pending manual validation."
+              "Reflection signal without confirmed execution path is treated as informational pending manual validation.",
+            metadata: {
+              endpointExistenceConfidence: endpoint.endpointExistenceConfidence || "MEDIUM",
+              rootCauseKey: `POTENTIAL_REFLECTED_INPUT::${payload.key}`,
+              vulnerabilityClass: "REFLECTED_INPUT_SIGNAL",
+              attackSurfaceCategory: classifyEndpoint(requestPath).attackSurfaceCategory
+            }
           })
         : null;
 
@@ -1567,11 +2348,29 @@ class ApiSecurityService {
                   sqlError && !options?.wafDetected ? "strong signal" : "weak signal",
                 exploitConfidence:
                   sqlError && !options?.wafDetected ? "strong signal" : "weak signal",
+                evidenceStrength:
+                  sqlError && !options?.wafDetected
+                    ? "LIKELY"
+                    : options?.wafDetected
+                      ? "CDN_INFLUENCED"
+                      : "WEAK",
+                verificationMode: "OBSERVED",
                 severityReason: sqlError
                   ? options?.wafDetected
                     ? "SQL signal observed while WAF is present; confidence reduced pending manual validation."
                     : "SQL error signature is a strong signal for injection risk."
-                  : "Reflection signal without browser execution confirmation is informational pending manual validation."
+                  : "Reflection signal without browser execution confirmation is informational pending manual validation.",
+                metadata: {
+                  endpointExistenceConfidence: endpoint.endpointExistenceConfidence || "MEDIUM",
+                  routeLegitimacy: endpoint.routeLegitimacy || "UNVERIFIED",
+                  rootCauseKey: sqlError
+                    ? `SQL_INJECTION::${paramName}`
+                    : `POTENTIAL_REFLECTED_INPUT::${paramName}`,
+                  vulnerabilityClass: sqlError
+                    ? "QUERY_PARAMETER_SQL_INJECTION"
+                    : "REFLECTED_INPUT_SIGNAL",
+                  attackSurfaceCategory: classifyEndpoint(testPath).attackSurfaceCategory
+                }
               })
             : null;
 
@@ -1659,7 +2458,15 @@ class ApiSecurityService {
             "If the response includes __schema/type metadata, GraphQL introspection is enabled."
           ],
           remediation:
-            "Disable GraphQL introspection in production configuration and restrict schema exploration to trusted environments."
+            "Disable GraphQL introspection in production configuration and restrict schema exploration to trusted environments.",
+          evidenceStrength: "LIKELY",
+          verificationMode: "OBSERVED",
+          metadata: {
+            endpointExistenceConfidence: "HIGH",
+            rootCauseKey: "API_GRAPHQL_INTROSPECTION_ENABLED::API",
+            vulnerabilityClass: "GRAPHQL_INTROSPECTION_EXPOSURE",
+            attackSurfaceCategory: "PROGRAMMATIC_INTERFACE"
+          }
         })
       : null;
 
@@ -1706,8 +2513,18 @@ class ApiSecurityService {
       }
 
       this.wafDetected = false;
+      this.authProfiles = this.buildAuthProfiles(engagement);
       logger.info({ engagementId, targetUrl }, "Starting API security scan");
       const scanStartedAt = Date.now();
+      const defenseSignals = [];
+      this.infrastructureFingerprint = await this.fingerprintInfrastructure(targetUrl);
+      if (this.infrastructureFingerprint?.waf?.length || this.infrastructureFingerprint?.cdn?.length) {
+        defenseSignals.push({
+          type: "INFRASTRUCTURE_DEFENSE",
+          reason: "Edge/CDN/WAF fingerprint detected before active vulnerability probes.",
+          fingerprint: this.infrastructureFingerprint
+        });
+      }
       const discoveryResult = await this.discoverEndpoints(targetUrl);
       const discoveredEndpoints = this.deduplicateEndpoints(discoveryResult.endpoints || []);
       const scanLimitations = Array.isArray(discoveryResult.scanLimitations)
@@ -1716,7 +2533,6 @@ class ApiSecurityService {
       const discoveryAudit = Array.isArray(discoveryResult.discoveryAudit)
         ? discoveryResult.discoveryAudit
         : [];
-      const defenseSignals = [];
       const findings = [];
       const wafDetection = await this.runWafDetection(targetUrl);
       const wafDetected = Boolean(wafDetection?.detected);
@@ -1860,6 +2676,8 @@ class ApiSecurityService {
         discoveryAudit,
         defenseSignals,
         wafDetection,
+        infrastructureFingerprint: this.infrastructureFingerprint,
+        authProfiles: this.summarizeAuthProfiles(),
         durationMs: Date.now() - scanStartedAt
       };
     } catch (error) {
@@ -1873,6 +2691,8 @@ class ApiSecurityService {
         discoveryAudit: [],
         defenseSignals: [],
         wafDetection: null,
+        infrastructureFingerprint: this.infrastructureFingerprint || null,
+        authProfiles: this.summarizeAuthProfiles(),
         error: structuredError.message
       };
     }
