@@ -1,18 +1,20 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
+import { joinBackendUrl, normalizeBackendBaseUrl } from "@/lib/backendUrl";
 
 export const runtime = "nodejs";
 
 function getBackendBaseUrl() {
-  return (
+  return normalizeBackendBaseUrl(
     process.env.VENOM_BACKEND_BASE_URL?.trim() ||
-    process.env.NEXT_PUBLIC_VENOM_API_BASE_URL?.trim() ||
-    "http://localhost:5000"
+      process.env.NEXT_PUBLIC_VENOM_API_BASE_URL?.trim() ||
+      "http://localhost:5000"
   );
 }
 
 export async function GET() {
   const backendBaseUrl = getBackendBaseUrl();
-  const upstreamUrl = `${backendBaseUrl}/ready`;
+  const upstreamUrl = joinBackendUrl(backendBaseUrl, "/ready");
 
   try {
     const response = await fetch(upstreamUrl, {
@@ -48,4 +50,3 @@ export async function GET() {
     );
   }
 }
-

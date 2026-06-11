@@ -169,7 +169,7 @@ async function startDashboard() {
   process.env.VENOM_DASHBOARD_LOGIN_EMAIL = LOGIN_EMAIL;
   process.env.VENOM_DASHBOARD_LOGIN_PASSWORD = LOGIN_PASSWORD;
   process.env.VENOM_DASHBOARD_SESSION_SECRET = "venom-dashboard-test-secret";
-  process.env.VENOM_BACKEND_BASE_URL = `http://${HOST}:${backendPort}`;
+  process.env.VENOM_BACKEND_BASE_URL = `http://${HOST}:${backendPort}/`;
   process.env.VENOM_BACKEND_API_KEY = "dashboard-backend-test-key";
   process.env.VENOM_DASHBOARD_BIND_IP = "true";
   process.env.VENOM_DASHBOARD_MONGODB_URI = "";

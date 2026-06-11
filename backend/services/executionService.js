@@ -9,6 +9,14 @@ const { broadcastToolResult, broadcastFinding } = require("./realtimeServer");
 const { translateAllFindings } = require("./translator");
 const { assertExecutionAllowed } = require("./trustControl");
 const { withMemoryHeavyTaskLock } = require("../utils/memoryHeavyTaskGate");
+const {
+  applyResponseIntelligence,
+  attachResponseIntelligenceToOutput
+} = require("../utils/applyResponseIntelligence");
+const {
+  applyFindingConsolidation,
+  attachFindingConsolidationToOutput
+} = require("../utils/applyFindingConsolidation");
 const { logger } = require("../config/logger");
 const {
   classifyError,
@@ -232,18 +240,27 @@ async function executeEngagementTool({
     }
     job.output = output;
     const rawFindings = Array.isArray(output?.findings) ? output.findings : [];
-    job.findings = rawFindings;
+    let persistedFindings = rawFindings;
     if (
       process.env.TRANSLATE_FINDINGS_ON_COMPLETE !== "false" &&
-      job.findings.length > 0
+      persistedFindings.length > 0
     ) {
       const translatedFindings = await translateAllFindings(rawFindings).catch(() => rawFindings);
-      job.findings = translatedFindings;
-      if (!job.output || typeof job.output !== "object") {
-        job.output = {};
-      }
-      job.output.findings = translatedFindings;
+      persistedFindings = translatedFindings;
     }
+    const responseIntelligence = await applyResponseIntelligence(persistedFindings, {
+      toolId,
+      targetUrl,
+      output,
+      infrastructureFingerprint: output?.infrastructureFingerprint,
+      wafDetection: output?.wafDetection
+    });
+    const consolidation = await applyFindingConsolidation(responseIntelligence.findings);
+    job.findings = consolidation.consolidatedFindings;
+    job.output = attachFindingConsolidationToOutput(
+      attachResponseIntelligenceToOutput(job.output, responseIntelligence),
+      consolidation
+    );
     if (typeof output?.stdout === "string") {
       job.rawOutput = output.stdout;
     } else if (typeof output?.rawOutput === "string") {

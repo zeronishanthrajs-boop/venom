@@ -31,6 +31,10 @@ type FlattenedFinding = {
   tool: string;
   affectedPath: string;
   recommendation: string;
+  rootCauseId?: string;
+  rootCauseLabel?: string;
+  instanceCount?: number;
+  affectedAssets?: string[];
 };
 
 type ChatMessage = {
@@ -124,8 +128,20 @@ function flattenFindings(jobs: ExecutionJob[]) {
         description: String(finding?.description || "No description provided."),
         severity,
         tool: String(finding?.source || job.toolId || "unknown_tool"),
-        affectedPath: String(finding?.metadata?.path || finding?.metadata?.url || "n/a"),
-        recommendation: String(finding?.recommendation || "Review and remediate based on tool output.")
+        affectedPath: String(
+          Array.isArray(finding?.affectedAssets) && finding.affectedAssets.length > 0
+            ? finding.affectedAssets[0]
+            : finding?.metadata?.path || finding?.metadata?.url || "n/a"
+        ),
+        recommendation: String(finding?.recommendation || "Review and remediate based on tool output."),
+        rootCauseId: typeof finding?.rootCauseId === "string" ? finding.rootCauseId : undefined,
+        rootCauseLabel:
+          typeof finding?.rootCauseLabel === "string" ? finding.rootCauseLabel : undefined,
+        instanceCount:
+          typeof finding?.instanceCount === "number" ? finding.instanceCount : undefined,
+        affectedAssets: Array.isArray(finding?.affectedAssets)
+          ? finding.affectedAssets.map((asset) => String(asset))
+          : []
       });
     }
   }
@@ -916,8 +932,28 @@ export default function ReportPage() {
                     <p className="mt-2 text-sm text-slate-300">{finding.description}</p>
                     <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-400">
                       <span>Tool: {finding.tool}</span>
-                      <span>Affected: {finding.affectedPath}</span>
+                      <span>
+                        {finding.rootCauseId ? "Root Cause" : "Affected"}:{" "}
+                        {finding.rootCauseLabel || finding.affectedPath}
+                      </span>
+                      {finding.instanceCount && finding.instanceCount > 1 ? (
+                        <span>Instances: {finding.instanceCount}</span>
+                      ) : null}
                     </div>
+                    {finding.affectedAssets && finding.affectedAssets.length > 0 ? (
+                      <details className="mt-2 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs text-slate-300">
+                        <summary className="cursor-pointer text-lime-100">
+                          Affected assets ({finding.affectedAssets.length})
+                        </summary>
+                        <ul className="mt-2 max-h-44 space-y-1 overflow-y-auto">
+                          {finding.affectedAssets.map((asset) => (
+                            <li key={asset} className="break-all text-slate-400">
+                              {asset}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
                     <p className="mt-2 text-xs text-lime-100">
                       Recommendation: {finding.recommendation}
                     </p>

@@ -11,6 +11,7 @@ import {
   REFRESH_COOKIE_MAX_AGE_SECONDS,
   REFRESH_COOKIE_NAME
 } from "@/lib/authConstants";
+import { joinBackendUrl, normalizeBackendBaseUrl } from "@/lib/backendUrl";
 
 export const runtime = "nodejs";
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 60000;
@@ -40,7 +41,7 @@ function getBackendBaseUrl() {
     process.env.NEXT_PUBLIC_VENOM_API_BASE_URL?.trim();
 
   if (configured) {
-    return configured;
+    return normalizeBackendBaseUrl(configured);
   }
 
   if (process.env.NODE_ENV === "production") {
@@ -49,7 +50,7 @@ function getBackendBaseUrl() {
     );
   }
 
-  return "http://localhost:5000";
+  return normalizeBackendBaseUrl("http://localhost:5000");
 }
 
 function getBackendApiKey() {
@@ -116,7 +117,7 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
   const timeoutMs = getUpstreamTimeoutMs(path || []);
   const upstreamPath = path?.length ? `/${path.join("/")}` : "";
   const query = new URL(request.url).search;
-  const upstreamUrl = `${getBackendBaseUrl()}${upstreamPath}${query}`;
+  const upstreamUrl = joinBackendUrl(getBackendBaseUrl(), upstreamPath, query);
 
   const outboundHeaders = new Headers();
   outboundHeaders.set("x-api-key", backendApiKey);
@@ -166,7 +167,6 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
       }
       
       if (attempt < maxRetries) {
-        console.warn(`[Upstream] 502 Bad Gateway from backend. Retrying in ${backoffDelays[attempt]}ms... (Attempt ${attempt + 1}/${maxRetries})`);
         await new Promise((resolve) => setTimeout(resolve, backoffDelays[attempt]));
       } else {
         clearTimeout(timeout);
@@ -193,7 +193,6 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
       const isConnectionRefused = error instanceof Error && (error.message.includes("ECONNREFUSED") || error.message.includes("fetch failed"));
       
       if (isConnectionRefused && attempt < maxRetries) {
-        console.warn(`[Upstream] Connection refused/failed. Retrying in ${backoffDelays[attempt]}ms... (Attempt ${attempt + 1}/${maxRetries})`);
         await new Promise((resolve) => setTimeout(resolve, backoffDelays[attempt]));
         continue;
       }

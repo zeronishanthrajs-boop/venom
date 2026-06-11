@@ -338,6 +338,23 @@ If the repository is lost, follow this exact step-by-step sequence to reconstruc
 2. Run the integration-specific suites to verify auth limits and data aggregation flows.
 [2026-05-21T12:31:52.8700570+05:30] AUDIT: Deep repair kickoff. Beginning mandatory audit phase before code changes; protected zones noted: dashboard/src/app/dashboard/ and backend/middleware/auth.js.
 [2026-05-21T12:31:52.8700570+05:30] FINDING: No code inspected yet. Next action is full read/audit of mandated backend services, route, and model files.
+
+## 6. 2026-05-23 Repair Summary
+*   **Dashboard root resolution**: Added `turbopack.root = __dirname` to `dashboard/next.config.ts` to clear Next.js workspace-root misdetection and ensure dashboard dev/build paths resolve correctly.
+*   **Stale Next dev server cleanup**: Removed stale `.next/dev` state and terminated the orphaned dashboard dev process that caused spurious `Another next dev server is already running.` failures.
+*   **Dashboard integration test stability**: Confirmed all dashboard tests pass after cleanup:
+    *   `npm test` in `dashboard` passed 9/9
+    *   `dashboard` build completed successfully
+*   **Backend regression verification**: Confirmed backend test suite passes cleanly:
+    *   `npm test` in `backend` passed 197/197
+*   **Root cause and resolution**:
+    *   The dashboard auth failure was not caused by invalid route code; it was triggered by stale Next dev process state and incorrect Next.js root inference.
+    *   With the build cache cleaned and `turbopack.root` set explicitly, the auth routes compile and run correctly under the dashboard test harness.
+
+---
+*   **Current verified state**: both backend and dashboard projects are functional and passing their respective test suites as of 2026-05-23.
+*   **Next recommended check**: execute a fresh `npm install` in both root projects if dependencies change, and validate the dashboard `package-lock.json` does not conflict with the user-level lockfile under `C:\Users\nisha`.
+
 [2026-05-21T12:31:52.8700570+05:30] ITERATION: 1 of deep repair audit/fix loop.
 [2026-05-21T12:31:52.8700570+05:30] STATUS: needs another pass
 ---
@@ -380,6 +397,12 @@ If the repository is lost, follow this exact step-by-step sequence to reconstruc
 [2026-05-21T12:39:15.0279823+05:30] STATUS: needs another pass
 ---
 [2026-05-21T12:41:09.3075266+05:30] FIX ATTEMPT 1: Updating apiSecurityService.js endpoint discovery and query-parameter testing for traditional PHP/legacy targets, plus structured logging for request failures and scan-level errors.
+
+### 2026-05-24 Update: Backend score and report stability fix
+*   **apiSecurityService.js**: fixed duplicate `endpointContext` declarations in auth/BOLA tests and aligned rate-limit discovery vector messaging to expected report semantics.
+*   **reportGeneratorService.js**: updated score formula to allow a true 0 score for catastrophic deduction cases, normalized API endpoint weighting to 1.0, and adjusted `LIKELY` impact weighting to match existing report expectations.
+*   **endpointClassification.js**: reduced API endpoint weight from 1.1 to 1.0 for standard programmatic interface scoring.
+*   **Verification**: validated with combined integration tests for `apiSecurity.test.js` and `reportGeneration.test.js` passing successfully.
 [2026-05-21T12:41:09.3075266+05:30] ITERATION: 1 of deep repair audit/fix loop.
 [2026-05-21T12:41:09.3075266+05:30] STATUS: needs another pass
 ---
@@ -6757,6 +6780,122 @@ The system is divided into two distinct tiers:
 1. **PDF Rendering Dependency on Host Chromium**: The PDF engine launches a full chromium headless browser process. In serverless/host environments like Render, launching Puppeteer consumes massive memory, leading to potential out-of-memory errors or cold start timeouts.
 2. **Synchronous/Short Proxy Window Constraints**: The dashboard backend bridge uses standard serverless function routing which has strict timeout caps (e.g. 15-30s on standard Vercel accounts). A slow backend PDF render easily exceeds this limit, resulting in 504 Gateway Timeouts at the bridge level even if the backend ultimately succeeds. (Mitigated by our shift to async poll-and-cache PDF architecture).
 3. **Absence of a Real Message Queue for Scanners**: Currently, background tool orchestrations are queued in Node's event loop via `setImmediate` and concurrency is restricted in-memory. If the backend process crashes or restarts, all active, queued, or running scans are permanently lost with no retry ability. Moving to a persistent queue (like BullMQ or RabbitMQ) is necessary for high reliability.
+
+---
+
+### [2026-06-11T00:00:00+05:30] MYTHOS PHASE 1 STEP 1 - ResponseIntelligenceEngine
+
+* Built `backend/services/responseIntelligenceEngine.js` as an async-compatible finding pipeline guard.
+  * Classifies protective responses before reporting: HTTP 403 as blocked/protected, 401 as auth required, auth redirects, generic/not-present 404s, and WAF/challenge responses.
+  * Added WAF fingerprint signatures for Cloudflare, AWS WAF, Akamai, Imperva, Sucuri, Fastly, Azure Front Door, and generic challenge pages.
+  * Enforces multi-signal rate-limit detection: 20 consistent 2xx responses, absence of rate-limit/retry headers, and no response-time/body/content/redirect/challenge behavior change.
+  * Adds numeric `confidenceScore` and suppresses findings below 60 from persisted/default findings.
+* Added `backend/utils/applyResponseIntelligence.js` to apply the engine consistently and attach `suppressedFindings` plus `responseIntelligenceAudit` to job output.
+* Integrated the engine into `backend/services/executionService.js` for central tool execution before `ExecutionJob` persistence and `backend/routes/apis.js` for the API scanner route.
+* Extended `backend/models/ExecutionJob.js` with `findings[].confidenceScore` without renaming existing schema fields.
+* Added `backend/tests/responseIntelligenceEngine.test.js`.
+  * Mandatory 403 false-positive guard covered: a missing-rate-limit finding backed by HTTP 403 is suppressed with audit reasoning.
+  * Positive control covered: a properly corroborated 20x2xx no-throttle sequence remains visible at confidence score 82.
+* Quality gate results:
+  * Backend test run: `npm test -- responseIntelligenceEngine.test.js` executed the configured backend glob and passed 218/218 tests in this checkout.
+  * New module coverage: `npx c8 --reporter=text --include=services/responseIntelligenceEngine.js node --test --test-concurrency=1 tests/responseIntelligenceEngine.test.js` passed 5/5 focused tests with 87.55% statement coverage for `responseIntelligenceEngine.js`.
+  * Production log/secret check: `rg` found no `console.log` or hardcoded API key/secret/token assignments in touched files.
+* Implementation decision: suppressed findings are not discarded. They are stored under `output.suppressedFindings` and summarized in `output.responseIntelligenceAudit` for analyst review, while `job.findings` contains only visible/default-report findings.
+
+---
+
+### [2026-06-11T11:30:00+05:30] CONNECTION AUDIT AND FIX PASS
+
+* Scope analyzed: dashboard-to-backend bridge, dashboard readiness route, report assistant backend fetches, realtime WebSocket URL construction, Vercel/Next.js build configuration, dashboard integration fixtures, backend API/auth/CORS/realtime regression coverage.
+* Connection issues fixed:
+  * Added `dashboard/src/lib/backendUrl.ts` with shared backend URL normalization, safe URL joining, and HTTP-to-WebSocket base conversion.
+  * Fixed dashboard backend bridge URL construction in `dashboard/src/app/api/backend/[...path]/route.ts`; trailing slashes in `VENOM_BACKEND_BASE_URL` no longer produce `//api/...` upstream paths.
+  * Removed production `console.warn` retry logging from the backend bridge retry loop.
+  * Fixed `/api/system/ready` to use the same normalized backend URL joiner, preventing `/ready` double-slash failures when env URLs include trailing slashes.
+  * Fixed `/api/assistant/report-chat` backend fetches to use normalized URL joining.
+  * Fixed realtime socket base handling in `dashboard/src/hooks/useVenomSocket.ts`; trailing slashes are stripped and invalid public backend URLs disable the socket cleanly instead of constructing malformed WebSocket URLs.
+  * Fixed `dashboard/next.config.ts` Vercel/ESM build crash by replacing `__dirname` with `dirname(fileURLToPath(import.meta.url))`.
+  * Updated dashboard integration tests so `VENOM_BACKEND_BASE_URL` intentionally includes a trailing slash, locking the regression path.
+* Verification completed:
+  * `npm.cmd test` in `dashboard`: passed 9/9 tests. The backend bridge test confirmed a trailing-slash backend base URL still forwards `/api/realtime/token` correctly, not `//api/realtime/token`.
+  * `npm.cmd run build` in `dashboard`: passed Next.js 16.2.4 production build and TypeScript checks.
+  * `npm.cmd test` in `backend`: passed 218/218 tests.
+* Remaining operational requirements:
+  * Production dashboard must still define `VENOM_BACKEND_BASE_URL` and `VENOM_BACKEND_API_KEY`/`VENOM_API_KEY`.
+  * Backend production must still define `MONGODB_URI`, `VENOM_API_KEY`, and `CORS_ORIGINS` including the dashboard origin.
+  * Realtime browser sockets still require `NEXT_PUBLIC_VENOM_API_BASE_URL` to point at the backend origin because browsers connect directly to `/ws`.
+
+---
+
+### [2026-06-11T12:00:00+05:30] MYTHOS PHASE 1 CONTINUATION - AUTO-VERIFICATION
+
+* Read current `NOTE.md` before code changes.
+* Backend verification: `npm.cmd test` in `backend` passed 218/218 tests.
+* Dashboard verification: `npm.cmd test` in `dashboard` passed 9/9 tests.
+* Dashboard production build verification: `npm.cmd run build` in `dashboard` passed Next.js 16.2.4 production build and TypeScript checks.
+* ISSUE #2 PDF verification:
+  * `backend/services/reportGenerator.js` `renderPdfFromTemplate()` uses `PDF_TIMEOUT_MS = 180000` and throws explicit `ISSUE-REPORT-PDF-*` errors; no 45000ms PDF render timeout remains in that backend PDF render path.
+  * `dashboard/src/app/dashboard/report/[id]/page.tsx` `handleDownload()` calls `downloadBackendPdfReport()` and sends errors to `setError()`; it does not call Markdown fallback.
+  * `dashboard/src/lib/api.ts` `downloadBackendPdfReport()` polls `/api/reports/:id/pdf/status`, throws explicit failed/timeout errors, and returns PDF blobs only. `downloadBackendMarkdownReport()` remains a separate explicit function, not a silent fallback.
+* Issues found during auto-check: NONE.
+
+---
+
+### [2026-06-11T12:20:00+05:30] MYTHOS PHASE 1 STEP 2 - FINDINGCONSOLIDATIONENGINE
+
+* Built `backend/services/findingConsolidationEngine.js` - groups flat findings into root-cause findings with `rootCauseId`, `rootCauseLabel`, `severity`, `instanceCount`, `affectedAssets`, `representative`, `allInstances`, first/last seen timestamps, and consolidation audit metadata.
+* Built `backend/utils/applyFindingConsolidation.js` - shared helper for applying consolidation and attaching `consolidatedFindings`, raw/consolidated counts, deduplication ratio, and audit logs to job output.
+* Key decisions:
+  * Consolidated groups remain compatible with existing finding consumers by preserving representative finding fields while extending them with root-cause fields.
+  * `ExecutionJob.findings[]` now stores consolidated root-cause groups for the central execution path and API scanner route; raw visible findings remain auditable through `output.responseIntelligenceAudit`, `output.suppressedFindings`, and `output.consolidationAudit`.
+  * Dashboard cards use native `<details>` disclosure for affected assets to avoid heavy UI dependencies.
+* Integration points wired:
+  * `backend/services/executionService.js` runs finding consolidation after `applyResponseIntelligence()` and before MongoDB persistence.
+  * `backend/routes/apis.js` applies consolidation to direct API scanner route results.
+  * `backend/models/ExecutionJob.js` extended with root-cause fields only; no existing fields were renamed.
+  * `dashboard/src/app/dashboard/report/[id]/page.tsx` renders consolidated root-cause finding cards with instance counts and expandable affected assets.
+  * `dashboard/src/lib/api.ts` extended the `ExecutionJob.findings[]` type with consolidated finding fields.
+* Test file: `backend/tests/findingConsolidationEngine.test.js` - 4 tests written, 4 passing.
+  * 29 rate-limit findings on 29 URLs consolidate to exactly 1 `RATE_LIMIT_ABSENT` group with `instanceCount=29` and Critical severity.
+  * 3 findings of different root causes produce 3 separate groups.
+  * Duplicate fingerprints merge into the existing group.
+  * 12 Medium findings on one root cause escalate to one Critical group.
+* Full suite result:
+  * Backend: `npm.cmd test` passed 222/222 tests.
+  * Dashboard: `npm.cmd test` passed 9/9 tests.
+  * Dashboard production build: `npm.cmd run build` passed after extending dashboard finding types.
+* Issues found during auto-check:
+  * TypeScript build initially failed because dashboard `ExecutionJob.findings[]` did not include `affectedAssets`. Fixed by extending the local API type definition, then reran build successfully.
+* Quality gates passed:
+  * [x] FindingConsolidationEngine 29 same-type findings -> 1 consolidated group.
+  * [x] ResponseIntelligenceEngine 403 false-positive test still passes in full backend suite.
+  * [x] Backend full suite green.
+  * [x] Dashboard test suite green.
+  * [x] Dashboard production build green.
+  * [x] No `console.log` or obvious hardcoded key/secret/token assignments in touched Step 2 files.
+  * [x] NOTE.md updated with timestamp and decisions.
+* Ready for next step: YES.
+
+---
+
+### [2026-06-11 12:17:45 +05:30] RELEASE PUSH - GIT, VERCEL, RENDER
+
+* Pre-push verification completed:
+  * Backend: `npm.cmd test` passed 222/222 tests.
+  * Dashboard: `npm.cmd test` passed 9/9 tests.
+  * Dashboard production build: `npm.cmd run build` passed.
+* Scope prepared for Git push:
+  * Completed connection bridge updates for dashboard-to-backend routing.
+  * Completed ResponseIntelligenceEngine integration.
+  * Completed FindingConsolidationEngine integration and dashboard report rendering.
+* Render deployment path confirmed:
+  * `render.yaml` contains service `venom-backend`, root `backend`, health check `/health`, and `autoDeploy: true`.
+  * Latest pushed `main` revision is expected to trigger Render's Git-backed auto-deploy.
+* Vercel deployment path confirmed:
+  * Dashboard production build is clean and ready for `vercel.cmd --prod`.
+* Explicitly excluded from this release:
+  * Unfinished Step 3 draft `backend/services/endpointValidationLayer.js`.
+  * Scratch patch/note files and unrelated untracked local files.
 
 ---
 

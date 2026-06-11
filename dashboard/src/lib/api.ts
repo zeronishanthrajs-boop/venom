@@ -102,6 +102,16 @@ export type ExecutionJob = {
     tags?: string[];
     cvssScore?: number | null;
     exploitAvailable?: boolean;
+    rootCauseId?: string;
+    rootCauseLabel?: string;
+    affectedParameter?: string;
+    instanceCount?: number;
+    affectedAssets?: string[];
+    firstSeen?: string;
+    lastSeen?: string;
+    representative?: Record<string, unknown> | null;
+    allInstances?: Array<Record<string, unknown>>;
+    deduplicationFingerprint?: string;
     translations?: {
       founder?: string;
       engineer?: string;

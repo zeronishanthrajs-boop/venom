@@ -5,6 +5,14 @@ const requireDb = require("../middleware/requireDb");
 const apiSecurityService = require("../services/apiSecurityService");
 const executionLoggerService = require("../services/executionLoggerService");
 const { logger } = require("../config/logger");
+const {
+  applyResponseIntelligence,
+  attachResponseIntelligenceToOutput
+} = require("../utils/applyResponseIntelligence");
+const {
+  applyFindingConsolidation,
+  attachFindingConsolidationToOutput
+} = require("../utils/applyFindingConsolidation");
 
 const router = express.Router();
 
@@ -163,7 +171,15 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
     const normalizedFindings = findings.map((finding, index) =>
       toExecutionFinding(finding, index, executionMeta, engagement.targetUrl)
     );
-    const hasError = Boolean(result.error) && normalizedFindings.length === 0;
+    const responseIntelligence = await applyResponseIntelligence(normalizedFindings, {
+      toolId: "api_security_scan",
+      targetUrl: engagement.targetUrl,
+      infrastructureFingerprint: result.infrastructureFingerprint,
+      wafDetection: result.wafDetection
+    });
+    const consolidation = await applyFindingConsolidation(responseIntelligence.findings);
+    const visibleFindings = consolidation.consolidatedFindings;
+    const hasError = Boolean(result.error) && visibleFindings.length === 0;
 
     const job = await ExecutionJob.create({
       engagementId: engagement._id,
@@ -173,8 +189,8 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
       startedAt: new Date(startedAt),
       finishedAt: new Date(),
       durationMs: Date.now() - startedAt,
-      output: {
-        findings: normalizedFindings,
+      output: attachFindingConsolidationToOutput(attachResponseIntelligenceToOutput({
+        findings: visibleFindings,
         source: "api_security",
         scannedEndpoints: result.scannedEndpoints || [],
         endpointCount: result.endpointCount || 0,
@@ -184,8 +200,8 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
         infrastructureFingerprint: result.infrastructureFingerprint || null,
         authProfiles: result.authProfiles || [],
         error: result.error || null
-      },
-      findings: normalizedFindings,
+      }, responseIntelligence), consolidation),
+      findings: visibleFindings,
       errorMessage: hasError ? result.error : "",
       createdBy: req.user?.id || "unknown"
     });
@@ -213,11 +229,13 @@ router.post("/scan/:engagementId", requireDb, async (req, res, next) => {
       message: "API security scan complete",
       executionJobId: String(job._id),
       testId: executionMeta.testId,
-      count: normalizedFindings.length,
-      summary: summarizeBySeverity(normalizedFindings),
+      count: visibleFindings.length,
+      suppressedCount: responseIntelligence.suppressedFindings.length,
+      summary: summarizeBySeverity(visibleFindings),
       infrastructureFingerprint: result.infrastructureFingerprint || null,
       authProfiles: result.authProfiles || [],
-      findings: normalizedFindings
+      findings: visibleFindings,
+      suppressedFindings: responseIntelligence.suppressedFindings
     });
   } catch (error) {
     if (error?.name === "CastError") {

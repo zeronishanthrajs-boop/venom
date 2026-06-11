@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { VenomSession } from "@/lib/session";
 import { fetchRealtimeToken } from "@/lib/api";
+import { toWebSocketBaseUrl } from "@/lib/backendUrl";
 
 export type VenomSocketEvent =
   | "realtime_connected"
@@ -28,7 +29,11 @@ function getSocketBaseUrl() {
   if (!base) {
     return null;
   }
-  return base.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+  try {
+    return toWebSocketBaseUrl(base);
+  } catch {
+    return null;
+  }
 }
 
 export function useVenomSocket(

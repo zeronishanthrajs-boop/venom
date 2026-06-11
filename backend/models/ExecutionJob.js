@@ -75,6 +75,12 @@ const executionJobSchema = new mongoose.Schema(
             type: String,
             enum: ["CONFIRMED", "STRONG_SIGNAL", "WEAK_SIGNAL", "INFORMATIONAL"]
           },
+          confidenceScore: {
+            type: Number,
+            min: 0,
+            max: 100,
+            default: 70
+          },
           manualValidationRequired: {
             type: Boolean,
             default: true
@@ -88,6 +94,25 @@ const executionJobSchema = new mongoose.Schema(
           endpointSensitivity: { type: String, default: "" },
           severityReason: { type: String, default: "" },
           exploitationPotential: { type: String, default: "" },
+          rootCauseId: { type: String, default: "" },
+          rootCauseLabel: { type: String, default: "" },
+          affectedParameter: { type: String, default: "" },
+          instanceCount: { type: Number, default: 1 },
+          affectedAssets: {
+            type: [String],
+            default: []
+          },
+          firstSeen: { type: String, default: "" },
+          lastSeen: { type: String, default: "" },
+          representative: {
+            type: mongoose.Schema.Types.Mixed,
+            default: null
+          },
+          allInstances: {
+            type: [mongoose.Schema.Types.Mixed],
+            default: []
+          },
+          deduplicationFingerprint: { type: String, default: "" },
           cve: { type: String, default: null },
           source: { type: String, default: "" },
           tags: {

@@ -11,6 +11,7 @@ import {
   REFRESH_COOKIE_MAX_AGE_SECONDS,
   REFRESH_COOKIE_NAME
 } from "@/lib/authConstants";
+import { joinBackendUrl, normalizeBackendBaseUrl } from "@/lib/backendUrl";
 
 export const runtime = "nodejs";
 
@@ -72,14 +73,14 @@ function getBackendBaseUrl() {
     process.env.NEXT_PUBLIC_VENOM_API_BASE_URL?.trim();
 
   if (configured) {
-    return configured;
+    return normalizeBackendBaseUrl(configured);
   }
 
   if (process.env.NODE_ENV === "production") {
     throw new Error("VENOM_BACKEND_BASE_URL is required in production.");
   }
 
-  return "http://localhost:5000";
+  return normalizeBackendBaseUrl("http://localhost:5000");
 }
 
 function getBackendApiKey() {
@@ -317,7 +318,7 @@ async function fetchBackendJson<T>(
     throw new Error("Dashboard backend bridge API key missing");
   }
 
-  const response = await fetch(`${getBackendBaseUrl()}${path}`, {
+  const response = await fetch(joinBackendUrl(getBackendBaseUrl(), path), {
     method: "GET",
     headers: {
       "x-api-key": backendApiKey,
