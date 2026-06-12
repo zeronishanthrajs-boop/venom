@@ -385,6 +385,21 @@ export type MetricsOverview = {
   }>;
 };
 
+export type ScoreHistoryRecord = {
+  id: string;
+  engagementId: string;
+  domain: string;
+  score: number;
+  timestamp: string;
+  breakdown?: Record<string, unknown>;
+};
+
+export type ScoreHistoryResponse = {
+  generatedAt: string;
+  days: number;
+  records: ScoreHistoryRecord[];
+};
+
 export type AlertItem = {
   id: string;
   severity: "critical" | "high" | "medium" | "low";
@@ -1206,6 +1221,19 @@ export async function fetchAllProgress(
   });
 
   return parseResponse<EngagementProgress[]>(response);
+}
+
+export async function fetchScoreHistory(
+  session: VenomSession,
+  days = 30
+): Promise<ScoreHistoryResponse> {
+  const response = await apiFetch(`/api/metrics/score-history?days=${days}`, {
+    method: "GET",
+    headers: buildHeaders(session),
+    cache: "no-store"
+  });
+
+  return parseResponse<ScoreHistoryResponse>(response);
 }
 
 export async function fetchCveSummary(session: VenomSession): Promise<CveSummary> {

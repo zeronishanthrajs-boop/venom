@@ -5,6 +5,7 @@ const complianceMapperService = require("./complianceMapperService");
 const { deduplicateFindings } = require("../utils/deduplicateFindings");
 const { logger } = require("../config/logger");
 const { classifyEndpoint } = require("../utils/endpointClassification");
+const { calculateSecurityScore: calculateTransparentSecurityScore } = require("./scoringEngine");
 const {
   deriveConfidenceLevel,
   needsManualValidation,
@@ -597,6 +598,44 @@ class ReportGeneratorService {
   }
 
   calculateSecurityScore(findings = [], jobs = []) {
+    const context = {
+      positiveSignals: {},
+      headerSecuritySubScore: jobs.reduce((max, job) => {
+        const score = Number(job?.output?.headerSecuritySubScore || job?.output?.headerAnalysis?.subScore);
+        return Number.isFinite(score) ? Math.max(max, score) : max;
+      }, 0),
+      wafDetected: jobs.some((job) =>
+        Boolean(job?.output?.wafDetection?.detected || job?.output?.infrastructureFingerprint?.waf?.length)
+      )
+    };
+    const transparentScore = calculateTransparentSecurityScore(findings, context);
+    return {
+      ...transparentScore,
+      densityLabel:
+        transparentScore.totalDeductions <= -45
+          ? "High deduction density"
+          : transparentScore.totalDeductions <= -20
+            ? "Moderate deduction density"
+            : "Low deduction density",
+      rawDeduction: Math.abs(transparentScore.totalDeductions),
+      reliable: true,
+      reliabilityStatus: "RELIABLE",
+      unreliableReason: "",
+      failedProbeCount: jobs.filter((job) => normalizeJobStatus(job.status) === "failed").length,
+      timeoutProbeCount: jobs.filter((job) => normalizeJobStatus(job.status) === "timeout").length,
+      blockedProbeCount: jobs.filter((job) => normalizeJobStatus(job.status) === "blocked").length,
+      toolUnavailableCount: jobs.filter((job) => normalizeJobStatus(job.status) === "tool_not_installed").length,
+      scoreFloorReached: transparentScore.floorsApplied.length > 0,
+      scoreFloorMessage:
+        transparentScore.floorsApplied.length > 0
+          ? transparentScore.floorsApplied.map((floor) => floor.reason).join("; ")
+          : "",
+      impactCounts: {},
+      categoryScores: {},
+      riskRating: deriveRiskRating(findings),
+      formula: transparentScore.formula
+    };
+    /*
     const formula = {
       startsAt: 100,
       findingImpacts: [],
@@ -834,6 +873,7 @@ class ReportGeneratorService {
       },
       formula
     };
+    */
   }
 
   generateScanLimitations(jobs = []) {
@@ -1153,8 +1193,6 @@ class ReportGeneratorService {
 }
 
 module.exports = new ReportGeneratorService();
-
-
 
 
 

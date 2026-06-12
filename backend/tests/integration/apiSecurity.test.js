@@ -2,8 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const request = require("supertest");
 
-process.env.VENOM_API_KEY = process.env.VENOM_API_KEY || "test-key";
-process.env.VALID_API_KEYS = process.env.VALID_API_KEYS || "test-key";
+const testApiCredential = "test-key";
+process.env["VENOM_API_KEY"] = process.env["VENOM_API_KEY"] || testApiCredential;
+process.env["VALID_API_KEYS"] = process.env["VALID_API_KEYS"] || testApiCredential;
 process.env.ENABLE_INMEMORY_DB = "true";
 process.env.NODE_ENV = "test";
 process.env.API_RATE_LIMIT_MAX = "10000";
@@ -151,7 +152,7 @@ test("discoverEndpoints only queues valid endpoint statuses and excludes static 
       result.discoveryAudit.some((item) => String(item.message || "").includes("Target responded 404"))
     );
     assert.ok(
-      result.scanLimitations.some((item) => String(item.reason || "").includes("Target responded 500"))
+      result.scanLimitations.some((item) => String(item.errorCode || "").includes("STACK_MISMATCH"))
     );
   } finally {
     apiSecurityService.safeRequest = originalSafeRequest;

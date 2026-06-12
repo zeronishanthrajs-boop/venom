@@ -23,6 +23,7 @@ const {
   routeLegitimacyBand
 } = require("../utils/responseDiffEngine");
 const { calculateExploitabilityScore } = require("../utils/exploitabilityScoring");
+const { EndpointValidationLayer } = require("./endpointValidationLayer");
 const {
   createStructuredError,
   logError,
@@ -1309,22 +1310,69 @@ class ApiSecurityService {
         }
       }
 
+      const endpointValidator = new EndpointValidationLayer({
+        httpClient: (request) => this.safeRequest(request)
+      });
+      const stackInfo = await endpointValidator.detectTechnologyStack(targetUrl);
       const validated = [];
       const dedupedCandidates = this.deduplicateEndpoints(candidates);
       for (const candidate of dedupedCandidates) {
         // eslint-disable-next-line no-await-in-loop
+        const validation = await endpointValidator.validateEndpoint(targetUrl, candidate, stackInfo);
+        if (validation.endpointStatus === "NOT_PRESENT") {
+          const validationStatus = validation.validationAudit?.at(-1)?.status || 0;
+          const validationMessage =
+            validation.skipReason === "GENERIC_404"
+              ? this.toDiscoveryAuditMessage(404, validation.path)
+              : validation.skipReason === "CONNECTION_FAILED" || validation.skipReason === "PROBE_TIMEOUT"
+                ? this.buildConnectionFailureMessage(validation.skipReason)
+              : `EndpointValidationLayer skipped ${validation.path}: ${validation.skipReason || "not present"}.`;
+          if (["STACK_MISMATCH", "CONNECTION_FAILED", "PROBE_TIMEOUT"].includes(validation.skipReason)) {
+            scanLimitations.push({
+              category: "API Security",
+              phase: "endpoint_validation",
+              endpoint: validation.path,
+              method: validation.method,
+              status: "SKIPPED",
+              errorCode: validation.skipReason,
+              reason: validationMessage
+            });
+          }
+          discoveryAudit.push({
+            path: validation.path,
+            method: validation.method,
+            source: validation.source,
+            statusCode: validationStatus,
+            action: "skipped",
+            endpointStatus: validation.endpointStatus,
+            detectedStack: validation.detectedStack,
+            skipReason: validation.skipReason,
+            message: validationMessage
+          });
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
         const accepted = await this.probeEndpointCandidate({
           targetUrl,
-          path: candidate.path,
-          method: candidate.method,
-          source: candidate.source || "probe",
+          path: validation.path,
+          method: validation.method,
+          source: validation.source || candidate.source || "probe",
           rootBodyFingerprint,
           baselineSnapshots,
           discoveryAudit,
           scanLimitations
         });
         if (accepted) {
-          validated.push(accepted);
+          validated.push({
+            ...accepted,
+            endpointStatus: validation.endpointStatus,
+            detectedStack: validation.detectedStack,
+            source: validation.source || accepted.source,
+            wafProtected: validation.wafProtected,
+            authProtected: validation.authProtected,
+            unverified: validation.unverified,
+            endpointValidation: validation
+          });
         }
       }
 
@@ -1335,22 +1383,69 @@ class ApiSecurityService {
       };
     }
 
+    const endpointValidator = new EndpointValidationLayer({
+      httpClient: (request) => this.safeRequest(request)
+    });
+    const stackInfo = await endpointValidator.detectTechnologyStack(targetUrl);
     const validated = [];
     const dedupedCandidates = this.deduplicateEndpoints(candidates);
     for (const candidate of dedupedCandidates) {
       // eslint-disable-next-line no-await-in-loop
+      const validation = await endpointValidator.validateEndpoint(targetUrl, candidate, stackInfo);
+      if (validation.endpointStatus === "NOT_PRESENT") {
+        const validationStatus = validation.validationAudit?.at(-1)?.status || 0;
+        const validationMessage =
+          validation.skipReason === "GENERIC_404"
+            ? this.toDiscoveryAuditMessage(404, validation.path)
+            : validation.skipReason === "CONNECTION_FAILED" || validation.skipReason === "PROBE_TIMEOUT"
+              ? this.buildConnectionFailureMessage(validation.skipReason)
+            : `EndpointValidationLayer skipped ${validation.path}: ${validation.skipReason || "not present"}.`;
+        if (["STACK_MISMATCH", "CONNECTION_FAILED", "PROBE_TIMEOUT"].includes(validation.skipReason)) {
+          scanLimitations.push({
+            category: "API Security",
+            phase: "endpoint_validation",
+            endpoint: validation.path,
+            method: validation.method,
+            status: "SKIPPED",
+            errorCode: validation.skipReason,
+            reason: validationMessage
+          });
+        }
+        discoveryAudit.push({
+          path: validation.path,
+          method: validation.method,
+          source: validation.source,
+          statusCode: validationStatus,
+          action: "skipped",
+          endpointStatus: validation.endpointStatus,
+          detectedStack: validation.detectedStack,
+          skipReason: validation.skipReason,
+          message: validationMessage
+        });
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
       const accepted = await this.probeEndpointCandidate({
         targetUrl,
-        path: candidate.path,
-        method: candidate.method,
-        source: candidate.source || "probe",
+        path: validation.path,
+        method: validation.method,
+        source: validation.source || candidate.source || "probe",
         rootBodyFingerprint: "",
         baselineSnapshots,
         discoveryAudit,
         scanLimitations
       });
       if (accepted) {
-        validated.push(accepted);
+        validated.push({
+          ...accepted,
+          endpointStatus: validation.endpointStatus,
+          detectedStack: validation.detectedStack,
+          source: validation.source || accepted.source,
+          wafProtected: validation.wafProtected,
+          authProtected: validation.authProtected,
+          unverified: validation.unverified,
+          endpointValidation: validation
+        });
       }
     }
 
@@ -2486,6 +2581,38 @@ class ApiSecurityService {
     return finding;
   }
 
+  applyEndpointValidationToFindings(findings = [], endpoints = []) {
+    const endpointContext = new Map();
+    for (const endpoint of endpoints) {
+      endpointContext.set(normalizePath(endpoint.path), endpoint);
+    }
+
+    return findings.map((finding) => {
+      const findingPath = normalizePath(finding.endpoint || finding?.metadata?.endpoint || "/");
+      const context =
+        endpointContext.get(findingPath) ||
+        [...endpointContext.entries()].find(([path]) => findingPath.startsWith(path))?.[1] ||
+        null;
+      if (!context) {
+        return finding;
+      }
+      return {
+        ...finding,
+        wafProtected: Boolean(context.wafProtected),
+        unverified: Boolean(context.unverified),
+        metadata: {
+          ...(finding.metadata || {}),
+          endpointStatus: context.endpointStatus || "UNKNOWN",
+          detectedStack: context.detectedStack || "Unknown",
+          wafProtected: Boolean(context.wafProtected),
+          authProtected: Boolean(context.authProtected),
+          unverified: Boolean(context.unverified),
+          endpointValidation: context.endpointValidation || null
+        }
+      };
+    });
+  }
+
   async scanEngagement(engagementId, targetUrlInput = "") {
     try {
       const engagement = await Engagement.findById(engagementId).lean();
@@ -2656,19 +2783,24 @@ class ApiSecurityService {
         findings.push(graphqlFinding);
       }
 
+      const validatedFindings = this.applyEndpointValidationToFindings(
+        findings,
+        discoveredEndpoints
+      );
+
       logger.info(
         {
           engagementId,
           targetUrl,
           endpoints: discoveredEndpoints.length,
-          findings: findings.length
+          findings: validatedFindings.length
         },
         "API security scan complete"
       );
 
       return {
         status: "SUCCESS",
-        findings,
+        findings: validatedFindings,
         scannedEndpoints: discoveredEndpoints,
         endpointCount: discoveredEndpoints.length,
         probedUrlCount: discoveredEndpoints.length,

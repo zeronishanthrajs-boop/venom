@@ -17,6 +17,7 @@ const {
   applyFindingConsolidation,
   attachFindingConsolidationToOutput
 } = require("../utils/applyFindingConsolidation");
+const { recordScoreHistory } = require("./scoringEngine");
 const { logger } = require("../config/logger");
 const {
   classifyError,
@@ -261,6 +262,25 @@ async function executeEngagementTool({
       attachResponseIntelligenceToOutput(job.output, responseIntelligence),
       consolidation
     );
+    const scoreHistory = await recordScoreHistory({
+      engagementId: String(engagement._id),
+      targetUrl,
+      findings: job.findings,
+      context: {
+        targetUrl,
+        wafDetected: Boolean(output?.wafDetection?.detected || output?.infrastructureFingerprint?.waf?.length),
+        headerSecuritySubScore:
+          output?.headerSecuritySubScore || output?.headerAnalysis?.subScore || null
+      }
+    });
+    if (scoreHistory) {
+      job.output.scoreHistory = {
+        id: String(scoreHistory._id),
+        score: scoreHistory.score,
+        timestamp: scoreHistory.timestamp
+      };
+      job.output.securityScore = scoreHistory.breakdown;
+    }
     if (typeof output?.stdout === "string") {
       job.rawOutput = output.stdout;
     } else if (typeof output?.rawOutput === "string") {

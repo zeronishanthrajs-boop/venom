@@ -3,6 +3,7 @@ const Engagement = require("../models/Engagement");
 const ExecutionJob = require("../models/ExecutionJob");
 const Pattern = require("../models/Pattern");
 const Plan = require("../models/Plan");
+const ScoreHistory = require("../models/ScoreHistory");
 const requireDb = require("../middleware/requireDb");
 const {
   computeJobSummary,
@@ -196,6 +197,44 @@ router.get("/security-trends", requireDb, async (req, res, next) => {
     const trends = computeSecurityTrends(jobs);
     return res.status(200).json(trends);
   } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/score-history", requireDb, async (req, res, next) => {
+  try {
+    const days = Math.min(Number(req.query.days) || 30, 90);
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    const query = {
+      timestamp: { $gte: since }
+    };
+    if (req.query.engagementId) {
+      query.engagementId = req.query.engagementId;
+    }
+
+    const records = await ScoreHistory.find(query)
+      .sort({ timestamp: 1 })
+      .limit(500)
+      .lean();
+
+    return res.status(200).json({
+      generatedAt: new Date().toISOString(),
+      days,
+      records: records.map((record) => ({
+        id: String(record._id),
+        engagementId: String(record.engagementId),
+        domain: record.domain,
+        score: record.score,
+        timestamp: record.timestamp,
+        breakdown: record.breakdown || {}
+      }))
+    });
+  } catch (error) {
+    if (error?.name === "CastError") {
+      return res.status(400).json({ error: "Invalid engagement id" });
+    }
     return next(error);
   }
 });

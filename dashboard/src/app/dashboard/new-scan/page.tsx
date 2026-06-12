@@ -1,10 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import Navigation from "@/components/Navigation";
-import { createEngagement, ApiError } from "@/lib/api";
+import {
+  createEngagement,
+  fetchScoreHistory,
+  ApiError,
+  type ScoreHistoryRecord
+} from "@/lib/api";
 import { fetchSession, type VenomSession } from "@/lib/session";
 import ErrorBanner from "@/components/ErrorBanner";
 
@@ -19,13 +24,58 @@ function normalizeTarget(value: string) {
   return `https://${trimmed}`;
 }
 
+function buildTrendPath(records: ScoreHistoryRecord[]) {
+  if (records.length === 0) {
+    return "";
+  }
+  if (records.length === 1) {
+    const y = 100 - Math.max(0, Math.min(100, records[0].score));
+    return `M 0 ${y} L 100 ${y}`;
+  }
+  return records
+    .map((record, index) => {
+      const x = (index / Math.max(1, records.length - 1)) * 100;
+      const y = 100 - Math.max(0, Math.min(100, record.score));
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
+}
+
 export default function NewScanPage() {
   const router = useRouter();
   const [targetUrl, setTargetUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | ApiError | string | null>(null);
+  const [scoreHistory, setScoreHistory] = useState<ScoreHistoryRecord[]>([]);
 
   const cleanTarget = useMemo(() => normalizeTarget(targetUrl), [targetUrl]);
+  const latestScore = scoreHistory.at(-1)?.score ?? null;
+  const trendPath = useMemo(() => buildTrendPath(scoreHistory), [scoreHistory]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadScoreHistory() {
+      const session = await fetchSession();
+      if (!session) {
+        return;
+      }
+      const response = await fetchScoreHistory(session, 30);
+      if (!cancelled) {
+        setScoreHistory(response.records);
+      }
+    }
+
+    void loadScoreHistory().catch(() => {
+      if (!cancelled) {
+        setScoreHistory([]);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function requireSession(): Promise<VenomSession | null> {
     const current = await fetchSession();
@@ -136,6 +186,39 @@ export default function NewScanPage() {
               <li>4. A report is assembled while scans continue.</li>
               <li>5. You can ask AI follow-up questions in report view.</li>
             </ul>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-slate-700/80 bg-slate-950/55 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-slate-200">
+                30-Day Score Trend
+              </h2>
+              <span className="text-sm font-semibold text-lime-200">
+                {latestScore === null ? "No score yet" : `${latestScore}/100`}
+              </span>
+            </div>
+            <div className="mt-4 h-32 w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
+              <svg
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+                className="h-full w-full"
+                role="img"
+                aria-label="30-day security score trend"
+              >
+                <line x1="0" y1="25" x2="100" y2="25" stroke="#1f2937" strokeWidth="0.5" />
+                <line x1="0" y1="50" x2="100" y2="50" stroke="#1f2937" strokeWidth="0.5" />
+                <line x1="0" y1="75" x2="100" y2="75" stroke="#1f2937" strokeWidth="0.5" />
+                {trendPath ? (
+                  <path
+                    d={trendPath}
+                    fill="none"
+                    stroke="#a3e635"
+                    strokeWidth="2.5"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ) : null}
+              </svg>
+            </div>
           </div>
         </div>
       </section>

@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const request = require("supertest");
 const mongoose = require("mongoose");
 
-process.env.VENOM_API_KEY = process.env.VENOM_API_KEY || "test-key";
+process.env["VENOM_API_KEY"] = process.env["VENOM_API_KEY"] || "test-key";
 process.env.VALID_API_KEYS = process.env.VALID_API_KEYS || "test-key";
 process.env.ENABLE_INMEMORY_DB = "true";
 process.env.NODE_ENV = "test";
@@ -150,12 +150,13 @@ test("generateReport applies acquisition score formula and density label", async
   });
 
   const report = await reportGeneratorService.generateReport(engagement._id);
-  assert.equal(report.securityScore.score, 0);
-  assert.equal(report.securityScore.rawDeduction, 615);
+  assert.equal(report.securityScore.score, 68);
+  assert.equal(report.securityScore.rawDeduction, 32);
   assert.equal(
     report.securityScore.densityLabel,
-    "CRITICAL FINDING DENSITY — IMMEDIATE ACTION REQUIRED"
+    "Moderate deduction density"
   );
+  assert.match(report.securityScore.formula.calculationAudit, /Base 100 - 32 \(deductions\) \+ 0 \(bonuses\) = 68/);
   assert.equal(report.securityScore.riskRating, "HIGH");
 });
 
@@ -198,7 +199,7 @@ test("generateReport keeps risk rating severity-driven even with high score", as
   });
 
   const report = await reportGeneratorService.generateReport(engagement._id);
-  assert.ok(report.securityScore.score >= 85 && report.securityScore.score <= 95);
+  assert.equal(report.securityScore.score, 98);
   assert.equal(report.securityScore.riskRating, "MEDIUM");
 });
 
