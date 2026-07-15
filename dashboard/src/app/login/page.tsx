@@ -1,20 +1,9 @@
-﻿"use client";
+"use client";
 
-import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { fetchSession } from "@/lib/session";
-
-const BOOT_LINES = [
-  "[kernel] VENOM secure boot sequence initialized",
-  "[auth] loading signed-session validation module",
-  "[session] issuing short-lived access + rotating refresh tokens",
-  "[bridge] checking backend proxy channel integrity",
-  "[db] probing engagement memory graph via /ready",
-  "[telemetry] staggered 15s/30s refresh channels armed",
-  "[status] hardened auth stack synchronized"
-];
 
 type ReadyState = {
   status: "checking" | "ready" | "down";
@@ -28,11 +17,9 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [bootLines, setBootLines] = useState<string[]>([]);
-  const [bootComplete, setBootComplete] = useState(false);
   const [readyState, setReadyState] = useState<ReadyState>({
     status: "checking",
-    message: "Probing backend readiness..."
+    message: "Checking backend readiness..."
   });
 
   useEffect(() => {
@@ -45,7 +32,7 @@ export default function LoginPage() {
           : null;
 
       if (mounted && queryReason === "auth_required") {
-        setToast("Session expired. Re-authenticate to continue operations.");
+        setToast("Session expired. Sign in to continue.");
       }
 
       const existing = await fetchSession();
@@ -58,31 +45,6 @@ export default function LoginPage() {
       mounted = false;
     };
   }, [router]);
-
-  useEffect(() => {
-    let index = 0;
-    let finalizeTimer: number | null = null;
-
-    const timer = window.setInterval(() => {
-      if (index >= BOOT_LINES.length) {
-        window.clearInterval(timer);
-        finalizeTimer = window.setTimeout(() => {
-          setBootComplete(true);
-        }, 350);
-        return;
-      }
-
-      setBootLines((prev) => [...prev, BOOT_LINES[index]]);
-      index += 1;
-    }, 220);
-
-    return () => {
-      window.clearInterval(timer);
-      if (finalizeTimer) {
-        window.clearTimeout(finalizeTimer);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     async function checkReady() {
@@ -102,7 +64,7 @@ export default function LoginPage() {
           const source = payload.backend?.db?.source || "backend";
           setReadyState({
             status: "ready",
-            message: `System Ready · DB online (${source})`
+            message: `Ready. Database online via ${source}.`
           });
           return;
         }
@@ -111,7 +73,7 @@ export default function LoginPage() {
           status: "down",
           message:
             payload.error ||
-            "Backend not ready. Check Render service, MongoDB, or backend /ready."
+            "Backend is not ready. Check Render, MongoDB, or /ready."
         });
       } catch {
         setReadyState({
@@ -145,14 +107,14 @@ export default function LoginPage() {
     };
   }, [toast]);
 
-  const heartbeatClass = useMemo(() => {
+  const statusTone = useMemo(() => {
     if (readyState.status === "ready") {
-      return "bg-[#D1FF00] animate-pulse";
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
     }
     if (readyState.status === "down") {
-      return "bg-[#FF3E3E]";
+      return "border-rose-200 bg-rose-50 text-rose-700";
     }
-    return "bg-slate-500 animate-pulse";
+    return "border-slate-200 bg-slate-50 text-slate-600";
   }, [readyState.status]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -160,7 +122,7 @@ export default function LoginPage() {
     setToast(null);
 
     if (!email || !password) {
-      setToast("Email and password are mandatory for private operator access.");
+      setToast("Email and password are required.");
       return;
     }
 
@@ -180,7 +142,7 @@ export default function LoginPage() {
       };
 
       if (!response.ok) {
-        setToast(payload.error || "Access denied. Credential validation failed.");
+        setToast(payload.error || "Access denied. Check your credentials.");
         return;
       }
 
@@ -193,129 +155,72 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050505] px-4 py-10 text-slate-100">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_22%_14%,rgba(209,255,0,0.08),transparent_28%),radial-gradient(circle_at_78%_9%,rgba(255,62,62,0.08),transparent_26%)]" />
-      <div className="pointer-events-none absolute inset-0 opacity-[0.02] [background-image:linear-gradient(rgba(255,255,255,0.9)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.9)_1px,transparent_1px)] [background-size:40px_40px]" />
-      <div className="venom-noise pointer-events-none absolute inset-0" />
-
-      <AnimatePresence>
-        {toast ? (
-          <motion.aside
-            key={toast}
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -12 }}
-            className="venom-toast fixed right-6 top-6 z-50 w-[min(92vw,420px)] rounded-md border border-[#FF3E3E]/70 bg-black/85 px-4 py-3 text-sm text-[#ffdede] shadow-[0_0_30px_rgba(255,62,62,0.28)]"
-          >
-            <p className="font-mono">{toast}</p>
-          </motion.aside>
-        ) : null}
-      </AnimatePresence>
-
-      <motion.section
-        initial={{ opacity: 0, y: 24 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.45, ease: "easeOut" }}
-        className="relative w-full max-w-xl rounded-2xl border border-white/10 bg-[#111111]/88 p-5 shadow-[0_18px_80px_rgba(0,0,0,0.7)] backdrop-blur-2xl sm:p-7"
-      >
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <span className="inline-flex items-center gap-2 rounded-full border border-[#D1FF00]/30 bg-[#D1FF00]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#D1FF00]">
-            Private Operator Access · Server-Side Auth
+    <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
+      <section className="mx-auto grid min-h-[calc(100vh-64px)] max-w-6xl items-center gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+        <div className="rounded-3xl border border-slate-200 bg-white p-7 shadow-sm">
+          <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-base font-bold text-white">
+            V
           </span>
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[11px] text-slate-300">
-            <span className={`h-2.5 w-2.5 rounded-full ${heartbeatClass}`} />
-            <span className="font-mono">{readyState.message}</span>
+          <p className="mt-6 text-sm font-semibold uppercase tracking-wide text-blue-700">
+            VENOM command center
+          </p>
+          <h1 className="mt-2 text-4xl font-semibold tracking-tight text-slate-950">
+            Sign in to manage security scans.
+          </h1>
+          <p className="mt-4 max-w-xl text-sm leading-6 text-slate-600">
+            Launch authorized scans, review reports, and control execution from a focused operator workspace.
+          </p>
+
+          <div className={`mt-6 rounded-2xl border p-4 text-sm ${statusTone}`}>
+            <p className="font-semibold">System status</p>
+            <p className="mt-1">{readyState.message}</p>
           </div>
         </div>
 
-        <h1 className="venom-typewriter font-mono text-[clamp(1.4rem,3.5vw,2rem)] tracking-[0.08em] text-[#D1FF00] [text-shadow:0_0_12px_rgba(209,255,0,0.45)]">
-          VENOM COMMAND PORTAL
-        </h1>
-        <p className="mt-2 text-sm text-slate-400">
-          Tactical authentication terminal for authorized cyber operations.
-        </p>
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
+          <div>
+            <h2 className="text-2xl font-semibold text-slate-950">Operator login</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Use your dashboard credentials to continue.
+            </p>
+          </div>
 
-        {!bootComplete ? (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="mt-6 rounded-xl border border-white/10 bg-black/55 p-4 font-mono text-xs leading-6 text-slate-300"
-          >
-            {bootLines.map((line) => (
-              <p key={line} className="venom-bootline">
-                {line}
-              </p>
-            ))}
-            <p className="mt-2 text-[#D1FF00]">booting secure modules...</p>
-          </motion.div>
-        ) : (
-          <motion.form
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.35 }}
-            className="mt-6 space-y-5"
-            onSubmit={handleSubmit}
-          >
+          {toast ? (
+            <p className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {toast}
+            </p>
+          ) : null}
+
+          <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
             <label className="block">
-              <span className="mb-2 block font-mono text-xs uppercase tracking-[0.14em] text-slate-400">
-                Operator ID
-              </span>
+              <span className="text-sm font-semibold text-slate-800">Email</span>
               <input
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 autoComplete="username"
-                placeholder="authorized.email@domain"
-                className="venom-input w-full bg-transparent px-1 pb-3 text-sm text-slate-100 outline-none placeholder:text-slate-600"
+                placeholder="owner@example.com"
+                className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               />
             </label>
 
             <label className="block">
-              <span className="mb-2 block font-mono text-xs uppercase tracking-[0.14em] text-slate-400">
-                Passphrase
-              </span>
-              <div className="relative">
+              <span className="text-sm font-semibold text-slate-800">Password</span>
+              <div className="relative mt-2">
                 <input
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   autoComplete="current-password"
-                  placeholder="************"
-                  className="venom-input w-full bg-transparent px-1 pb-3 pr-12 text-sm text-slate-100 outline-none placeholder:text-slate-600"
+                  placeholder="Enter password"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 pr-24 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((prev) => !prev)}
-                  className="absolute right-0 top-0 inline-flex h-8 w-10 items-center justify-center text-slate-400 transition hover:text-[#D1FF00]"
-                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-100"
                 >
-                  {showPassword ? (
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      className="h-4 w-4"
-                    >
-                      <path d="M3 3l18 18" />
-                      <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
-                      <path d="M9.9 5.2A10.9 10.9 0 0 1 12 5c5.1 0 9.4 3.6 10.7 7-0.5 1.3-1.6 2.9-3.2 4.2" />
-                      <path d="M6.2 6.2C4 7.6 2.6 9.6 1.3 12c1.4 3.6 5.7 7 10.7 7 1.6 0 3-.2 4.4-.8" />
-                    </svg>
-                  ) : (
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      className="h-4 w-4"
-                    >
-                      <path d="M1.3 12C2.6 8.6 6.9 5 12 5s9.4 3.6 10.7 7c-1.3 3.4-5.6 7-10.7 7S2.6 15.4 1.3 12Z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  )}
+                  {showPassword ? "Hide" : "Show"}
                 </button>
               </div>
             </label>
@@ -323,18 +228,13 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="venom-glitch-btn relative w-full overflow-hidden rounded-md border border-[#D1FF00]/50 bg-[#D1FF00] px-4 py-2.5 text-sm font-semibold uppercase tracking-[0.14em] text-black transition disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
             >
-              {submitting ? "Authorizing..." : "Enter Dashboard"}
+              {submitting ? "Signing in..." : "Enter dashboard"}
             </button>
-          </motion.form>
-        )}
-      </motion.section>
-
-      <div className="fixed bottom-4 right-4 font-mono text-[10px] uppercase tracking-[0.12em] text-slate-600">
-        Version: v0.8-auth [STABLE]
-      </div>
+          </form>
+        </div>
+      </section>
     </main>
   );
 }
-

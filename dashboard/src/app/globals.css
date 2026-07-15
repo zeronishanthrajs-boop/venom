@@ -1,14 +1,16 @@
 ﻿@import "tailwindcss";
 
 :root {
-  --background: #060708;
-  --background-soft: #0b0f14;
-  --foreground: #e7edf5;
-  --card: #11161d;
-  --accent: #d1ff00;
-  --accent-strong: #98bc00;
-  --accent-soft: rgba(209, 255, 0, 0.16);
-  --danger: #ff3e3e;
+  --background: #f6f8fb;
+  --background-soft: #eef2f7;
+  --foreground: #142033;
+  --card: #ffffff;
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8;
+  --accent-soft: rgba(37, 99, 235, 0.12);
+  --danger: #dc2626;
+  --muted: #667085;
+  --border: #d8dee8;
 }
 
 @theme inline {
@@ -32,10 +34,31 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-space-grotesk), "Segoe UI", sans-serif;
-  background-image:
-    radial-gradient(circle at 12% 14%, rgba(209, 255, 0, 0.15) 0%, transparent 36%),
-    radial-gradient(circle at 88% 4%, rgba(255, 62, 62, 0.1) 0%, transparent 30%),
-    linear-gradient(180deg, #07090d 0%, #0b1015 100%);
+  background-image: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+}
+
+button,
+a,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button:not(:disabled),
+a[href],
+label[for] {
+  cursor: pointer;
+}
+
+input,
+textarea,
+select {
+  color: inherit;
+}
+
+::selection {
+  background: rgba(37, 99, 235, 0.2);
 }
 
 .venom-noise {

@@ -4,9 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import Navigation from "@/components/Navigation";
-import { fetchEngagements, type Engagement, ApiError } from "@/lib/api";
-import { fetchSession, type VenomSession } from "@/lib/session";
 import ErrorBanner from "@/components/ErrorBanner";
+import { ApiError, fetchEngagements, type Engagement } from "@/lib/api";
+import { fetchSession, type VenomSession } from "@/lib/session";
 
 function formatDate(value?: string) {
   if (!value) {
@@ -19,20 +19,20 @@ function formatDate(value?: string) {
   return parsed.toLocaleString();
 }
 
-function statusTone(status: Engagement["status"]) {
+function statusClass(status: Engagement["status"]) {
   if (status === "completed") {
-    return "border-cyan-400/45 bg-cyan-500/10 text-cyan-100";
+    return "bg-emerald-50 text-emerald-700 ring-emerald-200";
   }
   if (status === "running") {
-    return "border-lime-400/45 bg-lime-500/10 text-lime-100";
+    return "bg-blue-50 text-blue-700 ring-blue-200";
   }
   if (status === "failed") {
-    return "border-rose-400/45 bg-rose-500/10 text-rose-100";
+    return "bg-rose-50 text-rose-700 ring-rose-200";
   }
   if (status === "paused") {
-    return "border-amber-400/45 bg-amber-500/10 text-amber-100";
+    return "bg-amber-50 text-amber-700 ring-amber-200";
   }
-  return "border-slate-600 bg-slate-800 text-slate-200";
+  return "bg-slate-100 text-slate-600 ring-slate-200";
 }
 
 export default function RecentScansPage() {
@@ -72,96 +72,106 @@ export default function RecentScansPage() {
     };
   }, [loadData]);
 
-  const list = useMemo(() => engagements.slice(0, 30), [engagements]);
+  const list = useMemo(() => engagements.slice(0, 50), [engagements]);
 
   return (
-    <main className="min-h-screen bg-[#06090f] text-slate-100">
+    <main className="min-h-screen bg-slate-100 text-slate-950 lg:flex">
       <Navigation />
 
-      <section className="mx-auto w-full max-w-6xl px-4 py-8">
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <span className="inline-flex rounded-full border border-cyan-400/45 bg-cyan-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-cyan-100">
-              Screen 3 Support
-            </span>
-            <h1 className="mt-2 text-2xl font-semibold sm:text-3xl">Recent Scans</h1>
-            <p className="mt-1 text-sm text-slate-400">
-              Open any engagement to view the detailed report and Ask AI sidebar.
-            </p>
+      <section className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-7xl">
+          <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">
+                Scan history
+              </p>
+              <h1 className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">
+                Reports and active runs
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                Find recent targets, reopen reports, and move into controls when an engagement needs operator review.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => router.push("/dashboard/new-scan")}
+              className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+            >
+              Start New Scan
+            </button>
           </div>
 
-          <button
-            type="button"
-            onClick={() => router.push("/dashboard/new-scan")}
-            className="rounded-lg bg-lime-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-lime-300"
-          >
-            Start New Scan
-          </button>
-        </div>
+          <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            {loading ? (
+              <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">Loading scans...</p>
+            ) : null}
 
-        {loading ? (
-          <div className="rounded-2xl border border-slate-700 bg-slate-900/80 p-6 text-sm text-slate-300">
-            Loading scans...
-          </div>
-        ) : null}
+            {!loading && error ? <ErrorBanner error={error} onRetry={loadData} /> : null}
 
-        {!loading && error ? (
-          <ErrorBanner error={error} onRetry={loadData} />
-        ) : null}
+            {!loading && !error && list.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center">
+                <h2 className="text-lg font-semibold text-slate-950">No scans yet</h2>
+                <p className="mt-2 text-sm text-slate-500">Launch one authorized scan to create your first report.</p>
+                <button
+                  type="button"
+                  onClick={() => router.push("/dashboard/new-scan")}
+                  className="mt-5 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+                >
+                  Start Scan
+                </button>
+              </div>
+            ) : null}
 
-        {!loading && !error && list.length === 0 ? (
-          <div className="rounded-2xl border border-slate-700 bg-slate-900/80 p-6 text-sm text-slate-300">
-            No scans yet. Start one from the New Scan page.
-          </div>
-        ) : null}
-
-        {!loading && !error && list.length > 0 ? (
-          <div className="grid gap-3">
-            {list.map((engagement) => (
-              <article
-                key={engagement._id}
-                className="rounded-2xl border border-slate-700 bg-slate-900/85 p-4"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-100">
-                      {engagement.name || "Untitled scan"}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      Target: {engagement.targetUrl}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Created: {formatDate(engagement.createdAt)}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${statusTone(
-                        engagement.status
-                      )}`}
-                    >
-                      {engagement.status}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        router.push(`/dashboard/report/${encodeURIComponent(engagement._id)}`)
-                      }
-                      className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-lime-400/45"
-                    >
-                      View Report
-                    </button>
-                  </div>
+            {!loading && !error && list.length > 0 ? (
+              <div className="overflow-hidden rounded-xl border border-slate-200">
+                <div className="grid grid-cols-[1.2fr_0.8fr_0.5fr_0.7fr] gap-3 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <span>Target</span>
+                  <span>Created</span>
+                  <span>Status</span>
+                  <span className="text-right">Actions</span>
                 </div>
-              </article>
-            ))}
-          </div>
-        ) : null}
+                <div className="divide-y divide-slate-200">
+                  {list.map((engagement) => (
+                    <article
+                      key={engagement._id}
+                      className="grid gap-3 px-4 py-4 text-sm sm:grid-cols-[1.2fr_0.8fr_0.5fr_0.7fr] sm:items-center"
+                    >
+                      <div>
+                        <p className="font-semibold text-slate-950">{engagement.name || "Untitled scan"}</p>
+                        <p className="mt-1 break-all text-slate-500">{engagement.targetUrl}</p>
+                      </div>
+                      <p className="text-slate-600">{formatDate(engagement.createdAt)}</p>
+                      <span className={`w-fit rounded-full px-2.5 py-1 text-xs font-semibold capitalize ring-1 ${statusClass(engagement.status)}`}>
+                        {engagement.status}
+                      </span>
+                      <div className="flex justify-start gap-2 sm:justify-end">
+                        <button
+                          type="button"
+                          onClick={() => router.push(`/dashboard/report/${encodeURIComponent(engagement._id)}`)}
+                          className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+                        >
+                          Report
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => router.push(`/dashboard/control?engagementId=${encodeURIComponent(engagement._id)}`)}
+                          className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                        >
+                          Controls
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
-        {session ? (
-          <p className="mt-6 text-xs text-slate-500">Signed in as {session.email}</p>
-        ) : null}
+            {session ? (
+              <p className="mt-5 text-xs text-slate-500">Signed in as {session.email}</p>
+            ) : null}
+          </section>
+        </div>
       </section>
     </main>
   );

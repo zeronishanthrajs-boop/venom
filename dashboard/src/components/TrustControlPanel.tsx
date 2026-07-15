@@ -16,6 +16,12 @@ import {
 } from "@/lib/api";
 import type { VenomSession } from "@/lib/session";
 
+function stateTone(active: boolean) {
+  return active
+    ? "border-rose-200 bg-rose-50 text-rose-800"
+    : "border-emerald-200 bg-emerald-50 text-emerald-800";
+}
+
 export function TrustControlPanel({
   session,
   engagementId
@@ -104,126 +110,157 @@ export function TrustControlPanel({
   }
 
   return (
-    <div className="space-y-3 rounded-xl border border-slate-700 bg-slate-900/80 p-3">
-      <div className="flex items-center justify-between gap-2">
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-[11px] uppercase tracking-wide text-slate-400">
-            Trust + Control
+          <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">
+            Trust controls
           </p>
-          <p className="text-sm font-semibold text-slate-100">
-            Scope, Action Preview, Kill Switch
+          <p className="mt-1 text-sm text-slate-500">
+            Review scope, preview actions, and halt execution when needed.
           </p>
         </div>
         <button
           type="button"
           onClick={() => void load()}
           disabled={loading}
-          className="rounded-lg border border-slate-600 bg-slate-900 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+          className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {loading ? "Refreshing..." : "Refresh"}
         </button>
       </div>
 
-      {killSwitch ? (
-        <div className="grid gap-2 sm:grid-cols-2">
-          <article
-            className={`rounded-lg border px-3 py-2 text-xs ${
-              killSwitch.global.active
-                ? "border-rose-500/55 bg-rose-500/10 text-rose-200"
-                : "border-lime-500/45 bg-lime-500/10 text-lime-200"
-            }`}
-          >
-            <p className="font-semibold">Global Kill Switch</p>
-            <p className="mt-1">
-              {killSwitch.global.active
-                ? `ACTIVE: ${killSwitch.global.reason || "Execution blocked"}`
-                : "Inactive"}
-            </p>
-            <button
-              type="button"
-              onClick={() => void setGlobal(!killSwitch.global.active)}
-              className="mt-2 rounded border border-slate-600 bg-slate-900 px-2 py-1 text-[11px]"
-            >
-              {killSwitch.global.active ? "Release Global" : "Activate Global"}
-            </button>
-          </article>
+      {error ? (
+        <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
+        </p>
+      ) : null}
 
-          <article
-            className={`rounded-lg border px-3 py-2 text-xs ${
-              killSwitch.engagement.active
-                ? "border-rose-500/55 bg-rose-500/10 text-rose-200"
-                : "border-cyan-500/45 bg-cyan-500/10 text-cyan-200"
-            }`}
-          >
-            <p className="font-semibold">Engagement Kill Switch</p>
-            <p className="mt-1">
-              {killSwitch.engagement.active
-                ? `ACTIVE: ${killSwitch.engagement.reason || "Execution blocked"}`
-                : "Inactive"}
-            </p>
-            <button
-              type="button"
-              onClick={() => void setEngagement(!killSwitch.engagement.active)}
-              className="mt-2 rounded border border-slate-600 bg-slate-900 px-2 py-1 text-[11px]"
+      {killSwitch ? (
+        <div className="grid gap-3 md:grid-cols-2">
+          {[
+            {
+              title: "Global kill switch",
+              active: killSwitch.global.active,
+              reason: killSwitch.global.reason,
+              action: () => void setGlobal(!killSwitch.global.active),
+              label: killSwitch.global.active ? "Release global halt" : "Activate global halt"
+            },
+            {
+              title: "Engagement kill switch",
+              active: killSwitch.engagement.active,
+              reason: killSwitch.engagement.reason,
+              action: () => void setEngagement(!killSwitch.engagement.active),
+              label: killSwitch.engagement.active
+                ? "Release engagement halt"
+                : "Activate engagement halt"
+            }
+          ].map((item) => (
+            <article
+              key={item.title}
+              className={`rounded-2xl border p-4 ${stateTone(item.active)}`}
             >
-              {killSwitch.engagement.active
-                ? "Release Engagement"
-                : "Activate Engagement"}
-            </button>
-          </article>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">{item.title}</h3>
+                  <p className="mt-1 text-sm">
+                    {item.active ? item.reason || "Execution blocked" : "Inactive"}
+                  </p>
+                </div>
+                <span className="rounded-full bg-white/70 px-2.5 py-1 text-xs font-semibold">
+                  {item.active ? "Active" : "Clear"}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={item.action}
+                className={`mt-4 rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                  item.active
+                    ? "bg-white text-rose-700 hover:bg-rose-100"
+                    : "bg-emerald-700 text-white hover:bg-emerald-800"
+                }`}
+              >
+                {item.label}
+              </button>
+            </article>
+          ))}
         </div>
       ) : null}
 
-      {scope ? (
-        <article className="rounded-lg border border-slate-700 bg-slate-950/65 p-2">
-          <p className="text-[11px] uppercase tracking-wide text-slate-400">
-            Scope Dashboard
-          </p>
-          <p className="mt-1 text-xs text-slate-200">
-            Allowed domains: {scope.allowedDomains.join(", ") || "none"}
-          </p>
-          <p className="mt-1 text-xs text-slate-300">
-            Restricted paths: {scope.restrictedPaths.join(", ") || "none"}
-          </p>
-          <p className="mt-1 text-xs text-slate-300">
-            Planned tools: {scope.plannedTools.join(", ") || "none"}
-          </p>
-        </article>
-      ) : null}
-
-      {preview ? (
-        <article className="rounded-lg border border-slate-700 bg-slate-950/65 p-2">
-          <p className="text-[11px] uppercase tracking-wide text-slate-400">
-            Action Preview
-          </p>
-          <div className="mt-1 max-h-28 space-y-1 overflow-y-auto text-xs text-slate-300">
-            {preview.actions.map((action) => (
-              <p key={`${action.order}-${action.toolId}`}>
-                {action.order}. {action.toolId} ({action.riskLevel}) -{" "}
-                {action.description}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <article className="rounded-2xl border border-slate-200 bg-white p-4">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Scope dashboard
+          </h3>
+          {scope ? (
+            <div className="mt-4 space-y-3 text-sm">
+              <p>
+                <span className="font-semibold text-slate-950">Allowed domains:</span>{" "}
+                <span className="text-slate-600">
+                  {scope.allowedDomains.join(", ") || "none"}
+                </span>
               </p>
-            ))}
-          </div>
+              <p>
+                <span className="font-semibold text-slate-950">Restricted paths:</span>{" "}
+                <span className="text-slate-600">
+                  {scope.restrictedPaths.join(", ") || "none"}
+                </span>
+              </p>
+              <p>
+                <span className="font-semibold text-slate-950">Planned tools:</span>{" "}
+                <span className="text-slate-600">
+                  {scope.plannedTools.join(", ") || "none"}
+                </span>
+              </p>
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-slate-500">Scope data has not loaded yet.</p>
+          )}
         </article>
-      ) : null}
 
-      {activity ? (
-        <article className="rounded-lg border border-slate-700 bg-slate-950/65 p-2">
-          <p className="text-[11px] uppercase tracking-wide text-slate-400">
-            Recent Activity
-          </p>
-          <div className="mt-1 max-h-24 space-y-1 overflow-y-auto text-xs text-slate-300">
+        <article className="rounded-2xl border border-slate-200 bg-white p-4">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Action preview
+          </h3>
+          {preview ? (
+            <div className="mt-4 max-h-64 space-y-2 overflow-y-auto">
+              {preview.actions.map((action) => (
+                <div key={`${action.order}-${action.toolId}`} className="rounded-xl bg-slate-50 p-3 text-sm">
+                  <p className="font-semibold text-slate-950">
+                    {action.order}. {action.toolId}
+                  </p>
+                  <p className="mt-1 text-slate-600">{action.description}</p>
+                  <span className="mt-2 inline-flex rounded-full bg-white px-2 py-1 text-xs font-semibold capitalize text-slate-600">
+                    {action.riskLevel}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-slate-500">Action preview has not loaded yet.</p>
+          )}
+        </article>
+      </div>
+
+      <article className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Recent activity
+        </h3>
+        {activity ? (
+          <div className="mt-4 divide-y divide-slate-100">
             {activity.logs.slice(0, 6).map((entry, index) => (
-              <p key={`${entry.createdAt}-${index}`}>
-                {new Date(entry.createdAt).toLocaleTimeString()} | {entry.method}{" "}
-                {entry.path} {"->"} {entry.statusCode}
+              <p key={`${entry.createdAt}-${index}`} className="py-2 text-sm text-slate-600">
+                <span className="font-semibold text-slate-950">
+                  {new Date(entry.createdAt).toLocaleTimeString()}
+                </span>{" "}
+                {entry.method} {entry.path} {"->"} {entry.statusCode}
               </p>
             ))}
           </div>
-        </article>
-      ) : null}
-
-      {error ? <p className="text-xs text-rose-300">{error}</p> : null}
+        ) : (
+          <p className="mt-4 text-sm text-slate-500">Activity has not loaded yet.</p>
+        )}
+      </article>
     </div>
   );
 }

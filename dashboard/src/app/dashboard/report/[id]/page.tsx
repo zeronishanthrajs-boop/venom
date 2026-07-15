@@ -71,45 +71,45 @@ function formatDate(value?: string) {
 
 function findingTone(severity: FlattenedFinding["severity"]) {
   if (severity === "critical") {
-    return "border-rose-500/65 bg-rose-500/10 text-rose-100";
+    return "border-rose-200 bg-rose-50 text-rose-700";
   }
   if (severity === "high") {
-    return "border-orange-500/60 bg-orange-500/10 text-orange-100";
+    return "border-orange-200 bg-orange-50 text-orange-700";
   }
   if (severity === "medium") {
-    return "border-amber-500/60 bg-amber-500/10 text-amber-100";
+    return "border-amber-200 bg-amber-50 text-amber-700";
   }
   if (severity === "low") {
-    return "border-cyan-500/60 bg-cyan-500/10 text-cyan-100";
+    return "border-blue-200 bg-blue-50 text-blue-700";
   }
-  return "border-slate-600 bg-slate-700 text-slate-200";
+  return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
 function statusTone(status: string) {
   if (status === "completed") {
-    return "border-cyan-500/45 bg-cyan-500/10 text-cyan-100";
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
   }
   if (status === "running") {
-    return "border-lime-500/45 bg-lime-500/10 text-lime-100";
+    return "border-blue-200 bg-blue-50 text-blue-700";
   }
   if (status === "failed") {
-    return "border-rose-500/45 bg-rose-500/10 text-rose-100";
+    return "border-rose-200 bg-rose-50 text-rose-700";
   }
-  return "border-slate-600 bg-slate-700 text-slate-200";
+  return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
 function executionResultTone(status: string) {
   const normalized = status.toUpperCase();
   if (normalized === "PASSED") {
-    return "border-lime-500/45 bg-lime-500/10 text-lime-100";
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
   }
   if (normalized === "VULNERABLE") {
-    return "border-rose-500/45 bg-rose-500/10 text-rose-100";
+    return "border-rose-200 bg-rose-50 text-rose-700";
   }
   if (normalized === "BLOCKED") {
-    return "border-amber-500/45 bg-amber-500/10 text-amber-100";
+    return "border-amber-200 bg-amber-50 text-amber-700";
   }
-  return "border-slate-600 bg-slate-700 text-slate-200";
+  return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
 function flattenFindings(jobs: ExecutionJob[]) {
@@ -353,9 +353,9 @@ function AIChatSidebar({
   }
 
   return (
-    <aside className="fixed right-0 top-[69px] z-40 flex h-[calc(100vh-69px)] w-full max-w-md flex-col border-l border-slate-700 bg-[#0a111a]/98 backdrop-blur-xl">
-      <div className="flex items-center justify-between border-b border-slate-700 px-4 py-3">
-        <h3 className="text-sm font-semibold uppercase tracking-[0.1em] text-lime-200">Ask AI</h3>
+    <aside className="fixed bottom-0 right-0 top-0 z-40 flex w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-2xl">
+      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-blue-700">Ask AI</h3>
       </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
@@ -364,8 +364,8 @@ function AIChatSidebar({
             key={`${message.role}-${index}`}
             className={`max-w-[92%] rounded-lg border px-3 py-2 text-sm ${
               message.role === "user"
-                ? "ml-auto border-lime-400/40 bg-lime-500/10 text-lime-100"
-                : "border-slate-700 bg-slate-900/90 text-slate-100"
+                ? "ml-auto border-blue-200 bg-blue-50 text-blue-900"
+                : "border-slate-200 bg-slate-50 text-slate-800"
             }`}
           >
             <p className="whitespace-pre-wrap">{message.content}</p>
@@ -378,13 +378,13 @@ function AIChatSidebar({
         ))}
 
         {loading ? (
-          <div className="max-w-[92%] rounded-lg border border-slate-700 bg-slate-900/90 px-3 py-2 text-xs text-slate-400">
+          <div className="max-w-[92%] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
             Thinking...
           </div>
         ) : null}
       </div>
 
-      <div className="border-t border-slate-700 p-3">
+      <div className="border-t border-slate-200 p-3">
         <div className="flex items-center gap-2">
           <input
             type="text"
@@ -398,13 +398,13 @@ function AIChatSidebar({
             }}
             placeholder="Ask about risks, findings, or next actions"
             disabled={loading}
-            className="w-full rounded-lg border border-slate-600 bg-slate-950/80 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-lime-400 focus:ring-2 focus:ring-lime-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-70"
           />
           <button
             type="button"
             onClick={() => void sendMessage()}
             disabled={loading}
-            className="rounded-lg bg-lime-400 px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-950 transition hover:bg-lime-300 disabled:cursor-not-allowed disabled:opacity-70"
+            className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
             Send
           </button>
@@ -657,10 +657,10 @@ export default function ReportPage() {
 
   if (!engagementId) {
     return (
-      <main className="min-h-screen bg-[#06090f] text-slate-100">
+      <main className="min-h-screen bg-slate-100 text-slate-950 lg:flex">
         <Navigation />
-        <section className="mx-auto max-w-4xl px-4 py-8">
-          <p className="rounded-xl border border-rose-500/45 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        <section className="flex-1 px-4 py-8">
+          <p className="mx-auto max-w-4xl rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
             Invalid report id.
           </p>
         </section>
@@ -670,29 +670,31 @@ export default function ReportPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#06090f] text-slate-100">
+      <main className="min-h-screen bg-slate-100 text-slate-950 lg:flex">
         <Navigation />
-        <section className="mx-auto flex min-h-[calc(100vh-69px)] max-w-4xl flex-col items-center justify-center px-4 py-8">
-          <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-700 border-t-lime-400" />
-          <p className="mt-4 text-sm text-slate-300">Generating comprehensive report...</p>
+        <section className="flex flex-1 flex-col items-center justify-center px-4 py-8">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600" />
+          <p className="mt-4 text-sm text-slate-600">Generating comprehensive report...</p>
         </section>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#06090f] pb-28 text-slate-100">
+    <main className="min-h-screen bg-slate-100 pb-28 text-slate-950 lg:flex">
       <Navigation />
 
-      <section className="mx-auto w-full max-w-6xl px-4 py-7">
-        <div className="rounded-3xl border border-slate-700/80 bg-[#101722]/92 p-5 shadow-[0_20px_60px_rgba(0,0,0,0.4)] sm:p-7">
+      <section className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-7xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <span className="inline-flex rounded-full border border-lime-400/45 bg-lime-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-lime-100">
-                Screen 3 of 3
+              <span className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-blue-700">
+                Executive report
               </span>
-              <h1 className="mt-3 text-2xl font-semibold sm:text-3xl">Security Assessment Report</h1>
-              <p className="mt-2 text-sm text-slate-400">
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">
+                Security Assessment Report
+              </h1>
+              <p className="mt-2 text-sm text-slate-500">
                 {report?.engagement?.targetUrl || "Unknown target"}
               </p>
             </div>
@@ -719,7 +721,7 @@ export default function ReportPage() {
           ) : null}
 
           {isProcessing ? (
-            <p className="mt-4 rounded-lg border border-lime-500/40 bg-lime-500/10 px-3 py-2 text-sm text-lime-100">
+            <p className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
               Scan is in progress. This report auto-refreshes every 5 seconds.
             </p>
           ) : null}
@@ -728,8 +730,8 @@ export default function ReportPage() {
             <p
               className={`mt-3 rounded-lg border px-3 py-2 text-sm ${
                 kickoffStatus === "failed"
-                  ? "border-rose-500/45 bg-rose-500/10 text-rose-200"
-                  : "border-cyan-500/45 bg-cyan-500/10 text-cyan-100"
+                  ? "border-rose-200 bg-rose-50 text-rose-700"
+                  : "border-blue-200 bg-blue-50 text-blue-700"
               }`}
             >
               {kickoffMessage}
@@ -737,35 +739,35 @@ export default function ReportPage() {
           ) : null}
 
           <div className="mt-6 grid gap-4 xl:grid-cols-2">
-            <section className="rounded-2xl border border-slate-700 bg-slate-900/80 p-4">
-              <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-lime-200">
+            <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
                 What We Scanned
               </h2>
-              <div className="mt-3 space-y-2 text-sm text-slate-200">
+              <div className="mt-3 space-y-2 text-sm text-slate-700">
                 <p>
-                  <span className="text-slate-400">Target:</span>{" "}
+                  <span className="text-slate-500">Target:</span>{" "}
                   {report?.engagement?.targetUrl || "n/a"}
                 </p>
                 <p>
-                  <span className="text-slate-400">Scan Date:</span>{" "}
+                  <span className="text-slate-500">Scan Date:</span>{" "}
                   {formatDate(report?.engagement?.createdAt)}
                 </p>
                 <p>
-                  <span className="text-slate-400">Jobs Run:</span>{" "}
+                  <span className="text-slate-500">Jobs Run:</span>{" "}
                   {report?.summary?.totalExecutionJobs ?? 0}
                 </p>
                 <p>
-                  <span className="text-slate-400">Planner Source:</span>{" "}
+                  <span className="text-slate-500">Planner Source:</span>{" "}
                   {report?.latestPlan?.plannerSource || "template"}
                 </p>
                 <p>
-                  <span className="text-slate-400">Evidence Capture:</span> Enabled
+                  <span className="text-slate-500">Evidence Capture:</span> Enabled
                 </p>
               </div>
             </section>
 
-            <section className="rounded-2xl border border-slate-700 bg-slate-900/80 p-4">
-              <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-lime-200">
+            <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
                 What We Found
               </h2>
               <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
@@ -790,49 +792,49 @@ export default function ReportPage() {
             </section>
           </div>
 
-          <section className="mt-4 rounded-2xl border border-slate-700 bg-slate-900/80 p-4">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-lime-200">
+          <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
               Scan Execution Details
             </h2>
 
             {effectiveDetailedReport?.executionDetails ? (
               <>
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
-                  <div className="rounded-lg border border-slate-700 bg-slate-950/70 px-2 py-2 text-center">
-                    <p className="text-lg font-semibold text-slate-100">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-center">
+                    <p className="text-lg font-semibold text-slate-950">
                       {effectiveDetailedReport.executionDetails.totalTests}
                     </p>
-                    <p className="text-[10px] uppercase tracking-wide text-slate-400">Tests Run</p>
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500">Tests Run</p>
                   </div>
-                  <div className="rounded-lg border border-lime-500/45 bg-lime-500/10 px-2 py-2 text-center">
-                    <p className="text-lg font-semibold text-lime-100">
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2 text-center">
+                    <p className="text-lg font-semibold text-emerald-700">
                       {effectiveDetailedReport.executionDetails.passed}
                     </p>
-                    <p className="text-[10px] uppercase tracking-wide text-lime-200">Passed</p>
+                    <p className="text-[10px] uppercase tracking-wide text-emerald-700">Passed</p>
                   </div>
-                  <div className="rounded-lg border border-rose-500/45 bg-rose-500/10 px-2 py-2 text-center">
-                    <p className="text-lg font-semibold text-rose-100">
+                  <div className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-2 text-center">
+                    <p className="text-lg font-semibold text-rose-700">
                       {effectiveDetailedReport.executionDetails.failed}
                     </p>
-                    <p className="text-[10px] uppercase tracking-wide text-rose-200">Vulnerable</p>
+                    <p className="text-[10px] uppercase tracking-wide text-rose-700">Vulnerable</p>
                   </div>
-                  <div className="rounded-lg border border-amber-500/45 bg-amber-500/10 px-2 py-2 text-center">
-                    <p className="text-lg font-semibold text-amber-100">
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-2 text-center">
+                    <p className="text-lg font-semibold text-amber-700">
                       {effectiveDetailedReport.executionDetails.blocked + effectiveDetailedReport.executionDetails.errored}
                     </p>
-                    <p className="text-[10px] uppercase tracking-wide text-amber-200">Blocked/Error</p>
+                    <p className="text-[10px] uppercase tracking-wide text-amber-700">Blocked/Error</p>
                   </div>
-                  <div className="rounded-lg border border-cyan-500/45 bg-cyan-500/10 px-2 py-2 text-center">
-                    <p className="text-lg font-semibold text-cyan-100">
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 px-2 py-2 text-center">
+                    <p className="text-lg font-semibold text-blue-700">
                       {effectiveDetailedReport.executionDetails.totalTimeMs}ms
                     </p>
-                    <p className="text-[10px] uppercase tracking-wide text-cyan-200">Total Time</p>
+                    <p className="text-[10px] uppercase tracking-wide text-blue-700">Total Time</p>
                   </div>
                 </div>
 
                 {isDetailedReportGenerating ? (
-                  <div className="mt-4 flex items-center gap-2 text-xs text-lime-400/80 animate-pulse">
-                    <div className="h-3 w-3 animate-spin rounded-full border border-slate-700 border-t-lime-400" />
+                  <div className="mt-4 flex animate-pulse items-center gap-2 text-xs text-blue-700">
+                    <div className="h-3 w-3 animate-spin rounded-full border border-slate-200 border-t-blue-600" />
                     <span>Updating trace details in the background...</span>
                   </div>
                 ) : null}
@@ -873,18 +875,18 @@ export default function ReportPage() {
                       {effectiveDetailedReport.detailedFindings.slice(0, 12).map((finding: DetailedReportFinding) => (
                         <article
                           key={`${finding.id}-${finding.title}`}
-                          className="rounded-lg border border-slate-700 bg-slate-950/65 p-3"
+                          className="rounded-lg border border-slate-200 bg-slate-50 p-3"
                         >
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="rounded-full border border-slate-600 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
+                            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-600">
                               {finding.severity}
                             </span>
-                            <p className="text-sm font-semibold text-slate-100">{finding.title}</p>
+                            <p className="text-sm font-semibold text-slate-950">{finding.title}</p>
                           </div>
-                          <p className="mt-2 text-xs text-slate-300">
+                          <p className="mt-2 text-xs text-slate-600">
                             {finding.executionTrace?.result?.reason || finding.whatFound}
                           </p>
-                          <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-slate-400">
+                          <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-slate-500">
                             <span>
                               Test: {finding.executionTrace?.test?.name || "not linked"}
                             </span>
@@ -896,7 +898,7 @@ export default function ReportPage() {
                             </span>
                           </div>
                           {finding.developerNotes ? (
-                            <p className="mt-2 text-xs text-lime-100">
+                            <p className="mt-2 text-xs text-blue-700">
                               Developer Notes: {finding.developerNotes}
                             </p>
                           ) : null}
@@ -907,24 +909,24 @@ export default function ReportPage() {
                 ) : null}
               </>
             ) : isDetailedReportGenerating ? (
-              <div className="mt-3 flex items-center gap-2 text-sm text-lime-400/80 animate-pulse">
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-700 border-t-lime-400" />
+              <div className="mt-3 flex animate-pulse items-center gap-2 text-sm text-blue-700">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
                 <span>Generating detailed execution trace in the background...</span>
               </div>
             ) : (
-              <p className="mt-3 text-sm text-slate-400">
+              <p className="mt-3 text-sm text-slate-500">
                 Detailed execution trace is not available yet.
               </p>
             )}
           </section>
 
-          <section className="mt-4 rounded-2xl border border-slate-700 bg-slate-900/80 p-4">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-lime-200">
+          <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
               Detailed Findings
             </h2>
 
             {findings.length === 0 ? (
-              <p className="mt-3 text-sm text-slate-400">
+              <p className="mt-3 text-sm text-slate-500">
                 No findings recorded yet. Wait for orchestration to complete.
               </p>
             ) : (
@@ -932,7 +934,7 @@ export default function ReportPage() {
                 {findings.slice(0, 40).map((finding) => (
                   <article
                     key={finding.key}
-                    className="rounded-xl border border-slate-700 bg-slate-950/70 p-3"
+                    className="rounded-xl border border-slate-200 bg-slate-50 p-3"
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <span
@@ -942,10 +944,10 @@ export default function ReportPage() {
                       >
                         {finding.severity}
                       </span>
-                      <h3 className="text-sm font-semibold text-slate-100">{finding.title}</h3>
+                      <h3 className="text-sm font-semibold text-slate-950">{finding.title}</h3>
                     </div>
-                    <p className="mt-2 text-sm text-slate-300">{finding.description}</p>
-                    <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-400">
+                    <p className="mt-2 text-sm text-slate-600">{finding.description}</p>
+                    <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
                       <span>Tool: {finding.tool}</span>
                       <span>
                         {finding.rootCauseId ? "Root Cause" : "Affected"}:{" "}
@@ -956,20 +958,20 @@ export default function ReportPage() {
                       ) : null}
                     </div>
                     {finding.affectedAssets && finding.affectedAssets.length > 0 ? (
-                      <details className="mt-2 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs text-slate-300">
-                        <summary className="cursor-pointer text-lime-100">
+                      <details className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                        <summary className="cursor-pointer text-blue-700">
                           Affected assets ({finding.affectedAssets.length})
                         </summary>
                         <ul className="mt-2 max-h-44 space-y-1 overflow-y-auto">
                           {finding.affectedAssets.map((asset) => (
-                            <li key={asset} className="break-all text-slate-400">
+                            <li key={asset} className="break-all text-slate-500">
                               {asset}
                             </li>
                           ))}
                         </ul>
                       </details>
                     ) : null}
-                    <p className="mt-2 text-xs text-lime-100">
+                    <p className="mt-2 text-xs text-blue-700">
                       Recommendation: {finding.recommendation}
                     </p>
                   </article>
@@ -979,13 +981,13 @@ export default function ReportPage() {
           </section>
 
           <div className="mt-4 grid gap-4 xl:grid-cols-2">
-            <section className="rounded-2xl border border-slate-700 bg-slate-900/80 p-4">
-              <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-lime-200">
+            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
                 Our Analysis
               </h2>
 
               {brief?.topRisks?.length ? (
-                <ol className="mt-3 space-y-2 text-sm text-slate-200">
+                <ol className="mt-3 space-y-2 text-sm text-slate-700">
                   {brief.topRisks.slice(0, 3).map((risk, index) => (
                     <li key={`${risk.rank}-${risk.title}`}>
                       {index + 1}. <span className="font-semibold">{risk.title}:</span>{" "}
@@ -994,7 +996,7 @@ export default function ReportPage() {
                   ))}
                 </ol>
               ) : (
-                <p className="mt-3 text-sm text-slate-400">
+                <p className="mt-3 text-sm text-slate-500">
                   Decision brief not available yet. Insights will populate after scan completion.
                 </p>
               )}
@@ -1004,7 +1006,7 @@ export default function ReportPage() {
                   <p className="text-xs uppercase tracking-[0.08em] text-slate-500">
                     Pattern Signals
                   </p>
-                  <ul className="mt-2 space-y-1 text-xs text-slate-300">
+                  <ul className="mt-2 space-y-1 text-xs text-slate-600">
                     {report.patternMatches.slice(0, 4).map((pattern) => (
                       <li key={pattern.patternId}>
                         {pattern.patternName} ({pattern.applicabilityScore.toFixed(2)})
@@ -1015,13 +1017,13 @@ export default function ReportPage() {
               ) : null}
             </section>
 
-            <section className="rounded-2xl border border-slate-700 bg-slate-900/80 p-4">
-              <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-lime-200">
+            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
                 Compliance and Evidence
               </h2>
 
               {compliance ? (
-                <div className="mt-3 space-y-2 text-sm text-slate-200">
+                <div className="mt-3 space-y-2 text-sm text-slate-700">
                   <p>
                     CVSS Score: <span className="font-semibold">{compliance.cvssOverallScore.toFixed(2)}</span>
                   </p>
@@ -1036,13 +1038,13 @@ export default function ReportPage() {
                   </p>
                 </div>
               ) : (
-                <p className="mt-3 text-sm text-slate-400">
+                <p className="mt-3 text-sm text-slate-500">
                   Compliance map is not available yet.
                 </p>
               )}
 
               {orchestratorStatus?.active?.[engagementId] ? (
-                <p className="mt-4 rounded-lg border border-lime-400/35 bg-lime-500/10 px-3 py-2 text-xs text-lime-100">
+                <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
                   Active orchestration step {orchestratorStatus.active[engagementId].step}/
                   {orchestratorStatus.active[engagementId].totalSteps}
                 </p>
@@ -1052,12 +1054,12 @@ export default function ReportPage() {
         </div>
       </section>
 
-      <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-slate-700 bg-[#090f16]/95 p-3 backdrop-blur-xl">
+      <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-slate-200 bg-white/95 p-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl">
         <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-center gap-2">
           <button
             type="button"
             onClick={() => setShowChat((prev) => !prev)}
-            className="rounded-lg bg-lime-400 px-4 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-950 transition hover:bg-lime-300"
+            className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-blue-700"
           >
             {showChat ? "Close AI Chat" : "Ask AI About Findings"}
           </button>
@@ -1065,14 +1067,14 @@ export default function ReportPage() {
             type="button"
             onClick={() => void handleDownload()}
             disabled={downloading}
-            className="rounded-lg border border-slate-600 bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-100 transition hover:border-lime-400/45 disabled:cursor-not-allowed disabled:opacity-70"
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {downloading ? "Preparing Download..." : "Download Full Report"}
           </button>
           <button
             type="button"
             onClick={() => router.push("/dashboard/recent")}
-            className="rounded-lg border border-slate-600 bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-100 transition hover:border-slate-400"
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 transition hover:bg-slate-50"
           >
             View Other Reports
           </button>
@@ -1080,7 +1082,7 @@ export default function ReportPage() {
             <button
               type="button"
               onClick={() => triggerOrchestration(true)}
-              className="rounded-lg border border-cyan-500/50 bg-cyan-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-cyan-100 transition hover:bg-cyan-500/20"
+              className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-blue-700 transition hover:bg-blue-100"
             >
               Retry Scan Start
             </button>

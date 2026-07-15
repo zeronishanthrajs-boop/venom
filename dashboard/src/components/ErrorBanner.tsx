@@ -47,11 +47,11 @@ export default function ErrorBanner({
 
   if (errorType === "COLD_START") {
     return (
-      <div className="rounded-2xl border border-amber-500/45 bg-amber-500/10 p-4 text-sm text-amber-200 flex flex-col gap-2">
+      <div className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
         <div className="font-semibold">{message}</div>
         <div className="text-xs">Retrying automatically in {countdown}s...</div>
         {onRetry && countdown === 0 && (
-          <button onClick={onRetry} className="mt-2 self-start rounded bg-amber-500/20 px-3 py-1 text-xs hover:bg-amber-500/30 transition">
+          <button onClick={onRetry} className="mt-2 self-start rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-800">
             Retry Now
           </button>
         )}
@@ -61,11 +61,11 @@ export default function ErrorBanner({
 
   if (errorType === "SLOW_RESPONSE") {
     return (
-      <div className="rounded-2xl border border-slate-500/45 bg-slate-500/10 p-4 text-sm text-slate-300 flex items-center gap-3">
-        <div className="animate-spin h-4 w-4 border-2 border-slate-400 border-t-transparent rounded-full"></div>
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+        <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600"></div>
         <div>{message}</div>
         {onRetry && (
-          <button onClick={onRetry} className="ml-auto rounded bg-slate-600/30 px-3 py-1 text-xs hover:bg-slate-600/50 transition">
+          <button onClick={onRetry} className="ml-auto rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold transition hover:bg-slate-100">
             Retry
           </button>
         )}
@@ -75,10 +75,10 @@ export default function ErrorBanner({
 
   if (errorType === "GENERATION_TIMEOUT") {
     return (
-      <div className="rounded-2xl border border-amber-500/45 bg-amber-500/10 p-4 text-sm text-amber-200 flex flex-col gap-2">
+      <div className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
         <div className="font-semibold">{message}</div>
         {onRetry && (
-          <button onClick={onRetry} className="mt-2 self-start rounded bg-amber-500/20 px-3 py-1 text-xs hover:bg-amber-500/30 transition">
+          <button onClick={onRetry} className="mt-2 self-start rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-800">
             Try again
           </button>
         )}
@@ -88,10 +88,10 @@ export default function ErrorBanner({
 
   // UNKNOWN / Default
   return (
-    <div className="rounded-2xl border border-rose-500/45 bg-rose-500/10 p-4 text-sm text-rose-200 flex flex-col gap-2">
+    <div className="flex flex-col gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
       <div className="font-semibold">{message}</div>
       {onRetry && (
-        <button onClick={onRetry} className="mt-2 self-start rounded bg-rose-500/20 px-3 py-1 text-xs hover:bg-rose-500/30 transition">
+        <button onClick={onRetry} className="mt-2 self-start rounded-lg bg-rose-700 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-rose-800">
           Refresh page
         </button>
       )}

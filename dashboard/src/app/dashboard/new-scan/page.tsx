@@ -4,14 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import Navigation from "@/components/Navigation";
+import ErrorBanner from "@/components/ErrorBanner";
 import {
+  ApiError,
   createEngagement,
   fetchScoreHistory,
-  ApiError,
   type ScoreHistoryRecord
 } from "@/lib/api";
 import { fetchSession, type VenomSession } from "@/lib/session";
-import ErrorBanner from "@/components/ErrorBanner";
 
 function normalizeTarget(value: string) {
   const trimmed = value.trim();
@@ -89,7 +89,7 @@ export default function NewScanPage() {
   async function handleStartScan() {
     setError(null);
     if (!cleanTarget) {
-      setError("Please enter a target URL.");
+      setError("Enter a target URL or domain.");
       return;
     }
 
@@ -97,7 +97,7 @@ export default function NewScanPage() {
     try {
       parsed = new URL(cleanTarget);
     } catch {
-      setError("Please enter a valid URL (example: https://example.com).");
+      setError("Enter a valid target, like zeroops.in or https://zeroops.in.");
       return;
     }
 
@@ -110,9 +110,8 @@ export default function NewScanPage() {
       }
 
       const engagement = await createEngagement(session, {
-        name: `${parsed.hostname} auto scan`,
-        description:
-          "Simplified dashboard flow: auto-orchestrated baseline assessment.",
+        name: `${parsed.hostname} baseline`,
+        description: "Command center scan: non-destructive startup baseline assessment.",
         targetUrl: cleanTarget,
         targetType: "website",
         autoOrchestrate: true,
@@ -130,94 +129,108 @@ export default function NewScanPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#06090f] text-slate-100">
+    <main className="min-h-screen bg-slate-100 text-slate-950 lg:flex">
       <Navigation />
 
-      <section className="mx-auto flex min-h-[calc(100vh-68px)] w-full max-w-4xl items-center px-4 py-10">
-        <div className="w-full rounded-3xl border border-slate-700/80 bg-[#101722]/92 p-6 shadow-[0_30px_80px_rgba(0,0,0,0.45)] sm:p-8">
-          <span className="inline-flex rounded-full border border-lime-400/50 bg-lime-400/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-lime-200">
-            Screen 2 of 3
-          </span>
-          <h1 className="mt-4 text-3xl font-semibold text-slate-100 sm:text-4xl">
-            Start Security Scan
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm text-slate-300 sm:text-base">
-            Enter your target URL once. VENOM will automatically plan, run tools,
-            learn patterns, and compile a full report.
-          </p>
+      <section className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-6xl">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
+            <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">
+              New scan
+            </p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+              Launch an authorized baseline scan
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+              Enter a target once. VENOM normalizes the URL, starts orchestration, and opens the report as evidence lands.
+            </p>
 
-          <div className="mt-8 space-y-4">
-            <label className="block">
-              <span className="mb-2 block text-sm font-semibold text-slate-200">
-                Target URL
-              </span>
-              <input
-                type="text"
-                value={targetUrl}
-                onChange={(event) => setTargetUrl(event.target.value)}
-                placeholder="https://example.com"
-                disabled={loading}
-                className="w-full rounded-xl border border-slate-600 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-lime-400 focus:ring-2 focus:ring-lime-500/25 disabled:cursor-not-allowed disabled:opacity-70"
-              />
-            </label>
-
-            <button
-              type="button"
-              onClick={() => void handleStartScan()}
-              disabled={loading}
-              className="w-full rounded-xl bg-lime-400 px-4 py-3 text-sm font-semibold uppercase tracking-[0.08em] text-slate-950 transition hover:bg-lime-300 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {loading ? "Starting Scan..." : "Start Scan"}
-            </button>
-
-            {error ? (
-              <ErrorBanner error={error} onRetry={handleStartScan} />
-            ) : null}
-          </div>
-
-          <div className="mt-8 rounded-2xl border border-lime-500/30 bg-lime-500/10 p-4">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-lime-200">
-              What Happens Next
-            </h2>
-            <ul className="mt-3 space-y-2 text-sm text-slate-200">
-              <li>1. Attack plan is generated automatically.</li>
-              <li>2. Recon and validation tools run in sequence.</li>
-              <li>3. Findings are learned and prioritized.</li>
-              <li>4. A report is assembled while scans continue.</li>
-              <li>5. You can ask AI follow-up questions in report view.</li>
-            </ul>
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-slate-700/80 bg-slate-950/55 p-4">
-            <div className="flex items-center justify-between gap-4">
-              <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-slate-200">
-                30-Day Score Trend
-              </h2>
-              <span className="text-sm font-semibold text-lime-200">
-                {latestScore === null ? "No score yet" : `${latestScore}/100`}
-              </span>
-            </div>
-            <div className="mt-4 h-32 w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
-              <svg
-                viewBox="0 0 100 100"
-                preserveAspectRatio="none"
-                className="h-full w-full"
-                role="img"
-                aria-label="30-day security score trend"
-              >
-                <line x1="0" y1="25" x2="100" y2="25" stroke="#1f2937" strokeWidth="0.5" />
-                <line x1="0" y1="50" x2="100" y2="50" stroke="#1f2937" strokeWidth="0.5" />
-                <line x1="0" y1="75" x2="100" y2="75" stroke="#1f2937" strokeWidth="0.5" />
-                {trendPath ? (
-                  <path
-                    d={trendPath}
-                    fill="none"
-                    stroke="#a3e635"
-                    strokeWidth="2.5"
-                    vectorEffect="non-scaling-stroke"
+            <div className="mt-7 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+              <section className="rounded-2xl border border-slate-200 p-5">
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-800">Target URL or domain</span>
+                  <input
+                    type="text"
+                    value={targetUrl}
+                    onChange={(event) => setTargetUrl(event.target.value)}
+                    placeholder="zeroops.in"
+                    disabled={loading}
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50"
                   />
+                </label>
+
+                <div className="mt-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
+                  {cleanTarget ? `Scan target: ${cleanTarget}` : "Bare domains are accepted and converted to HTTPS."}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void handleStartScan()}
+                  disabled={loading}
+                  className="mt-5 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  {loading ? "Starting scan..." : "Start scan and open report"}
+                </button>
+
+                {error ? (
+                  <div className="mt-4">
+                    <ErrorBanner error={error} onRetry={handleStartScan} />
+                  </div>
                 ) : null}
-              </svg>
+              </section>
+
+              <aside className="space-y-5">
+                <section className="rounded-2xl border border-slate-200 p-5">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                    Scan policy
+                  </h2>
+                  <div className="mt-4 space-y-3">
+                    {[
+                      ["Mode", "Non-destructive startup profile"],
+                      ["Scope", "Domain-focused web assessment"],
+                      ["Output", "Executive report plus technical evidence"]
+                    ].map(([label, value]) => (
+                      <div key={label} className="flex items-start justify-between gap-4 border-b border-slate-100 pb-3 last:border-b-0 last:pb-0">
+                        <span className="text-sm text-slate-500">{label}</span>
+                        <span className="text-right text-sm font-semibold text-slate-900">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-slate-200 p-5">
+                  <div className="flex items-center justify-between gap-4">
+                    <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                      30-day score trend
+                    </h2>
+                    <span className="text-sm font-semibold text-blue-700">
+                      {latestScore === null ? "No score" : `${latestScore}/100`}
+                    </span>
+                  </div>
+                  <div className="mt-4 h-32 w-full overflow-hidden rounded-xl bg-slate-50">
+                    <svg
+                      viewBox="0 0 100 100"
+                      preserveAspectRatio="none"
+                      className="h-full w-full"
+                      role="img"
+                      aria-label="30-day security score trend"
+                    >
+                      <line x1="0" y1="25" x2="100" y2="25" stroke="#d8dee8" strokeWidth="0.5" />
+                      <line x1="0" y1="50" x2="100" y2="50" stroke="#d8dee8" strokeWidth="0.5" />
+                      <line x1="0" y1="75" x2="100" y2="75" stroke="#d8dee8" strokeWidth="0.5" />
+                      {trendPath ? (
+                        <path
+                          d={trendPath}
+                          fill="none"
+                          stroke="#2563eb"
+                          strokeWidth="2.5"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      ) : null}
+                    </svg>
+                  </div>
+                </section>
+              </aside>
             </div>
           </div>
         </div>
