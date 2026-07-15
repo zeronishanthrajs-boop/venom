@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import Navigation from "@/components/Navigation";
@@ -42,7 +42,7 @@ export default function RecentScansPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | ApiError | string | null>(null);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     const current = await fetchSession();
@@ -60,11 +60,17 @@ export default function RecentScansPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [router]);
 
   useEffect(() => {
-    loadData();
-  }, [router]);
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [loadData]);
 
   const list = useMemo(() => engagements.slice(0, 30), [engagements]);
 

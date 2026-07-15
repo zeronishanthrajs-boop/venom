@@ -1,3 +1,44 @@
+# Fix Log - 2026-07-15 19:45 UTC
+
+## Summary
+- Updated NOTE.md with the 2026-07-15 19:45 UTC fix log.
+- Applied dependency, React hook, TypeScript, documentation, orchestrate endpoint, test, and CI fixes described in `fix 160726.md`.
+
+## Issues Found and Root Causes (and Fixes Applied)
+
+| # | Issue | Root Cause | Fix Implemented |
+|---|-------|------------|-----------------|
+| 1 | High-severity npm vulnerabilities (`nodemailer`, `ws`, `form-data`) | Out-of-date third-party dependencies with known CRLF injection, SSRF, and memory-DoS bugs. | Upgraded `nodemailer@9.0.1`, `ws@8.21.0`, `form-data@4.0.6`, `brace-expansion@5.0.6`, and `qs@6.15.2`; `npm audit --audit-level=high` now reports zero vulnerabilities for backend. |
+| 2 | React hook misuse in recent scans | `loadData` was recreated each render while the effect depended only on `router`. | Wrapped `loadData` in `useCallback` and updated the effect to depend on the stable callback. |
+| 3 | `any` usage in the report page | Detailed report response data was not represented by the existing API types. | Added `DetailedReportState` and typed timeline/finding map callbacks with exported API types. |
+| 4 | ESLint hook warnings | Missing stable dependencies could trigger `react-hooks/exhaustive-deps`. | Updated `recent/page.tsx` dependency handling. |
+| 5 | Missing `GEMINI_API_KEY` documentation | README did not explicitly call out the optional Gemini key. | Added README guidance and confirmed `backend/.env.example` already includes Gemini placeholders. |
+| 6 | Orchestrate endpoint returned transient errors without retry guidance | 503 responses did not set `Retry-After`, and no dedicated health endpoint existed. | Added `GET /api/orchestrate/health` and `Retry-After` headers for orchestrate 503 errors. |
+| 7 | Insufficient regression coverage | No focused tests guarded the affected dashboard patterns. | Added Node tests for `RecentPage`, `ErrorBanner`, and `ReportPage` source regressions. |
+| 8 | Lack of security documentation | Secret handling and rotation guidance were not documented. | Created `SECURITY.md` with secret-management, rotation, audit, and reporting guidance. |
+| 9 | CI pipeline did not enforce all security checks | CI did not run high-severity npm audits, dashboard lint, dashboard type-check, and dashboard tests together. | Updated GitHub Actions CI to enforce backend audit/tests and dashboard audit/lint/type-check/tests. |
+
+## Actions Completed
+1. Backend
+   - Upgraded vulnerable package ranges and refreshed `backend/package-lock.json`.
+   - Added `/api/orchestrate/health`.
+   - Added `Retry-After` handling for orchestrate 503 responses.
+2. Dashboard
+   - Fixed hook dependency stability in `recent/page.tsx`.
+   - Replaced report page `any` usage with explicit detailed-report types.
+   - Added regression tests for the three affected dashboard files.
+3. Documentation
+   - Updated README environment guidance for `GEMINI_API_KEY`.
+   - Created `SECURITY.md`.
+4. CI/CD
+   - Added backend and dashboard security audit checks.
+   - Added dashboard lint, type-check, and test enforcement.
+
+## Next Steps
+- Review the changes, merge to `main`, deploy to staging, and run smoke tests.
+
+---
+
 # =======================================================
 # VENOM CODEBASE AUDIT — 2026-05-23T00:00:00Z
 # Complete wiring map. Read before touching anything.

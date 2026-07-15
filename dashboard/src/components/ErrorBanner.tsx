@@ -19,7 +19,9 @@ export default function ErrorBanner({
     const errorType = isApiError ? (error as ApiError).errorType : "UNKNOWN";
 
     if (errorType === "COLD_START") {
-      setCountdown(30);
+      const resetTimer = window.setTimeout(() => {
+        setCountdown(30);
+      }, 0);
       const timer = setInterval(() => {
         setCountdown((prev) => {
           if (prev <= 1) {
@@ -30,7 +32,10 @@ export default function ErrorBanner({
           return prev - 1;
         });
       }, 1000);
-      return () => clearInterval(timer);
+      return () => {
+        window.clearTimeout(resetTimer);
+        clearInterval(timer);
+      };
     }
   }, [error, onRetry]);
 

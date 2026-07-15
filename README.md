@@ -110,6 +110,7 @@ Dashboard defaults to `http://localhost:3000` and calls backend at `http://local
   - `VENOM_API_KEY`
   - `MONGODB_URI` (required for persistent data)
   - `CORS_ORIGINS` including dashboard URL
+  - Optional AI features: `GEMINI_API_KEY` plus the related `GEMINI_*_MODEL` settings in `backend/.env.example`
   - Optional threat-intel: `NVD_API_KEY`, `ENABLE_CVE_SYNC_JOB=true`
   - Suggested Week 8: `ENABLE_GEMINI_CVE_TAGGING=true`, `GEMINI_TAGGER_MODEL`, `CVE_SYNC_CRON`
   - Suggested Week 9: `GEMINI_LEARNER_MODEL` for pattern extraction

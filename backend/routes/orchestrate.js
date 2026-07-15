@@ -18,6 +18,24 @@ router.get("/status", requireDb, (_req, res) => {
   return res.status(200).json(getOrchestratorStatus());
 });
 
+router.get("/health", requireDb, (_req, res) => {
+  const status = getOrchestratorStatus();
+  return res.status(200).json({
+    ok: true,
+    ...status
+  });
+});
+
+function sendHttpError(res, error) {
+  if (error.httpStatus === 503) {
+    res.set("Retry-After", String(error.retryAfterSeconds || 30));
+  }
+
+  return res.status(error.httpStatus).json({
+    error: error.message
+  });
+}
+
 router.post("/", requireDb, async (req, res, next) => {
   try {
     const { engagementIds } = req.body || {};
@@ -28,9 +46,7 @@ router.post("/", requireDb, async (req, res, next) => {
     return res.status(200).json(result);
   } catch (error) {
     if (Number.isInteger(error?.httpStatus) && typeof error?.message === "string") {
-      return res.status(error.httpStatus).json({
-        error: error.message
-      });
+      return sendHttpError(res, error);
     }
     if (error?.name === "CastError") {
       return res.status(400).json({
@@ -79,9 +95,7 @@ router.post("/:engagementId", requireDb, async (req, res, next) => {
     return res.status(200).json(result);
   } catch (error) {
     if (Number.isInteger(error?.httpStatus) && typeof error?.message === "string") {
-      return res.status(error.httpStatus).json({
-        error: error.message
-      });
+      return sendHttpError(res, error);
     }
     if (error?.name === "CastError") {
       return res.status(400).json({

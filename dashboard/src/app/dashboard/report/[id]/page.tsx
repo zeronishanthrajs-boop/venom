@@ -15,8 +15,10 @@ import {
   ApiError,
   type ComplianceSummary,
   type DetailedExecutionReport,
+  type DetailedReportFinding,
   type DecisionBrief,
   type EngagementReport,
+  type ExecutionTimelineEntry,
   type ExecutionJob,
   type OrchestratorStatusResponse
 } from "@/lib/api";
@@ -42,6 +44,19 @@ type ChatMessage = {
   content: string;
   source?: string;
 };
+
+type DetailedReportState =
+  | DetailedExecutionReport
+  | {
+      status: "generating";
+      staleData?: DetailedExecutionReport | null;
+    };
+
+function isGeneratingDetailedReport(
+  value: DetailedReportState
+): value is Extract<DetailedReportState, { status: "generating" }> {
+  return "status" in value && value.status === "generating";
+}
 
 function formatDate(value?: string) {
   if (!value) {
@@ -406,7 +421,7 @@ export default function ReportPage() {
 
   const [session, setSession] = useState<VenomSession | null>(null);
   const [report, setReport] = useState<EngagementReport | null>(null);
-  const [detailedReport, setDetailedReport] = useState<any>(null);
+  const [detailedReport, setDetailedReport] = useState<DetailedReportState | null>(null);
   const [jobs, setJobs] = useState<ExecutionJob[]>([]);
   const [compliance, setCompliance] = useState<ComplianceSummary | null>(null);
   const [brief, setBrief] = useState<DecisionBrief | null>(null);
@@ -429,14 +444,14 @@ export default function ReportPage() {
     if (!detailedReport) {
       return null;
     }
-    if (detailedReport.status === "generating") {
+    if (isGeneratingDetailedReport(detailedReport)) {
       return detailedReport.staleData || null;
     }
     return detailedReport as DetailedExecutionReport;
   }, [detailedReport]);
 
   const isDetailedReportGenerating = useMemo(() => {
-    return detailedReport?.status === "generating";
+    return detailedReport ? isGeneratingDetailedReport(detailedReport) : false;
   }, [detailedReport]);
 
   const findingSummary = useMemo(
@@ -828,7 +843,7 @@ export default function ReportPage() {
                       Execution Timeline
                     </p>
                     <div className="mt-2 space-y-2">
-                      {effectiveDetailedReport.executionDetails.timeline.slice(0, 25).map((item: any) => (
+                      {effectiveDetailedReport.executionDetails.timeline.slice(0, 25).map((item: ExecutionTimelineEntry) => (
                         <div
                           key={item.testId}
                           className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${executionResultTone(
@@ -855,7 +870,7 @@ export default function ReportPage() {
                       Finding Traceability
                     </p>
                     <div className="mt-2 space-y-2">
-                      {effectiveDetailedReport.detailedFindings.slice(0, 12).map((finding: any) => (
+                      {effectiveDetailedReport.detailedFindings.slice(0, 12).map((finding: DetailedReportFinding) => (
                         <article
                           key={`${finding.id}-${finding.title}`}
                           className="rounded-lg border border-slate-700 bg-slate-950/65 p-3"
