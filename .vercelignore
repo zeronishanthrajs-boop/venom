@@ -1,0 +1,24 @@
+# Backend & Local tools
+backend/
+.runlogs/
+.tools/
+.agents/
+*.csv
+*.patch
+*.txt
+*.ps1
+*.sh
+NOTE*.md
+RENDER LOGS.md
+VENOM - Security Scanner for Startups*
+VENOM_12_WEEK_PLAN.md
+VENOM_AUDIT_FIX_PROMPT.md
+VENOM_FINAL_5_CEILING_UNLOCKERS.md
+surgical_fix_prompt.md
+fix*.md
+temp_patch.md
+
+# Node / Caches
+node_modules/
+.git/
+.github/

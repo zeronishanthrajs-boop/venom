@@ -23,3 +23,15 @@ Thumbs.db
 
 .vercel
 .env*.local
+
+# Temporary patches & scratch logs
+*.patch
+*.csv
+apply_patch_payload.txt
+NOTE_patch_content.txt
+NOTE_append*.md
+fix 160726.md
+temp_patch.md
+scratch_prompt.txt
+test_grep.ps1
+backend/check_db_report.js

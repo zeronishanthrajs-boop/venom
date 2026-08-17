@@ -1,0 +1,5 @@
+tests/
+*.test.js
+*.tsbuildinfo
+.env.local
+.env.development.local
