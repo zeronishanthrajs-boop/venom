@@ -3,5 +3,29 @@
   "framework": "nextjs",
   "buildCommand": "npm --prefix dashboard run build",
   "outputDirectory": "dashboard/.next",
-  "installCommand": "npm --prefix dashboard ci"
+  "installCommand": "npm --prefix dashboard ci",
+  "headers": [
+    {
+      "source": "/_next/static/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow",
+          "when": {
+            "source": "/client-dashboard(.*)"
+          }
+        }
+      ]
+    }
+  ]
 }
+

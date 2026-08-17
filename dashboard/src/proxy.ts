@@ -9,10 +9,14 @@ export function proxy(request: NextRequest) {
   const hasRefreshCookie = Boolean(request.cookies.get(REFRESH_COOKIE_NAME)?.value);
   const hasAnyAuthCookie = hasAccessCookie || hasRefreshCookie;
 
-  if (pathname.startsWith("/dashboard") && !hasAnyAuthCookie) {
-    const loginUrl = new URL("/login", request.url);
+  const isProtectedRoute =
+    pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/client-dashboard");
+
+  if (isProtectedRoute && !hasAnyAuthCookie) {
+    const loginUrl = new URL("/client-login", request.url);
     loginUrl.searchParams.set("reason", "auth_required");
-    return NextResponse.redirect(loginUrl);
+    return NextResponse.redirect(loginUrl, 307);
   }
 
   if (pathname.startsWith("/api/backend") && !hasAnyAuthCookie) {
@@ -23,5 +27,11 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/login", "/api/backend/:path*"]
+  matcher: [
+    "/dashboard/:path*",
+    "/client-dashboard",          // FIX: was missing — caused Issue 1 (High)
+    "/client-dashboard/:path*",   // FIX: cover all sub-paths too
+    "/client-login",
+    "/api/backend/:path*"
+  ]
 };

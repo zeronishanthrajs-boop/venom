@@ -253,6 +253,12 @@ function createApp() {
   app.use("/api/container", authMiddleware, activityLogger, containerSecurityRouter);
   app.use("/api/aiscan", authMiddleware, activityLogger, aiScannerRouter);
 
+  // Issue 7 fix: catch-all 404 handler — returns JSON instead of Express's
+  // default HTML "Cannot GET /path" response, which leaks framework identity.
+  app.use((_req, res) => {
+    res.status(404).json({ error: "Not Found" });
+  });
+
   app.use(errorHandler);
   return app;
 }
