@@ -5,9 +5,9 @@ const { requireRole } = require("../middleware/rbac");
 const { STARTUP_SCAN_PROFILE } = require("../profiles/startupScan");
 const { getOrchestratorStatus } = require("../services/orchestrator");
 
-const Engagement = mongoose.model("Engagement");
-const ExecutionJob = mongoose.model("ExecutionJob");
-const Plan = mongoose.model("Plan");
+const Engagement = require("../models/Engagement");
+const ExecutionJob = require("../models/ExecutionJob");
+const Plan = require("../models/Plan");
 
 const TERMINAL_JOB_STATUSES = [
   "completed",

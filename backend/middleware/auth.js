@@ -77,7 +77,7 @@ module.exports = function authMiddleware(req, res, next) {
   }
 
   const normalizedRole = String(providedRole).trim().toLowerCase();
-  if (!["admin", "operator", "viewer", "owner"].includes(normalizedRole)) {
+  if (!["admin", "operator", "viewer", "owner", "analyst"].includes(normalizedRole)) {
     return res.status(400).json({
       error: "Invalid role"
     });

@@ -27,11 +27,15 @@ const port = process.env.PORT || 5000;
 let keepAliveInterval = null;
 
 function startKeepAlive() {
-  const externalUrl = process.env.RENDER_EXTERNAL_URL;
-  if (!externalUrl) {
+  const rawExternalUrl = String(process.env.RENDER_EXTERNAL_URL || "").trim();
+  if (!rawExternalUrl) {
     logger.info("KEEPALIVE disabled — RENDER_EXTERNAL_URL not set.");
     return;
   }
+
+  const externalUrl = /^https?:\/\//i.test(rawExternalUrl)
+    ? rawExternalUrl
+    : `https://${rawExternalUrl}`;
 
   const intervalMs = parseInt(process.env.KEEPALIVE_INTERVAL_MS, 10) || 600000;
   
@@ -39,7 +43,7 @@ function startKeepAlive() {
   
   keepAliveInterval = setInterval(async () => {
     try {
-      const pingUrl = `${externalUrl.replace(/\/$/, '')}/health`;
+      const pingUrl = `${externalUrl.replace(/\/+$/, '')}/health`;
       const response = await fetch(pingUrl);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
