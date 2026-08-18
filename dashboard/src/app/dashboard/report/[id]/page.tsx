@@ -229,12 +229,14 @@ function AIChatSidebar({
   engagementId,
   findings,
   report,
-  brief
+  brief,
+  onClose
 }: {
   engagementId: string;
   findings: FlattenedFinding[];
   report: EngagementReport | null;
   brief: DecisionBrief | null;
+  onClose?: () => void;
 }) {
   const defaultMessage: ChatMessage = {
     role: "assistant",
@@ -355,7 +357,32 @@ function AIChatSidebar({
   return (
     <aside className="fixed bottom-0 right-0 top-0 z-40 flex w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-2xl">
       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-blue-700">Ask AI</h3>
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-2 w-2 rounded-full bg-blue-600"></span>
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-blue-700">Ask AI</h3>
+        </div>
+        {onClose ? (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close Ask AI"
+            className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+          >
+            <svg
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        ) : null}
       </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
@@ -1096,6 +1123,7 @@ export default function ReportPage() {
           findings={findings}
           report={report}
           brief={brief}
+          onClose={() => setShowChat(false)}
         />
       ) : null}
     </main>
